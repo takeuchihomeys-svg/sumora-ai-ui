@@ -10,6 +10,7 @@ import { dealFlowOf, flowTypes, stationReach, type DealFlow, type DealRow } from
 
 const argv = process.argv.slice(2);
 const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
+const SWITCH = arg("switch", "DEAL_STAGE_BEFORE_APPLY");
 
 (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
@@ -22,7 +23,7 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
   for (const c of convs) {
     const r: Partial<Record<"off" | "on", Awaited<ReturnType<typeof computeConversationOutcome>>>> = {};
     for (const mode of ["off", "on"] as const) {
-      process.env.DEAL_STAGE_BEFORE_APPLY = mode;
+      process.env[SWITCH] = mode; // 2026-11-26: --switch=<名前> で他のスイッチの off/on も比べる（既定 DEAL_STAGE_BEFORE_APPLY）
       try { r[mode] = await computeConversationOutcome(c, { db: sb as never }); } catch { r[mode] = null; }
     }
     if (!r.off || !r.on) { failed++; continue; }
@@ -36,7 +37,7 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
     await new Promise((res) => setTimeout(res, 100));
   }
   const cnt = (fs: DealFlow[], kind: string) => fs.reduce((a, f) => a + f.issues.filter((i) => i.kind === kind).length, 0);
-  console.log(`# DEAL_STAGE_BEFORE_APPLY off/on（申込に届いた会話 ${convs.length}・読めなかった ${failed}）\n`);
+  console.log(`# ${SWITCH} off/on（申込に届いた会話 ${convs.length}・読めなかった ${failed}）\n`);
   console.log("| 数 | off | on |\n|---|---|---|");
   console.log(`| 案件 | ${flows.off.length} | ${flows.on.length} |`);
   console.log(`| 申込に届いた案件 | ${flows.off.filter((f) => f.applied).length} | ${flows.on.filter((f) => f.applied).length} |`);

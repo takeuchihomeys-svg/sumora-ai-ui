@@ -238,14 +238,20 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName;
 //               結果を運ぶ AIX（確認の結果・物件・見積）
 //     negotiate … 交渉の結果の文（交渉の結果・減額／値下げ／割引 頂け・できました・難しい・不可・了承）か、見積の AIX（交渉の後の御見積書）
 //   on で: promiseKindNameOf がこの2つを返し、promiseFulfilledBy が判定する（B1・約束の一生・見張りの数え）。スタッフの画面・LINE には出さない（記録だけ）
-export const promiseContactKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CONTACT_KIND ?? "").trim().toLowerCase() === "on";
+export const promiseContactKindOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CONTACT_KIND ?? "").trim().toLowerCase() !== "off"; // 2026-11-26 統括役の決め: 果たした扱いの確かめ（9件中 果たしていないのに果たした 0・網を2回絞った）の後に既定 on。止める =off
 export function promiseContactKindOf(clause: string): "contact" | "negotiate" | null {
   const t = String(clause ?? "").normalize("NFKC");
   if (/交渉(?:を)?(?:して(?:みます|参ります)|させて(?:頂|いただ)|致します|いたします)/.test(t)) return "negotiate";
+  // 2026-11-26 作業員L（#726 の確かめ・B1 の果たした 6件を読んだ）: 説明の文（「お申込み後の流れ」）・ずっと続く知らせ（「審査の進捗状況等もご連絡」「随時」「何かあれば」）は期日のある約束ではない
+  if (/流れ|進捗|随時|何か(?:あれば|ございましたら)|等も|などもご連絡/.test(t)) return null;
+  //   管理会社・大家に「共有／お伝え」するだけ（お客様に結果を知らせる約束ではない・84b560f4）も外す
+  if (/(?:管理会社|オーナー|大家)(?:様|さん)?(?:に|へ)(?:も)?(?:ご)?(?:共有|お伝え)/.test(t) && !/ご連絡|ご報告/.test(t)) return null;
   if (/(?:ご連絡|ご共有|共有|お伝え|ご報告)(?:を)?(?:させて(?:頂|いただ)|致します|いたします|差し上げます)/.test(t)) return "contact";
   return null;
 }
-const CONTACT_DONE_RE = /(?:と|に)なります|でした|ございました|との(?:事|こと)|ご連絡(?:頂|いただ)|確認(?:が)?取れ|お伝え(?:しました|致しました|いたしました|させて(?:頂|いただ)きました)|(?:頂|いただ)けました|(?:出来|でき)ました|可能です|難しい/;
+// 2026-11-26 作業員L（#726 の確かめ）: 「〜となります」「でした」だけでは果たした扱いにしない（6件中 3件が別の話の「募集中となります」等で果たした扱いになっていた）。
+//   知らせた形の文＝確かめた結果の言い方（確認しましたところ・との事・ご回答・お待たせ致しました・ご報告・結果・確認が取れ・確認出来ました）だけ
+const CONTACT_DONE_RE = /確認(?:させて(?:頂|いただ)き|致し|いたし|し)ましたところ|との(?:事|こと)|ご回答|お待たせ(?:致|いた)?しました|ご報告(?:致|いた)?します|結果|(?:確認|連絡)が取れ|確認(?:が)?(?:出来|でき)ました/;
 const NEGOTIATE_DONE_RE = /交渉(?:の)?結果|(?:減額|値下げ|割引|値引き|免除|無料)[^。！!？?\n]{0,10}(?:頂け|いただけ|して(?:頂|いただ)け|出来|でき|になり|となり|して下さ|してくださ)|(?:了承|承諾|OK)(?:を)?(?:頂|いただ|が出|でした)|難しい|不可|NG|(?:通り|通っ)ました/;
 export function promiseContactFulfilledBy(promise: { at: string; kind: "contact" | "negotiate" }, ev: PromiseEvidence): { by: string; at: string } | null {
   const t0 = Date.parse(promise.at);
@@ -304,6 +310,36 @@ export function overduePromisesOf(input: Pick<PdInput, "status" | "msgs" | "aix"
     out.push({ kind, promisedAt: p.at, dueAt: new Date(due.ms).toISOString(), dueBy: due.by, daysOver: Math.floor((nowMs - due.ms) / 864e5) });
   }
   return out.sort((a, b) => a.promisedAt.localeCompare(b.promisedAt));
+}
+
+/**
+ * 2026-11-27 作業員L（作業員A の #808 時間の地図の入力・分け目は A と決めた）: まだ果たしていない約束を、期限前の物も含めて（純関数）。
+ *   overduePromisesOf と同じ数え方（種類ごとに一番新しい約束・期日の無い約束は外す・果たした約束・閉じた会話は外す）で、期限を過ぎたかを overdue に。
+ *   形は A の PromiseDue（{ kind, promisedAt, dueAt, overdue }・ISO）に dueBy を足した物
+ */
+export type PromiseDue = { kind: PromiseKindName; promisedAt: string; dueAt: string; dueBy: "words" | "default72h"; overdue: boolean };
+export function openPromisesWithDue(input: Pick<PdInput, "status" | "msgs" | "aix" | "sent">, nowMs: number, o: { maxDays?: number; checkObjectOf?: CheckObjectOf } = {}): PromiseDue[] {
+  const maxDays = o.maxDays ?? PROMISE_DROP_MAX_DAYS;
+  const ms = [...input.msgs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const byKind = new Map<PromiseKindName, { at: string; text: string }>();
+  for (let j = 0; j < ms.length; j++) {
+    const m = ms[j];
+    if (m.sender !== "staff" || m.is_aix_generated || promiseInputWaitTurn(ms, j)) continue;
+    const k = promiseKindNameOf(String(m.text ?? ""));
+    if (!k || !PROMISE_KIND_JUDGEABLE.has(k)) continue;
+    byKind.set(k, { at: m.created_at, text: String(m.text ?? "") });
+  }
+  const out: PromiseDue[] = [];
+  for (const [kind, p] of byKind) {
+    const t0 = Date.parse(p.at);
+    if ((nowMs - t0) / 864e5 > maxDays) continue;
+    if (promiseOpenEnded(p.text)) continue;
+    const due = promiseDeadlineMs(promiseSentenceOf(p.text), t0, kind);
+    if (promiseFulfilledBy({ at: p.at, kind, text: p.text }, { msgs: ms, aix: input.aix, sent: input.sent }, { checkObjectOf: o.checkObjectOf })) continue;
+    if (promiseClosedConversation(input.status, ms, p.at)) continue;
+    out.push({ kind, promisedAt: p.at, dueAt: new Date(due.ms).toISOString(), dueBy: due.by, overdue: nowMs >= due.ms });
+  }
+  return out.sort((a, b) => a.dueAt.localeCompare(b.dueAt));
 }
 
 export type PromiseDrop = {

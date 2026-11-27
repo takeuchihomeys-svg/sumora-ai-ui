@@ -771,10 +771,14 @@ function parseAreaTokens(rawArea) {
     }
   );
   // 「路線名（駅A〜駅B）」→ 区間内の駅リストに展開（例: おおさか東線（野江〜放出）→ JR野江,鴫野,放出）
-  rawArea = rawArea.replace(/([ぁ-鿿\w]+線)[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g, function(match, lineName, fromStr, toStr) {
-    const rangeStations = expandLineRange(lineName, fromStr.trim(), toStr.trim());
+  // ★ 2.8.329: 「御堂筋沿線（中津〜本町）」「御堂筋（中津〜本町）」も同じ（括弧を消す前に区間の駅へ）
+  rawArea = rawArea.replace(_LINE_RANGE_RE, function(match, baseName, suffix, fromStr, toStr) {
+    const lineName = baseName + (suffix || "");
+    const key = lineRangeKey(lineName);
+    const rangeStations = key ? expandLineRange(key, fromStr.trim(), toStr.trim()) : null;
     if (rangeStations && rangeStations.length > 0) return rangeStations.join(",");
-    return lineName; // 解決できない場合は路線名のみ（全線動作）
+    if (suffix) return key || lineName.replace(/沿線$/, "線"); // 解決できない場合は路線名のみ（全線動作）
+    return match;
   });
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
@@ -822,7 +826,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
                 .replace(/[かや]$/, "")  // 「〜駅か」→駅除去後に残る末尾助詞を除去
                 .trim())
-    .map(normalizeNumerals)
+    .map(t => (STATION_LINE_MAP[t] ? t : normalizeNumerals(t)))
     .filter(t => t.length >= 1);
   // 連結駅名を自動分解（例: "寝屋川萱島大和田古川橋門真"）
   const result = [];
@@ -924,8 +928,73 @@ function findStationLines(areaText) {
 
 // 「路線名（駅A〜駅B）」の区間内駅リストを LINE_STATION_ORDER から取得
 // 駅名のJR・阪急等のプレフィックスを正規化して曖昧一致（野江→JR野江）
+/**
+ * ★ 2.8.329 tomiさん「御堂筋沿線（中津〜本町）」: 「沿線」付き・「線」無し・短い名前でも駅の並びの表のキーへ直す。
+ *   旧は「御堂筋沿線」をそのまま表で引いて外れ、区間が消えて「御堂筋」が駅として送られた（#1678）。
+ */
+function lineRangeKey(lineName) {
+  const name = String(lineName || "").trim();
+  if (!name) return null;
+  const learned = (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER) || {};
+  const has = k => !!(k && ((LINE_STATION_ORDER[k] && LINE_STATION_ORDER[k].length) || (learned[k] && learned[k].length)));
+  const base = name.replace(/沿線$/, "").replace(/線$/, "");
+  const cands = [name, base + "線", name.replace(/沿線$/, "線")];
+  for (const c of cands) {
+    if (has(c)) return c;
+    const internal = typeof lineNameToInternalName === "function" ? lineNameToInternalName(c) : null;
+    if (has(internal)) return internal;
+  }
+  if (base.length >= 2) {
+    const hit = Object.keys(LINE_STATION_ORDER).find(k => k.endsWith(base + "線"));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+const _LINE_RANGE_RE = /([^\s,、・\/（(]+?)(沿線|線)?[（(]([^)）〜～]+)[〜～]([^)）]+)[）)]/g;
+
+/** 希望エリアの「〇〇沿線（A〜B）」「〇〇線（A〜B）」「〇〇（A〜B）」を [{key, route_id, stations}] に（線が分かる物だけ） */
+function lineRangeSpecs(rawArea) {
+  const out = [];
+  const s = String(rawArea || "");
+  let m;
+  _LINE_RANGE_RE.lastIndex = 0;
+  while ((m = _LINE_RANGE_RE.exec(s)) !== null) {
+    const key = lineRangeKey(m[1] + (m[2] || ""));
+    if (!key) continue;
+    const st = expandLineRange(key, m[3].trim(), m[4].trim());
+    if (!st || !st.length) continue;
+    out.push({ key, route_id: lineNameToRouteId(key), stations: st });
+  }
+  return out;
+}
+
+/**
+ * 区間の駅は区間の線だけで選ぶ（梅田・本町の他の線まで広げない）。
+ *   区間に入らない駅の線・keep（通勤の線など）は残す。
+ */
+function restrictRangeRoutes(routeIds, stationNames, specs, routesOfStation, keep) {
+  if (!specs || !specs.length) return (routeIds || []).slice();
+  const inRange = new Set();
+  const specRoutes = [];
+  specs.forEach(sp => {
+    sp.stations.forEach(x => inRange.add(x));
+    if (sp.route_id && !specRoutes.includes(sp.route_id)) specRoutes.push(sp.route_id);
+  });
+  const justified = new Set(specRoutes);
+  (keep || []).forEach(r => justified.add(r));
+  (stationNames || []).forEach(st => {
+    if (inRange.has(st)) return;
+    (routesOfStation(st) || []).forEach(r => justified.add(r));
+  });
+  const out = specRoutes.slice();
+  (routeIds || []).forEach(r => { if (justified.has(r) && !out.includes(r)) out.push(r); });
+  return out;
+}
+
 function expandLineRange(lineName, fromStation, toStation) {
-  const order = LINE_STATION_ORDER[lineName] || (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER[lineName]) || [];
+  const _key = lineRangeKey(lineName) || lineName;
+  const order = LINE_STATION_ORDER[_key] || (typeof LEARNED_LINE_ORDER !== 'undefined' && LEARNED_LINE_ORDER[_key]) || [];
   if (!order.length) return null;
   const stripPfx = s => s.replace(/^(?:JR|近鉄|阪急|阪神|南海|京阪|地下鉄)\s*/, '').trim();
   const fromNorm = stripPfx(fromStation), toNorm = stripPfx(toStation);
@@ -1896,42 +1965,41 @@ const SITE_CONFIG = {
         "阪神電鉄本線":                     "阪神本線",
         "阪神電鉄阪神なんば線":             "阪神なんば線",
         "南海電鉄南海本線":                 "南海本線",
-        "南海電鉄南本線":                   "南海本線",
         "南海電鉄高野線":                   "南海高野線",
-        "南海電鉄泉北線":                   "南海泉北線(泉北線)",   // 追加: 未変換だったため
+        "南海電鉄泉北線":                   "南海泉北線(泉北線)",
         "南海電鉄空港線":                   "南海空港線",
-        "南海電鉄汐見橋線":                 "南海汐見橋線",         // 追加
-        "南海電鉄多奈川線":                 "南海多奈川線",         // 追加
-        "南海電鉄高師浜線":                 "南海高師浜線",         // 追加
+        "南海電鉄汐見橋線":                 "南海汐見橋線",
+        "南海電鉄多奈川線":                 "南海多奈川線",
+        "南海電鉄高師浜線":                 "南海高師浜線",
         "京阪電気鉄道京阪線":               "京阪本線",
         "京阪電気鉄道中之島線":             "京阪中之島線",
         "京阪電気鉄道交野線":               "京阪交野線",
-        "大阪モノレール本線":               "大阪モノレール線",
-        "大阪モノレール彩都線":             "国際文化公園都市線(大阪モノレール彩都線)",
-        "能勢電鉄":                         "能勢電鉄妙見線",
-        "能勢電鉄妙見線":                   "能勢電鉄妙見線",       // 追加
-        "能勢電鉄日生線":                   "能勢電鉄日生線",       // 追加
-        "近鉄難波・奈良線":                 "近鉄難波線/近鉄奈良線",
+        "大阪環状線":                       "大阪環状線",
+        "JR東西線":                         "JR東西線",
+        "片町線":                           "JR片町線(学研都市線)",
+        "桜島線":                           "JR桜島線(JRゆめ咲線)",
+        "阪和線":                           "阪和線(天王寺～和歌山)",
+        "福知山線":                         "JR福知山線(新大阪～篠山口)(JR宝塚線)",
+        "東海道本線":                       ["JR東海道本線(京都～大阪)(JR京都線)", "JR東海道本線(大阪～神戸)(JR神戸線(大阪～神戸))"],
+        "おおさか東線":                     "おおさか東線",
+        "関西本線":                         "JR関西本線(加茂～ＪＲ難波)(大和路線)",
+        "近鉄難波・奈良線":                 ["近鉄難波線", "近鉄奈良線"],
         "近鉄南大阪線":                     "近鉄南大阪線",
         "近鉄大阪線":                       "近鉄大阪線",
         "近鉄長野線":                       "近鉄長野線",
         "近鉄道明寺線":                     "近鉄道明寺線",
         "近鉄けいはんな線":                 "近鉄けいはんな線",
-        "近鉄信貴線":                       "近鉄信貴線",           // 追加
-        "近鉄西信貴ケーブル線":             "近鉄西信貴鋼索線(西信貴ケーブル)", // 追加
-        "水間鉄道水間線":                   "水間鉄道水間線",       // 追加
-        "おおさか東線":                     "おおさか東線",
-        "大阪環状線":                       "JR大阪環状線",
-        "JR東西線":                         "JR東西線",
-        "片町線":                           "JR片町線(学研都市線)",     // 全角→半角括弧に統一
-        "阪和線":                           "阪和線(天王寺～和歌山)",   // 全角→半角括弧に統一
-        "東海道本線":                       "JR東海道本線(京都～大阪)(JR京都線)", // FILL版に合わせ
-        "福知山線":                         "JR福知山線(新大阪～篠山口)(JR宝塚線)", // 経由区間を追記
-        "関西本線":                         "JR関西本線(加茂～ＪＲ難波)(大和路線)", // 経由区間を追記
-        "桜島線":                           "JR桜島線(JRゆめ咲線)",
-        "関西空港線":                       "JR関西空港線",         // 追加
         "阪堺電気軌道阪堺線":               "阪堺電軌阪堺線",
         "阪堺電気軌道上町線":               "阪堺電軌上町線",
+        "大阪モノレール本線":               "大阪モノレール線",
+        "大阪モノレール彩都線":             "国際文化公園都市線(大阪モノレール彩都線)",
+        "能勢電鉄":                         "能勢電鉄妙見線",
+        "能勢電鉄妙見線":                   "能勢電鉄妙見線",
+        "能勢電鉄日生線":                   "能勢電鉄日生線",
+        "近鉄信貴線":                       "近鉄信貴線",
+        "近鉄西信貴ケーブル線":             "近鉄西信貴鋼索線(西信貴ケーブル)",
+        "水間鉄道水間線":                   "水間鉄道水間線",
+        "関西空港線":                       "JR関西空港線",
       };
 
       // 駅に対応するitandi路線名を取得（STATION_LINE_MAP → LEARNED_STATION_MAP の順）
@@ -4927,12 +4995,23 @@ function openInstructions(siteKey) {
         _clickAuditCtx(autofillBtn);
         return;
       }
-      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
+      // ⚠ 押す側は click() から戻った直後に印・点検の文脈・更新日の欄を戻す → 最初の await より前に写し取る
+      const _auditCtx_it = _clickAuditCtx(autofillBtn);
+      const _btnSnap_it = {
+        automated: !!autofillBtn.dataset.automated,
+        auto_send_all: !!autofillBtn.dataset.auto_send_all,
+        area_mode_locked: autofillBtn.dataset.area_mode_locked || null,
+        auto_sort: autofillBtn.dataset.auto_sort || null,
+        auto_max_pages: Number(autofillBtn.dataset.auto_max_pages) || null,
+        update_days: document.getElementById("adj-update-days")?.value || "",
+      };
       _itandiFillRunningAt = Date.now();
-      const _auditCtx_it = _clickAuditCtx(autofillBtn); // await 前に取得
-      try { await _itandiAutofillRun(_auditCtx_it); } finally { _itandiFillRunningAt = 0; }
+      try {
+        await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
+        await _itandiAutofillRun(_auditCtx_it, _btnSnap_it);
+      } finally { _itandiFillRunningAt = 0; }
     };
-    const _itandiAutofillRun = async (_auditCtx_it) => {
+    const _itandiAutofillRun = async (_auditCtx_it, _btnSnap_it) => {
       // 2026-10-01 竹内「ITANDIも画面表示光らせるようにする。検索の画面の入力は手動でそれ以外は今まで通りに」:
       //   案内モード（guideMode・既定オン）の間も条件は今まで通りここで組み立てて送る（広げての家賃・築年数＋5年・隣の駅も同じ）。
       //   受け取った itandi-page-script.js が案内モードなら入力せずに案内（itandi-guide.js）へ渡す＝入力と検索はスタッフ
@@ -4940,15 +5019,16 @@ function openInstructions(siteKey) {
       // v2.5.77 竹内「常に自動モードではなくて、光って選択するモードとする」: 案内モードは常に ON（古い OFF の値は使わない）
       // 2026-11-10 v2.5.94: 自動モード（通常／スタッフ／自動 の「自動」）を選んでいる時は案内を OFF にして拡張が入力する（昔の自動と同じ）
       const _guideIt = _isAutoModeNow() ? false : ((self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY) ? true : _gmIt !== false);
-      const isAutomated_itandi = !!autofillBtn.dataset.automated;
-      const isAutoSendAll_itandi = !!autofillBtn.dataset.auto_send_all;
-      const _lockedMode_itandi = autofillBtn.dataset.area_mode_locked || null; // await前に取得
-      // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。await 前に取得
-      const _autoSort_it = autofillBtn.dataset.auto_sort || null;
+      const _snapIt = _btnSnap_it || {};
+      const isAutomated_itandi = !!_snapIt.automated;
+      const isAutoSendAll_itandi = !!_snapIt.auto_send_all;
+      const _lockedMode_itandi = _snapIt.area_mode_locked || null;
+      // 2026-09-27 自動便の指定（background → switch-customer の autoRun → _applyAutoRunToForm）。押した時に写し取った値
+      const _autoSort_it = _snapIt.auto_sort || null;
       let c = selectedCustomer;
       // 2026-11-16 竹内「最大3／新着は5」: 自動便の指定が無ければ未送付＝新着→5
       const _autoMaxPages_it = (function () {
-        var fromBtn = Number(autofillBtn.dataset.auto_max_pages) || null;
+        var fromBtn = Number(_snapIt.auto_max_pages) || null;
         if (fromBtn) return fromBtn;
         var AR = (typeof self !== "undefined" && self.AxlxAutoRun) || null;
         if (AR && AR.resolveMaxPages && c) {
@@ -4970,7 +5050,7 @@ function openInstructions(siteKey) {
       const adjPet       = document.getElementById("adj-pet").checked;
       // v2.5.34 竹内「リアプロはボタンで選択やけど ITANDI は入力となる（更新日）」: リアプロと同じ更新日の欄（preloadAdjForm が入れる）の日数を
       //   ITANDI の「募集条件更新 N日以内」に打つ（itandi-page-script.js）。「指定なし」は null＝欄を空のまま
-      const adjUpdateDaysIt = document.getElementById("adj-update-days")?.value || "";
+      const adjUpdateDaysIt = _btnSnap_it ? String(_snapIt.update_days || "") : (document.getElementById("adj-update-days")?.value || "");
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
       // ブレイン経由: resolve-area + 送付履歴 + 除外リストを1本で取得
@@ -5380,11 +5460,12 @@ function openInstructions(siteKey) {
       // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる
       _auditTag("itandi", selectedCustomer, conditions, _auditCtx_it);
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
+      const _itCid = selectedCustomer && selectedCustomer.id != null ? String(selectedCustomer.id) : null;
       if (isUnderbar) {
-        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
+        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions, customerId: _itCid, source: isAutoSendAll_itandi ? "flagged_batch" : (isAutomated_itandi ? "automated" : "manual") }, "*");
       } else {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions }, () => {
+          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions, customerId: _itCid }, () => {
             if (chrome.runtime.lastError) {
               console.warn("[popup] sendMessage failed:", chrome.runtime.lastError.message);
               autofillBtn.textContent = "⚠ itandiのタブで開いてください";
@@ -5475,8 +5556,13 @@ function openInstructions(siteKey) {
     });
 
     autofillBtn.onclick = async () => {
-      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
-      const _auditCtx_rp = _clickAuditCtx(autofillBtn); // v2.5.48 await 前に取得（点検の文脈は click に直接渡る）
+      /**
+       * ⚠ 押す側（_switchAndClick）は click() から戻った直後に、自動の印（dataset.automated 等）・点検の文脈・
+       *   自動便の更新日の欄を元に戻す。だから印とフォームの値は**最初の await より前**に全部読む。
+       *   2.8.112〜2.8.328 は先頭で学びの取り直しを await していたため、自動の押しを手押しと読み違え、
+       *   番号なしの入力前リセットを何度も頼んでいた（#1666 で29回・#1671 で58回）。学びの取り直しは読み終えた後で待つ。
+       */
+      const _auditCtx_rp = _clickAuditCtx(autofillBtn);
       // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
       const isAutomated = !!autofillBtn.dataset.automated;
       // AIX: 条件画面はボタン押しで開始（開いただけでは動かない）。点検用の印
@@ -5552,6 +5638,7 @@ function openInstructions(siteKey) {
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
       };
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
+      await new Promise(function (r) { _axLearnRefreshBeforeAutofill(r); });
 
       // ① API呼び出しを先に実施（モード判定 + 補完データ取得を兼ねる）
       // キャッシュがあれば即返る。未知トークンがなければ null。
@@ -5982,6 +6069,36 @@ function openInstructions(siteKey) {
         });
         console.log("[AX] 駅名から沿線を補完:", route_ids.length + "本", route_ids.slice(0, 12));
       }
+      // ★ 2.8.329 #1678: 線の名前の切れ端（「御堂筋」）を駅として送らない（駅の画面で「御堂筋線」の字を押しに行って迷った）
+      try {
+        const _lineFrag = realpro_station_names.filter(s => !STATION_LINE_MAP[s] && !(LEARNED_STATION_MAP[s]?.realpro_lines?.length) && lineRangeKey(s));
+        if (_lineFrag.length) {
+          const _lf = new Set(_lineFrag);
+          realpro_station_names.splice(0, realpro_station_names.length, ...realpro_station_names.filter(s => !_lf.has(s)));
+          primary_stations.splice(0, primary_stations.length, ...primary_stations.filter(s => !_lf.has(s)));
+          console.log("[AX] 線の名前の切れ端を駅から外した:", _lineFrag);
+        }
+      } catch (_) {}
+      // ★ 2.8.329 「御堂筋沿線（中津〜本町）」: 沿線は区間の線だけ・駅は区間の全部（端も含む）
+      try {
+        let _rangeSpecs = lineRangeSpecs(adjAreaClean);
+        if (!_rangeSpecs.length) {
+          // 欄には区間を展開した駅（中津・梅田…）が入っている事がある → 登録の希望エリアから区間を読む（駅が揃っている時だけ）
+          _rangeSpecs = lineRangeSpecs(c.desired_area || c.area || "")
+            .filter(sp => sp.stations.every(s => realpro_station_names.includes(s)));
+        }
+        if (_rangeSpecs.length && (_lockedMode || currentAreaMode) === "station") {
+          _rangeSpecs.forEach(sp => sp.stations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); }));
+          const _routesOf = (st) => (getHubLines(st) || []).map(l => lineNameToRouteId(l)).filter(Boolean);
+          const _keepR = _reach && _reach.plan ? (_reach.plan.lines || []).map(l => lineNameToRouteId(l)).filter(Boolean) : [];
+          const _rr = restrictRangeRoutes(route_ids, realpro_station_names, _rangeSpecs, _routesOf, _keepR);
+          route_ids.splice(0, route_ids.length, ..._rr);
+          const _pr2 = restrictRangeRoutes(primary_route_ids, realpro_station_names, _rangeSpecs, _routesOf, _keepR)
+            .filter(r => route_ids.includes(r));
+          primary_route_ids.splice(0, primary_route_ids.length, ..._pr2);
+          console.log("[AX] 沿線の区間: " + _rangeSpecs.map(sp => sp.key + "（" + sp.stations.join("・") + "）").join(" / ") + " → 路線 " + route_ids.join(","));
+        }
+      } catch (_e) { console.warn("[AX] 沿線の区間の処理で失敗:", _e); }
       console.log('[AX] autofill送信:', {
         area_mode:       _lockedMode || currentAreaMode,
         primary_stations: primary_stations.slice(),
@@ -5996,15 +6113,7 @@ function openInstructions(siteKey) {
         building_age:    adjC.building_age || null,
         floor_plan:      adjC.floor_plan || null,
       });
-      window.parent.postMessage({
-        from: "aixlinx-underbar",
-        action: "autofill",
-        source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
-        // ★ 2026-11-19 (2.8.126) audit 1535: 手動の単発は誰の入力か（番号）をページへ渡していなかった（now_customer cid=-）。
-        //   → 別の一括が「番号の無い入力中」を見て上書き・タブ読み直しをしてしまった。番号を載せる。
-        customerId: (c && c.id) ? String(c.id) : null,
-        // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
-        conditions: _auditTagWith(_auditCtx_rp, "realpro", c, {
+      const _rpConditions = _auditTagWith(_auditCtx_rp, "realpro", c, {
           area_mode:     _lockedMode || currentAreaMode,
           rent_min:      readAdjRentMin(c, rpEffectiveRentMax),
           rent_max:      rpEffectiveRentMax,
@@ -6044,29 +6153,10 @@ function openInstructions(siteKey) {
           //   案内モード（realpro-guide.js）が誰の検索か分からず送付済みの部屋を隠せなかった → 条件にお客様を載せる（page-script の入力は使わない欄）
           customer_id:   c.id || null,
           customer_name: c.customer_name || null,
-        }),
-      }, "*");
-      // ページリロード後も自動送信が再開できるようフラグを立てる（手動・自動バッチ共通）
-      // ★ 2026-08-17 修正: 以前は `if (!isAutomated)` で手動クリック限定にしていたが、
-      //   リアプロは検索実行（div.go_search クリック）でページが再読み込みされるため
-      //   bulk-dl.js のモジュール変数（_autoSendArmed 等）は毎回破棄される。
-      //   結果ページで自動送信を起動できる経路は Case C（chrome.storage.session）だけ。
-      //   手動限定にすると自動バッチ（axlx-switch-customer 経由 = isAutomated=1）は
-      //   フラグが立たず、残留フラグを消費した1人目だけ動いて2人目以降が無音で死ぬ。
-      //   Case A（AJAX経路）が先に発火した場合は bulk-dl.js 側でフラグを remove するため
-      //   二重送信にはならない。
-      //   2026-09-18 竹内「前のお客さんのデータのままLINEに共有された」:
-      //   旧はただの true で「誰の検索の再開か」を持っていなかった。リロード後の bulk-dl.js は
-      //   chrome.storage.local の current_customer_*（＝その時点で選ばれている顧客）を読み直すため、
-      //   background が次の顧客へ進んだ後にこのページが送ると、前の顧客の検索結果に
-      //   次の顧客の名前が付く。誰の検索かはフラグ自体に持たせる。
-      // 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」:
-      //   案内モード（guideMode・既定オン）の間は再開の印を置かない＝検索の後の一覧で自動の送信・ダウンロード・ページ送りが始まらない。
-      //   明示の OFF（false）の時だけ今まで通り置く
+      });
+      // ページリロード後も自動送信が再開できるよう、リセット前にフラグ・スコア・記録を確定させる（underbar iframe はリセットのページ再読み込みで消えるため）
       try {
         chrome.storage.local.get(["guideMode"], function (_gm) {
-          // v2.5.77: 光って選択するモードの間は再開の印を置かない（自動の送信・ダウンロード・ページ送りを始めない）
-          // 2026-11-10 v2.5.94: 自動モードを選んでいる時は今まで通り置く（拡張が一覧を読んで送る）
           if (_isAutoModeNow()) { /* 自動モードは置く */ }
           else if (!_gm || _gm.guideMode !== false || (self.AxlxModeCore && self.AxlxModeCore.GUIDE_ONLY)) { try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {} return; }
           chrome.storage.session.set({ axlx_pending_auto_send: {
@@ -6077,7 +6167,6 @@ function openInstructions(siteKey) {
           } });
         });
       } catch (_) {}
-      // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
           rent_max:             rpEffectiveRentMax,
@@ -6092,22 +6181,60 @@ function openInstructions(siteKey) {
           ng_points:            c.ng_points || null,
           pet_ok:               c.pet === true || c.pet === 'true' || false,
           admin_fee_max:        c.admin_fee_max || null,
-          // 2026-09-24 竹内「ブレインモードも更新日ちゃんと分かるように」: 条件バーに「更新N日内」を出す
           rp_update_days:       adjUpdateDays ? Number(adjUpdateDays) : null,
           last_touch_date:      lastPropertyTouchDateJst(c) || null,
         }});
       } catch (_) { /* ignore */ }
+      try { _axPipelineStart(c, "realpro"); } catch (_) {}
+      recordSearchForSelected("realpro");
+
       autofillBtn.textContent = "⏳ 検索中...";
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
       autofillBtn.disabled = true;
-      // ★ 一連ロック: 検索開始〜送付完了までこのお客さんだけ（次客の自動検索を止める）
-      try { _axPipelineStart(c, "realpro"); } catch (_) {}
-      /**
-       * ★ 2026-11-17 実愛さん: 旧25秒は人らしいクリア＋地域＋確定＋条件1つずつに足りない。
-       *   bg の fill 待ちは約905秒。UIだけ先に戻すと「止まって条件未更新」に見える。
-       *   → **180秒**まで待つ（ボタンリセットのみ・fill本体は止めない）。
-       */
+
+      // ★ 手動単発の自動検索でも、一括と同じく条件投入前にリセットボタンで空を確認する（リロードで iframe が消えても background が autoFillAfter で自動入力を引き継ぐ）
+      let _dispatchedByBg = false;
+      if (!isAutomated && _isAutoModeNow()) {
+        try {
+          autofillBtn.textContent = "⏳ 前の条件を確認中...";
+          const _rr = await new Promise((resolve) => {
+            let _done = false;
+            const _tmo = setTimeout(() => { if (!_done) { _done = true; resolve(null); } }, 45000);
+            try {
+              chrome.runtime.sendMessage({
+                type: "axlx-reset-before-fill",
+                customer: { id: c.id || null },
+                runId: (_rpConditions && _rpConditions._audit_run_id) || null,
+                autoFillAfter: {
+                  customerId: (c && c.id) ? String(c.id) : null,
+                  conditions: _rpConditions,
+                  source: isAutoSendAll ? "flagged_batch" : "manual",
+                },
+              }, (res) => {
+                void chrome.runtime.lastError;
+                if (!_done) { _done = true; clearTimeout(_tmo); resolve(res || null); }
+              });
+            } catch (_) {
+              if (!_done) { _done = true; clearTimeout(_tmo); resolve(null); }
+            }
+          });
+          _dispatchedByBg = !!(_rr && _rr.dispatched);
+        } catch (_) {}
+      }
+      autofillBtn.textContent = "⏳ 検索中...";
+      if (!_dispatchedByBg) {
+        window.parent.postMessage({
+          from: "aixlinx-underbar",
+          action: "autofill",
+          source: isAutoSendAll ? "flagged_batch" : (isAutomated ? "automated" : "manual"),
+          // ★ 2026-11-19 (2.8.126) audit 1535: 手動の単発は誰の入力か（番号）をページへ渡していなかった（now_customer cid=-）。
+          //   → 別の一括が「番号の無い入力中」を見て上書き・タブ読み直しをしてしまった。番号を載せる。
+          customerId: (c && c.id) ? String(c.id) : null,
+          // 2026-09-25 検索の点検: ブレインの時だけ started を送り run_id を載せる（_auditTag）
+          conditions: _rpConditions,
+        }, "*");
+      }
       clearTimeout(_fillDoneWatchdog);
       _fillDoneWatchdog = setTimeout(() => {
         const _b = document.getElementById("autofill-btn");
@@ -6118,8 +6245,6 @@ function openInstructions(siteKey) {
           console.warn("[AX] fill-done UIタイムアウト: 180秒以内に完了通知なし（fill本体は継続し得る）");
         }
       }, 180000);
-      // 検索日時をサイト別に記録（fire-and-forget）。2026-09-18: 一括検索と同じ関数に寄せた
-      recordSearchForSelected("realpro");
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
@@ -6764,7 +6889,7 @@ document.addEventListener("DOMContentLoaded", () => {
    */
   try {
     // ★ 学習→反映: 開いたら必ず強制再取得（版スキップなし）。反映状態を画面にも出す。
-    chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true }, function (r) {
+    chrome.runtime.sendMessage({ type: "axlx-learn-refresh", force: true, src: "popup_open" }, function (r) {
       if (chrome.runtime.lastError) return;
       try {
         if (r && r.ok && !r.empty) console.log("[AX] 学習束を再取得:", r.skipped || "ok", r.link || "", "read=" + (r.server_read_count != null ? r.server_read_count : "?"), "needs_auto=" + !!r.needs_auto);
@@ -6846,19 +6971,24 @@ document.addEventListener("DOMContentLoaded", () => {
     var L = self.AxlxHumanLearn;
     function paint() {
       try {
-        chrome.storage.local.get("axlx_human_learn", function (r) {
-          var agg = r && r.axlx_human_learn;
-          var n = agg && agg.n ? agg.n : 0;
+        chrome.storage.local.get(["axlx_human_learn__realpro", "axlx_human_learn__itandi", "axlx_human_learn"], function (r) {
+          var rp = r && r.axlx_human_learn__realpro;
+          var it = r && r.axlx_human_learn__itandi;
+          var leg = r && r.axlx_human_learn;
+          var nRp = (rp && rp.n) ? Number(rp.n) : 0;
+          var nIt = (it && it.n) ? Number(it.n) : 0;
+          var n = (nRp + nIt) > 0 ? (nRp + nIt) : ((leg && leg.n) ? Number(leg.n) : 0);
           btn.style.display = n > 0 ? "inline-block" : "none";
           btn.textContent = "👀 学習 " + n;
-          btn._axlxAgg = agg || null;
+          btn._axlxAgg = (nRp >= nIt ? (rp || it) : (it || rp)) || leg || null;
+          btn._axlxAggBySite = { realpro: rp || null, itandi: it || null };
         });
       } catch (_) {}
     }
     paint();
     try {
       chrome.storage.onChanged.addListener(function (ch, area) {
-        if (area === "local" && ch.axlx_human_learn) paint();
+        if (area === "local" && (ch.axlx_human_learn__realpro || ch.axlx_human_learn__itandi || ch.axlx_human_learn)) paint();
       });
     } catch (_) {}
     btn.addEventListener("click", function () {
@@ -6878,20 +7008,32 @@ document.addEventListener("DOMContentLoaded", () => {
          */
         if (L && L.serverLearnLines) {
           try {
-            chrome.storage.local.get(["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps", "axlx_learn_screen_flow", "axlx_learn_shots", "axlx_learn_opens", "axlx_learn_supervisor"],
-              function (r) {
+            var _readSrvKeys = function (sitePref) {
+              var baseKeys = ["axlx_learn_next", "axlx_learn_weak", "axlx_learn_site_flow", "axlx_learn_gaps", "axlx_learn_screen_flow", "axlx_learn_shots", "axlx_learn_opens", "axlx_learn_supervisor"];
+              var allKeys = ["axlx_learn_for_site"].concat(baseKeys);
+              baseKeys.forEach(function (k) { allKeys.push(k + "__realpro", k + "__itandi"); });
+              chrome.storage.local.get(allKeys, function (r) {
                 try {
+                  var pick = function (k) {
+                    if (!r) return null;
+                    if (sitePref === "itandi" || sitePref === "realpro") {
+                      return r[k + "__" + sitePref] || (r.axlx_learn_for_site === sitePref ? r[k] : null) || null;
+                    }
+                    var fs = r.axlx_learn_for_site;
+                    if (fs === "itandi" || fs === "realpro") return r[k + "__" + fs] || r[k] || null;
+                    return r[k + "__realpro"] || r[k] || r[k + "__itandi"] || null;
+                  };
                   var srv = {
-                    next: (r && r.axlx_learn_next) || null,
-                    weak: (r && r.axlx_learn_weak) || null,
-                    site_flow: (r && r.axlx_learn_site_flow) || null,
-                    gaps: (r && r.axlx_learn_gaps) || null,
-                    screen_flow: (r && r.axlx_learn_screen_flow) || null,
-                    shots: (r && r.axlx_learn_shots) || null,
+                    next: pick("axlx_learn_next"),
+                    weak: pick("axlx_learn_weak"),
+                    site_flow: pick("axlx_learn_site_flow"),
+                    gaps: pick("axlx_learn_gaps"),
+                    screen_flow: pick("axlx_learn_screen_flow"),
+                    shots: pick("axlx_learn_shots"),
                     /** 2026-11-14: 押したら何が開くか（学んでいるのに見せていなかった） */
-                    opens: (r && r.axlx_learn_opens) || null,
+                    opens: pick("axlx_learn_opens"),
                     /** 2026-11-14: 統括の判断（結論・次にやる事） */
-                    supervisor: (r && r.axlx_learn_supervisor) || null,
+                    supervisor: pick("axlx_learn_supervisor"),
                   };
                   if (!srv.next && !srv.weak && !srv.site_flow && !srv.screen_flow && !srv.opens) return; // まだ無ければ何もしない
                   var srvLines = L.serverLearnLines(srv);
@@ -6912,6 +7054,16 @@ document.addEventListener("DOMContentLoaded", () => {
                   try { host.scrollTop = host.scrollHeight; } catch (_) {}
                 } catch (_) {}
               });
+            };
+            if (chrome.tabs && chrome.tabs.query) {
+              chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+                var u = (tabs && tabs[0] && tabs[0].url) ? String(tabs[0].url) : "";
+                var sp = /itandi/i.test(u) ? "itandi" : (/realnetpro/i.test(u) ? "realpro" : null);
+                _readSrvKeys(sp);
+              });
+            } else {
+              _readSrvKeys(null);
+            }
           } catch (_) {}
         }
         // 2026-11-11 竹内さん「ボタン物件検索でおすばしょ理解できたかな」: どのボタンをどこで押したかを出す
@@ -7564,7 +7716,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!el) return;
       var cur = chrome.runtime.getManifest().version;
       if (st && st.ext_behind && String(st.ext || "") === cur) {
-        el.textContent = "⚠ 拡張が古いです（いま " + cur + "／最新 " + (st.server_up_to || "?") + "）。git pull のあと chrome://extensions で再読み込みし、リアプロのタブを開き直してください";
+        el.textContent = "⚠ 拡張が古いです（いま " + cur + "／最新 " + (st.server_up_to || "?") + "）。git pull → chrome://extensions で再読み込み → このページを開き直してください（旧タブのままでは最新が効きません）";
         el.style.display = "block";
       } else {
         el.style.display = "none";

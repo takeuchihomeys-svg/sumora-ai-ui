@@ -59,21 +59,21 @@ for (let i = 0; i < 300; i++) {
   const r = runSortWait(null, 0);
   minH = Math.min(minH, r.human); maxH = Math.max(maxH, r.human);
 }
-ok("フォールバック: 30秒以上・36秒以下", minH >= 30000 && maxH <= 36000, [minH, maxH]);
+ok("フォールバック: 40秒以上・50秒以下（2.8.317）", minH >= 40000 && maxH <= 50000, [minH, maxH]);
 
 // 人の間の関数が極端な値を返しても 30〜36秒に収まる
 const low = runSortWait(() => 1000, 0);
 const high = runSortWait(() => 99999, 0);
-ok("人の間が1秒を返しても 30秒以上（下限）", low.human >= 30000, low.human);
-ok("人の間が99秒を返しても 36秒以下（上限）", high.human <= 36000, high.human);
+ok("人の間が1秒を返しても 40秒以上（下限・2.8.317）", low.human >= 40000, low.human);
+ok("人の間が99秒を返しても 50秒以下（上限・2.8.317）", high.human <= 50000, high.human);
 
 // 検索確認からの残り待ち: 経過0秒なら約30秒、経過20秒なら約10秒、経過40秒なら即（50ms）
-const w0 = runSortWait(() => 32000, 0).wait;
-const w20 = runSortWait(() => 32000, 20000).wait;
-const w40 = runSortWait(() => 32000, 40000).wait;
-ok("検索確認の直後は 30秒以上待つ", w0 >= 30000, w0);
-ok("20秒経っていれば残り約10秒（合計30秒以上）", w20 >= 9000 && w20 <= 16000, w20);
-ok("40秒経っていれば待たない（50ms・負にならない）", w40 === 50, w40);
+const w0 = runSortWait(() => 45000, 0).wait;
+const w20 = runSortWait(() => 45000, 20000).wait;
+const w40 = runSortWait(() => 45000, 60000).wait;
+ok("検索確認の直後は 40秒以上待つ（2.8.317）", w0 >= 40000, w0);
+ok("20秒経っていれば残り約25秒（合計45秒前後・2.8.317）", w20 >= 19000 && w20 <= 30000, w20);
+ok("60秒経っていれば待たない（50ms・負にならない）", w40 === 50, w40);
 
 ok("旧の 1〜3.5秒の上限は無い", !/if \(base > 3500\) base = 3500;/.test(bd));
 ok("検索後の待ちは並べ替えのタイマーに使われる", /var wait = _waitMsFromSearchConfirm\(\);/.test(bd) && /\}, wait\);/.test(bd));
@@ -91,12 +91,12 @@ const iSettle = bg.indexOf("var _settleMs = RESET_SETTLE_MIN_MS");
 const iVerify = bg.indexOf("__axlxResetVerifyP", iSettle);
 const iNext = bg.indexOf("return { ok: true, left: 0, reset: true", iSettle);
 ok("待ちは読み戻し（空の確認）より前・次の客への返事より前", iSettle > 0 && iSettle < iVerify && iVerify < iNext, [iSettle, iVerify, iNext]);
-ok("post_send_clear の段の上限は 260秒（30秒の待ち＋確認＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 260000/.test(bg));
+ok("post_send_clear の段の上限は 330秒（30秒の待ち＋確認＋従来の外しが入る）", /_bulkPhaseSet\("post_send_clear", 330000/.test(bg));
 ok("ページの中の押し（人の動き）・直接の書き換えは増やしていない", !/RESET_SETTLE_MIN_MS\s*=\s*[0-9]{1,4}\s*;/.test(bg));
 
 console.log("\n■ 手順書（決まりの文）");
-ok("並べ替えの決まりに 30秒以上 が載る", /確認時刻から30秒以上空けて sort_cursor へ/.test(rules));
-ok("リセットの決まりに 30秒以上 が載る", /ラグがあるので30秒以上（2\.8\.292・30〜34秒・3回に分けて）/.test(rules));
+ok("並べ替えの決まりに 30秒以上 が載る", /確認時刻から40〜50秒空けて sort_cursor へ/.test(rules));
+ok("リセットの決まりに 30秒以上 が載る", /ラグがあるので30秒以上（2\.8\.292・30〜34秒・3回に分けて）/.test(rules) || /30〜34秒待つだけ/.test(rules));
 ok("手順書に古い 1秒以上 の文が残っていない", !/確認時刻から合計1秒以上空けて/.test(rules));
 
 console.log("\n■ 他の部分への影響（ページ側は変えていない）");

@@ -85,7 +85,8 @@ console.log("\n■ 前客の残りと自分が押した沿線を分ける");
 const toggle = ps.slice(ps.indexOf("function _toggleCheckboxLikeHuman("), ps.indexOf("function _toggleCheckboxLikeHuman(") + 5000);
 ok("沿線を選んだら __axlxLinePickedRun に印", /wantOn && \/route_id\/\.test\(nm\)[\s\S]{0,200}__axlxLinePickedRun\[String\(cb\.value/.test(toggle));
 const ov = ps.slice(ps.indexOf("var _keptMine = 0;"), ps.indexOf("var _keptMine = 0;") + 2000);
-ok("自分が押した物は _keptMine・それ以外だけ前客と数える", /if \(_mine\) _keptMine\+\+; else _keptOverlap\+\+;/.test(ov));
+// 段階2-B（stop_all・2026-11-27）: 自分が押した物だけ残し、それ以外は外さず止める（前の「_keptOverlap で数えて続行」は退役）
+ok("自分が押した物は _keptMine で残す・それ以外は外さず止める", /if \(_mine\) \{ _keptMine\+\+; return; \}/.test(ov) && /_lineResidueStop = true;/.test(ov));
 ok("前客と被りの記録は客ごとに1回", /_keptOverlap > 0 && !window\.__axlxLineOverlapSent/.test(ov));
 const reset = ps.slice(ps.indexOf("window.__axlxStationForceClearedOnce = false;\n      window.__axlxLineWaitN = 0;".replace(/\n/g, ps.includes("\r\n") ? "\r\n" : "\n")) - 10, ps.indexOf("window._axPreSearchWalkSealed = false;"));
 ok("客ごとに待ち回数・押し直し回数・押した沿線を空にする", ["__axlxLineWaitN = 0", "__axlxLineRepressN = 0", "__axlxLineStuckSent = false", "__axlxLineOverlapSent = false", "__axlxLinePickedRun = {}"].every((s) => reset.indexOf(s) >= 0), reset.slice(0, 300));
@@ -100,10 +101,10 @@ function loadMaps(file, names) {
   return ctx.__o;
 }
 const M = loadMaps("popup-maps.js", ["STATION_LINE_MAP", "LINE_STATION_ORDER", "LINE_ROUTE_MAP"]);
-ok("popup-maps: 湊 → 南海電鉄南本線", Array.isArray(M.STATION_LINE_MAP["湊"]) && M.STATION_LINE_MAP["湊"].includes("南海電鉄南本線"));
+ok("popup-maps: 湊 → 南海電鉄南海本線（2026-11-26 南本線を南海本線に統一）", Array.isArray(M.STATION_LINE_MAP["湊"]) && M.STATION_LINE_MAP["湊"].includes("南海電鉄南海本線"));
 ok("湊の沿線はリアプロ 6681（南海本線）", M.LINE_ROUTE_MAP[M.STATION_LINE_MAP["湊"][0]] === "6681");
 const rc = fs.readFileSync(path.join(root, "resolution-core.js"), "utf8");
-ok("resolution-core（写し）にも湊", /"湊": \["南海電鉄南本線"\]/.test(rc));
+ok("resolution-core（写し）にも湊", /"湊": \["南海電鉄南海本線"\]/.test(rc));
 const gaps = [];
 for (const [line, sts] of Object.entries(M.LINE_STATION_ORDER)) for (const st of sts) if (!M.STATION_LINE_MAP[st]) gaps.push(st + "（" + line + "）");
 ok("沿線の並びにあって逆引きに無い駅は 15 以下（地名と重なる13駅だけ・増やさない）", gaps.length <= 15, gaps);

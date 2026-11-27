@@ -166,7 +166,11 @@ export async function GET(req: NextRequest) {
     const sub = rows.filter((r) => String(r.site || "") === s);
     if (sub.length < 5) continue; // 少なすぎる物は束にしない（偶然を学ばない）
     const sceneMetaSite = await fetchLearnBundleSceneMeta(supabase, s);
-    perSite.push({ scope: s, bundle: compactBundle(buildHumanLearnBundle(sub, now, null, null, sceneMetaSite)) });
+    const sFilter = s === "realpro" || s === "itandi" ? s : null;
+    perSite.push({
+      scope: s,
+      bundle: compactBundle(buildHumanLearnBundle(sub, now, null, null, { ...(sceneMetaSite ?? {}), site: sFilter }), { site: sFilter }),
+    });
   }
 
   const extVersion = rows.length ? String(rows[0]?.ext_version ?? "") || null : null;
@@ -216,10 +220,10 @@ export async function GET(req: NextRequest) {
           const carry = await carryLearnedShots(supabase, p.scope, p.bundle);
           (p.bundle as unknown as Record<string, unknown>).shots_carry = carry.why + (carry.from_id ? "@" + carry.from_id : "");
         } catch { /* 位置を継げなくても束は残す */ }
-        /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理） */
+        /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理）。★ 2026-11-27: 必ず p.scope（サイト）を渡す */
         try {
           const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-          prepareBundleForWrite(b);
+          prepareBundleForWrite(b, p.scope);
         } catch { /* 整えられなくても束は残す（次の作り直しで直る） */ }
         const { error: insErr } = await supabase.from("human_learn_profile").insert({
           scope: p.scope,

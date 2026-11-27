@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.8.305",
+  "version": "2.8.329",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -18,7 +18,6 @@
     "*://realnetpro.com/*",
     "*://*.realnetpro.com/*",
     "https://itandibb.com/*",
-    "https://system.reins.jp/*",
     "http://localhost:3000/*",
     "https://wfwsmwxakhyxobytszoq.supabase.co/*"
   ],
@@ -33,30 +32,27 @@
     "scripting",
     "downloads",
     "alarms",
-    "offscreen"
+    "offscreen",
+    "notifications"
   ],
   "web_accessible_resources": [
     {
       "resources": ["popup.html", "human-wait.js", "pointer-ui.js", "human-trace.js", "human-learn.js", "learn-order.js", "popup-maps.js", "realpro-guide-plan.js", "transit_graph.js", "osaka-transit.js", "commute-candidates.js", "commute-reach.js", "search-history.js", "fill-done-match.js", "mode-core.js", "search-audit.js", "search-override.js", "temp-adj-base.js", "popup.js", "snapshot-popup.js", "styles.css", "page-script.js", "score-overlay.js", "floor-ijou.js"],
-      "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
+      "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*"]
     },
     {
       "resources": ["itandi-page-script.js"],
       "matches": ["https://itandibb.com/*"]
-    },
-    {
-      "resources": ["reins-page-script.js"],
-      "matches": ["https://system.reins.jp/*"]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
+      "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*"],
       "js": ["human-wait.js", "human-learn.js", "pointer-ui.js", "human-trace.js", "own-mutation.js", "search-audit.js", "parallel-sites.js", "snapshot-core.js"],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"],
+      "matches": ["https://www.realnetpro.com/*", "https://realnetpro.com/*", "https://itandibb.com/*"],
       "js": ["human-learn-upload.js", "human-learn-record.js"],
       "run_at": "document_start"
     },
@@ -114,26 +110,6 @@
     },
     {
       "matches": ["https://itandibb.com/*"],
-      "js": ["score-overlay.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://system.reins.jp/*"],
-      "js": ["underbar.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://system.reins.jp/*"],
-      "js": ["reins-content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://system.reins.jp/*"],
-      "js": ["send-pairing.js", "reins-bulk-dl.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://system.reins.jp/*"],
       "js": ["score-overlay.js"],
       "run_at": "document_idle"
     },

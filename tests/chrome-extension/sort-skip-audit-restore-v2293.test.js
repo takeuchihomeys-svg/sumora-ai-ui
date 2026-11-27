@@ -113,7 +113,7 @@ ok("高→低になっていたかを点検に残す", /_liveDlStep\("ad_sort_re
 
 console.log("\n■ 手順書");
 ok("決まりの文に待ち直しを書いた", rules.includes("sort_failed_wait_retry") && rules.includes("wait_sort_cursor"));
-ok("30秒の待ちは変えていない", /var SORT_AFTER_SEARCH_MIN_MS = 30000;/.test(bd));
+ok("検索後の待ちは 40秒以上（2.8.317・旧30秒）", /var SORT_AFTER_SEARCH_MIN_MS = 40000;/.test(bd));
 
 console.log("\n" + (fail ? "NG" : "OK") + "  " + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

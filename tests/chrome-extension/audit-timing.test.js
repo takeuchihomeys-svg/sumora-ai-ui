@@ -67,12 +67,13 @@ const grab = (src, name) => { const s = src.indexOf(name); if (s < 0) return "";
   console.log("\n■ ② page-script: 操作ごとの時刻（ops）と段（steps）・見張りで止まった時の様子（stall）");
   const ps = read("page-script.js");
   ok("クリックの列の1件ごとに名前を持つ（enqueueHumanClick・enqueueHumanAction・queueSelVal・queueTxtVal）",
-    /label: _opLabel\(el\)/.test(ps) && /label: label \|\| 'action'/.test(ps) && /'sel:' \+ name \+ '=' \+ val/.test(ps) && /'txt:' \+ name \+ '=' \+ val/.test(ps));
-  ok("列を消化する時に予定の間と実際の間を記録（_auditOp）", /var _planned = item\.gap \+ hesitate, _setAt = Date\.now\(\);[\s\S]{0,600}_auditOp\(item\.label, _planned, Date\.now\(\) - _setAt\);/.test(ps));
+    /label: label \|\| _opLabel\(el\)/.test(ps) && /label: label \|\| ["']action["']/.test(ps) && /'sel:' \+ name \+ '=' \+ val/.test(ps) && /'txt:' \+ name \+ '=' \+ val/.test(ps));
+  ok("列を消化する時に予定の間と実際の間を記録（_auditOp）", /var _planned = item\.gap \+ hesitate, _setAt = Date\.now\(\);/.test(ps) && /_auditOp\(item\.label, _planned, Date\.now\(\) - _setAt\);/.test(ps) && ps.indexOf("var _planned = item.gap + hesitate") < ps.indexOf("_auditOp(item.label, _planned, Date.now() - _setAt)")); // 2.8.313: 間に長い処理（aim 再引き）が入ったので距離窓をやめ、定義→記録の順で見る
   ok("段は60件まで・ops は80件まで", /if \(_audit\.steps\.length > 60\) _audit\.steps\.shift\(\);/.test(ps) && /if \(_audit\.ops\.length > 80\) _audit\.ops\.shift\(\);/.test(ps));
   for (const k of ["'vis'", "'reset'", "'cities'", "'modal'", "'ward'", "'next_step'", "'town'", "'modal_close'", "'search_wait'", "'search'"]) ok(`段 ${k} を記録する`, ps.includes("_auditStepP(" + k));
 ok("見張り（駅を1件ずつ選ぶ速さに合わせて 235秒）で止まる時は stall を残してから fill-done を送る", /_auditStall\(\);\s*notifyDone\('watchdog-timeout/.test(ps));
-ok("見張りの長さは 895秒（v2.6.23: 人が操作する速さに合わせた）", /\}, 895000\);/.test(ps));
+// 2026-11-18 以降: 895秒→30分（間取りリトライ・9区クリックが短TOで切れないように。page-script.js の同所コメント）。進捗があれば延長もする
+ok("見張りの長さは 1800秒（旧 895秒。人が操作する速さ・リトライに合わせて 2026-11-18 に延長）", /_auditStall\(\);\s*notifyDone\('watchdog-timeout[^\n]*\n\s*\}, 1800000\);/.test(ps));
   const stall = grab(ps, "function _auditStall(");
   for (const k of ["stage", "since_stage_ms", "visibility", "has_focus", "hidden_ms", "queue_len", "queue_busy", "queue_next", "late_max", "late_over_1s", "modal_open", "city_checked", "form"]) ok(`stall に ${k}`, new RegExp("\\b" + k + ":").test(stall));
   ok("止まった時の読み戻しは stall.form（点検の比べる form には入れない）", !/_audit\.form = _readRealproForm\(\);[\s\S]{0,40}notifyDone\('watchdog/.test(ps) && /form: _readRealproForm\(\),/.test(stall));

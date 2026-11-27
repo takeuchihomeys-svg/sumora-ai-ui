@@ -1,0 +1,16 @@
+{
+  "at": "2026-11-26T20:55:54.035Z",
+  "note": "今ある型エラー（今回の変更に関係ない物）の基準。隠すためではなく、新しい型エラーを見分けるため。直したら --write-baseline で縮める。増やさない。",
+  "errors": [
+    "app/lib/__tests__/continuous-clear-fill-no-gap.test.ts|TS2345|Argument of type 'AuditStep[]' is not assignable to parameter of type 'readonly (string | { k?: string | undef",
+    "app/lib/__tests__/continuous-clear-sequence.test.ts|TS2345|Argument of type 'AuditStep[]' is not assignable to parameter of type 'readonly (string | { k?: string | undef",
+    "app/lib/__tests__/deepseek-auto-usage.test.ts|TS2353|Object literal may only specify known properties, and 'input_tokens' does not exist in type '{ output_tokens?:",
+    "app/lib/__tests__/overdue-promises-digest.test.ts|TS2345|Argument of type '{ kind: string; }[]' is not assignable to parameter of type 'readonly Pick<OverduePromise, \"",
+    "app/lib/__tests__/sent-read-retry.test.ts|TS2345|Argument of type '{ station: string; areaSqm: number; rent: null; floorPlan: null; built: null; roomNumber: st",
+    "app/lib/__tests__/sent-read-retry.test.ts|TS2345|Argument of type '{ station: string; areaSqm: number; rent: number; floorPlan: string; built: string; roomNumb",
+    "app/lib/__tests__/turn-aims-after.test.ts|TS2554|Expected 2 arguments, but got 3.",
+    "scripts/lib/__tests__/exam-select.test.ts|TS2322|Type 'Map<string, { line_tasks: number; } | { line_tasks?: undefined; }>' is not assignable to type 'ReadonlyM",
+    "scripts/lib/__tests__/exam-switch-reach.test.ts|TS2345|Argument of type '({ id: string; marks: { ack_confirm: number; }; ledger: { property_pickups: number; sent_fac",
+    "scripts/lib/__tests__/exam-switch-reach.test.ts|TS2345|Argument of type '({ id: string; marks: { pickup_why: number; pickup_why_sip?: undefined; }; ledger: { propert"
+  ]
+}

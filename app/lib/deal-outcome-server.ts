@@ -9,7 +9,7 @@ import { loadCustomerStateInput } from "@/app/lib/customer-state-server";
 import { resolveCustomerState } from "@/app/lib/customer-state";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import {
-  resolveDealOutcomes, buildOutcomeEventRows, toDealOutcomeRow, conditionHandAskEnabled, handAskedConditionAts, stageBeforeApplyEnabled,
+  resolveDealOutcomes, buildOutcomeEventRows, toDealOutcomeRow, conditionHandAskEnabled, handAskedConditionAts, stageBeforeApplyEnabled, applyFormSearchGuardEnabled,
   type DealInput, type DealPropertyClue, type RawOutcomeEvent, type DealEpisode, type OutcomeEventRow, type DealOutcomeRow, type StageHistoryRow,
 } from "@/app/lib/deal-outcome";
 import { turnSceneAt, stageBucketAt } from "@/app/lib/application-reach";
@@ -140,6 +140,7 @@ export async function computeConversationOutcome(conversationId: string, opts: {
     viewings: state.viewings.map((v) => ({ ymd: v.ymd, status: v.status, thankedAt: v.thankedAt, name: v.name })),
     propertySentAts, conditionAts, clues,
     ...(stageBeforeApplyEnabled() ? { stageBeforeApply: true } : {}),
+    ...(applyFormSearchGuardEnabled() ? { applyFormSearchGuard: true } : {}),
   };
   const episodes = resolveDealOutcomes(input);
   const computedAt = new Date(nowMs).toISOString();

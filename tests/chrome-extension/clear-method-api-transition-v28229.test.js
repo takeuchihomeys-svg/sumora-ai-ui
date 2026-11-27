@@ -17,8 +17,10 @@ function ok(name, c, d) {
 
 console.log("\n■ 版");
 ok("manifest ≥2.8.229", mf.version >= "2.8.229", mf.version);
-ok("page ≥2.8.229", /_AXLX_PAGE_VER = "2\.8\.(229|23\d)"/.test(ps));
-ok("rules ≥2.8.229", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.(229|23\d)"/.test(rules));
+// 2.8.313 版の固定をやめ「以上」を数で見る
+const _patch = (re, s) => { const m = re.exec(s); return m ? parseInt(m[1], 10) : -1; };
+ok("page ≥2.8.229", _patch(/_AXLX_PAGE_VER = "2\.8\.(\d+)"/, ps) >= 229);
+ok("rules ≥2.8.229", _patch(/AUTO_RULES_REVIEWED_UP_TO = "2\.8\.(\d+)"/, rules) >= 229);
 
 console.log("\n■ APIで外し方把握");
 ok("_graspClearMethodFromPlaybook", /function _graspClearMethodFromPlaybook\(/.test(ps));
@@ -38,13 +40,15 @@ ok("axlx_task_grasped_sync", /axlx_task_grasped_sync/.test(ps));
 ok("axlx-task-grasped", /axlx-task-grasped/.test(ps) && /axlx-task-grasped/.test(bd));
 ok("_graspBeforeNextTask", /function _graspBeforeNextTask\(/.test(ps));
 ok("clear_then_fill で graspBeforeNext", /_graspBeforeNextTask(Then)?\("clear_then_fill"/.test(ps));
-ok("leftover dirty で graspBeforeNext", /leftover_dirty外し開始/.test(ps));
+// 2.8.313: leftover dirty は _screenPollThenApiNext("clear_start", "leftover_dirty") → _graspBeforeNextTaskThen(phase) の形になった
+ok("leftover dirty で graspBeforeNext", /_screenPollThenApiNext\("clear_start", "leftover_dirty"/.test(ps) && /function _screenPollThenApiNext[\s\S]*?_graspBeforeNextTaskThen\(\s*String\(phase/.test(ps));
 ok("dl:task_transition_grasp", /task_transition_grasp/.test(bd));
 
 console.log("\n■ 決まり・KEEP");
 ok("決まり clear_method_api_grasp_transition", /id: "clear_method_api_grasp_transition"/.test(rules));
 ok("RULES_DONE", /"clear_method_api_grasp_transition"/.test(ps));
-ok("KEEP/RULE に clear_method_api_|task_transition", /KEEP_STEP[\s\S]{0,1400}task_transition_grasp/.test(sa) && /RULE_STEP[\s\S]{0,1400}clear_method_api_/.test(sa));
+const _kLine = (sa.match(/var KEEP_STEP = .*/) || [""])[0], _rLine = (sa.match(/var RULE_STEP = .*/) || [""])[0];
+ok("KEEP/RULE に clear_method_api_|task_transition", /task_transition_grasp/.test(_kLine) && /clear_method_api_/.test(_rLine));
 ok("PIN に task_transition|clear_method_api", /task_transition_grasp|clear_method_api_/.test(ps));
 
 console.log("\n" + pass + " passed, " + fail + " failed");

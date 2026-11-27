@@ -57,7 +57,9 @@ t("版が 2.7.76", manifest.version >= "2.7.76");
 
 // ── ⑥ 縮小の呼び出し（送る所1か所＋ローカルの控え1か所／定義は数えない）────────────
 const calls = (bg.match(/_shrinkShot\((?!dataUrl, maxSide)/g) || []).length;
-t("縮小の呼び出しは2か所（送る所＋ローカルの控え）", calls === 2);
+// 2.8.284: リセット確認の写真（_resetShot）も等倍上限 SHOT_MAX_SIDE・q70 で送るので送る所が増えた（送る所2＋ローカルの控え1）
+t("縮小の呼び出しは3か所（送る所2＋ローカルの控え）", calls === 3);
+t("リセット確認の写真も上限と品質は共通（480px に戻していない）", /_shrinkShot\(dataUrl, SHOT_MAX_SIDE, SHOT_SEND_Q\)/.test(bg));
 t("送る所で上限と品質を渡している", /_shrinkShot\(dataUrl, cap, q\)/.test(bg));
 t("ローカルの控えは別（小さいまま）", /_shrinkShot\(shrunkDataUrl/.test(bg));
 t("ローカルの控えは別（小さいまま）", /_shrinkShot\(shrunkDataUrl/.test(bg));

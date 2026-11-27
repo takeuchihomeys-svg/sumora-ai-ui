@@ -65,8 +65,10 @@ console.log("\n■ ③ 材料を LLM に渡す形（数字は決定論で数え�
 
 console.log("\n■ ④ Vercel の制限時間（これが無いと29.6秒の処理が切れる）");
 {
-  ok("  ⚠ human-learn-profile に maxDuration がある", /export const maxDuration = 60/.test(profile));
-  ok("  ⚠ cron API にも maxDuration がある", /export const maxDuration = 60/.test(api));
+  // 2.8.313: 60 → 300 に延ばされた（長い処理に合わせた）。守るのは「既定10秒で切れない・実測 29.6秒の処理が収まる＝60秒以上」
+  const _maxDur = (s) => { const m = /export const maxDuration = (\d+)/.exec(s); return m ? Number(m[1]) : 0; };
+  ok("  ⚠ human-learn-profile に maxDuration がある（60秒以上）", _maxDur(profile) >= 60, _maxDur(profile));
+  ok("  ⚠ cron API にも maxDuration がある（60秒以上）", _maxDur(api) >= 60, _maxDur(api));
   ok("  ⚠ 理由が書いてある（既定10秒では切れる）", /既定.*10秒|10秒.*切れ/.test(profile) || /10秒/.test(api));
 }
 

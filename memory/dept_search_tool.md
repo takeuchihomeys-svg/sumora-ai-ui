@@ -1,6 +1,474 @@
-# #43 物件検索ツール部署 記録ファイル
+﻿# #43 物件検索ツール部署 記録ファイル
 
 > セッションをまたいで記録を継続する。更新時は日付を必ず記録する。
+
+---
+
+## 2026-11-28 **拡張 2.8.329（同じ版に追加・まだ上げていない）2人目が次のページへ行かずリセット／3人目の沿線（区間）で駅を選べず迷った**
+竹内さんの言葉（そのまま）: 「2人目のひと物件検索してしゅとくしたあとに次のページ行かずにリセットとなった ここちゃんと手順書で次に行かなかった原因はなになのか…なぜ次へに2人目のお客さんはいかなかったのか ここの原因見つけて改善する」「3人目のお客さんなのだが沿線検索したところでなぜか止まって迷いはじめた ここの部分まようのならなんでマウス途中で途切れてへんなうごきをしないように、まうすもつながったようにする そして沿線までおしたら駅まで選択する部分をちゃんと理解できていない可能性が高い 沿線までせんたくすると駅までちゃんと選択するように手順書にいれるようにする ここ(中津～本町)とでているので中津駅から本町駅までの間の駅をすべてせんたくするようにする ちゃんと把握するようにする」。設計知見 P1: 1af727d6（頁の番号）・5e63195d（沿線の区間）・2f0bf04e（カーソル・96a0bab7 を訂正して退役）。
+- **2人目の原因（本番 #1677 genki-sano）**: 一覧の開始から `list_flow_grasp list_start … next有 … 1ページのみ` を出し、9件送った後 `list_no_next_advance`→リセット。画面は「前頁 1 2 次 最後」。`_readPagerState` は td.pager の数字だけ数え、数字が1つ以下なら1ページのみ。いまの頁の番号が td.pager でない形だと2頁が [2] だけになる（3頁以上は通るので2頁の時だけ落ちる）。さらに `pager(N)` の N と今の頁を比べていた（N が0始まりなら1頁目の次を押せない次と読む）。直近30日で次へを押せた印（`dl:press_next_moved`）は0件。手順書・流れの地図（④の分かれ道）の形は正しかった（change-premise --area=list で確認）。読み違えたのは分かれ道の入口の条件。
+- **bulk-dl.js**: `_readPagerState` は「次」と同じ行（tr）の全部の葉（td・a・b・span 等）から番号を数える。いまの頁＝押す口（onclick・a[href]）の無い番号（無ければ current/active クラス・b/strong）。次がある＝いまの頁 < 最後の番号（今の頁が分からない時は「次」に onclick があれば有）。`_findNextPageEl` の td.pager の「次」も `hasNextUsable` で決める（pager(N) と比べない）。読んだ形を `dl:pager_read`（番号・今・元・葉の形・次の onclick）で1頁1行。**実機で形を確かめる**（DOM の形は DB に無い）。
+- **3人目の原因（本番 #1678 tomi・希望エリア「御堂筋沿線（中津〜本町）」）**: intended が `route_ids:["6701"]`・`station_names:["御堂筋"]`。popup.js の `expandLineRange` が「御堂筋沿線」をそのまま駅の並びの表で引いて外れ、区間が消えた（resolution-core は括弧を先に消していた）。駅の画面で「御堂筋」の駅が無く、`_selectStationsByNameCore` の汎用の字の一致（STEP4 前方一致）が画面の「御堂筋線」の字を押しに行き、`move_retry`・`press_no_arrive` を繰り返して迷った。
+- **popup.js**: `lineRangeKey`（沿線・線無し・短い名前→表のキー）・`lineRangeSpecs`・`restrictRangeRoutes` を足した。`parseAreaTokens` は括弧を消す前に「〇〇沿線（A〜B）」「〇〇線（A〜B）」「〇〇（A〜B）」をその線の A〜B の駅（端も含む）へ。送る直前に区間の駅を足し、沿線は区間の線だけ（区間の外の駅・通勤の線は残す）。欄に展開済みの駅が入っている時は登録の希望エリアから区間を読む。線の名前の切れ端（「御堂筋」）は駅から外す。駅の表にある語は数字に崩さない（谷町四丁目→谷町4丁目にしない）。
+- **resolution-core.js**: 同じ考えの `lineRangeKey`・`expandLineRange`・`lineRangeSpecs`・`restrictRangeRoutes`（SUMORA_RESOLUTION に公開）。`resolveConditionsLocal` で区間の線だけに絞る。「御堂筋沿線（中津〜本町）」→ route_ids [6701]・駅 中津・梅田・淀屋橋・本町・未解決0。
+- **page-script.js**: 駅の画面（label.one_station／station_id[]）では駅の札だけを見る（汎用の字 STEP2〜4 を使わない・`station_line_text_skip`）。札が無い時の label の代わりも沿線の札（one_line）・「〜線」の字を外す。カーソル: 動かし直す前に飛んでいるカーソルが止まるのを待つ（`_waitPointerIdle`・最長2.5秒）。押す物が途中で画面から消えたらカーソルを動かさない（`move_target_gone`）・DOM から外れた物は押さない。隠れた入力欄は今まで通り（hidden_press）。
+- **pointer-ui.js**: `moving()`（飛んでいる途中か）を公開。
+- **流れの地図・手順書**: loop-flow-map.ts の入力の手（fill）の presses に「駅（沿線の次に駅まで選ぶ）」を「駅の設定へ進む」と「確定してリストへ」の間に足した（効いた＝`page:station_select_ok`・押した＝`page:station_per_line_ok`・失敗＝`station_name_absent`／`station_line_stuck`・例「御堂筋線 中津〜本町＝中津・梅田・淀屋橋・本町」）。駅の場面の station_id[] の手に結ぶ（録画に無ければ駅の設定へ進むの後ろに足す）。`PLAYBOOK_BUILD_V` 37→38（サーバーが手順書を作り直す）。
+- **点検の段**: KEEP_STEP に `dl:pager_read`・`page:move_target_gone`・`page:station_line_text_skip`・`page:station_select_ok`・`page:station_per_line_ok`・`page:station_name_absent`・`page:station_line_stuck`。ページ側の _PIN にも4つ。
+- **試験**: 新規 `tests/chrome-extension/next-page-line-range-v28329.test.js`（41件・実際の `_readPagerState` を偽の画面で動かす＝いまの頁が td.pager でない形・0始まりの pager(N)・最後の頁・1頁・a の中の番号／resolution-core と popup の関数を実物の文と表で／駅の画面の飛ばしの順番／地図の並び）。ext-test-all 全360本 青358・赤2（基準の古い赤）。press-grasp-map 177・loop-flow-map 106・auto-procedure-rules 224・playbook-step-grasp 緑。tsc は既存の古いテストのエラーだけ（今回の変更の分は0）。
+- **まだ**: 実機（再読込→2頁ある客で `dl:pager_read` の形と `dl:press_next_moved`・沿線（区間）の客で駅4つ）。「梅田・御堂筋沿線（中津〜本町）」のように区間の駅を別にも書いた時は、その駅の他の線も絞られる（今は区間を優先）。
+
+## 2026-11-27 **拡張 2.8.329 リセットの「押した」を読み直しを越えて把握・枠の表記と時間をずれなく・重さの計測（削るのは計測の後）**
+竹内さんの言葉（そのまま）: 「リセット押すまでの一連のながれできたのに、次のお客さんにすすまない、おそらくリセットボタンを押したてこと理解できていない。ここどうすれば押したことりかいできるようになるのか 根本的な原因を徹底的に調査する」「ボックスのあなうんすのところ…表記間違えていること多いのでこまかいところまでちゃんとわわせるように、時間も5秒刻みとかでよいのでしっかりと表記するように」「次のお客さん検索押したところで重すぎてかたまっている…重い部分をなおせたらかなり実用的になる」。選択: `all_measure_first`（リセットと枠を直し、同じ更新で重さの計測を入れる・削るのは計測の後）。設計知見 P1「【決定】リセットの「押した」は読み直しを越えて残る印で把握する…」。
+- **原因（本番 #1677 で確認）**: リセットを押すとページが読み直され、押す処理の返事ごと消えた（`no_answer`）。背景の遅れの確かめは1回だけで、読み直し中の失敗を黙って捨て「押せず」→保険の86秒待ち→`reset_stuck_recovered` で遅れて進んでいた（押せてはいた）。
+- **page-script.js**: `_fireReset` で押す直前に sessionStorage `axlx_reset_fired` {at, bootAt, origin} を置く（押すと読み直されるので先に置く）。`_resetPress` の初めに前の印を消す。`axlx-bulk-next` は同じ中身の連続を1回に（`__axlxBulkNextSig`）・`list_done` は送付完了（`done: true`）の時だけ（検索の最中に一覧完了＝handoff にならない）。`axlx-task-grasped` の いま は日本語（taskNow／段の日本語）。細分化の駅の焦点は枠に出さない（`flow_subdivide_focus` の印だけ）。
+- **background.js**: 押す前に時刻 `_pressT0` を取り、前の印を消してから押す。返事が無い／時間切れの時、最大25秒（1.5秒おき）タブの状態と「印」「いまのページの起動時刻（performance.timeOrigin）」を直接読む。起動＞印の時刻＝押した後に読み直された＝押せた→`reset_press`「押した（遅れて）」で先へ（保険へ行かない）。押す前より古い印は数えない。返事が消えたのに読み終えたページで印が3回続けて無い＝押していない→待たずに保険へ。どの結果でも `reset_press_late_check`（返事・回数・秒・結果・各回の理由）を1行。枠の生きた状態を `chrome.storage.session` の `axlx_box_live`（wait／press／resetPos）へ順に保存（`_boxLiveSave`）。リセットの初めに位置（入れる前 pre_fill／送付のあと post_send）を枠へ（`axlx-bulk-reset-pos`）。
+- **bulk-dl.js（枠）**: いまの手の経過を5秒刻みで添える（`_fmtElapsed5`・始まりは sessionStorage `axlx_now_since`・読み直しを越えて数える）。待ちは「あと約N秒」（5秒刻みの切り上げ）。読み直しの後 2秒で `axlx_box_live` から待ち・押した行・位置を戻す（`dl:box_live_restore`）。枠の言葉が変わった時だけ `dl:panel_text` を点検に1行。
+- **言葉（bulk-panel-grasp.ts／.js・地図 loop-flow-map.ts）**: リセットの つぎ は `{after}の条件をAPIから読み直して入れる`。入れる前のリセット＝いまの客の名前＋「／その次の客は 次の客」、送付のあと（位置不明も）＝次の客の名前。英字だけの段名（handoff 等）は日本語にするか出さない。`gen-panel-words.ts` で写しを作り直した。
+- **重さの計測（動きは変えない）**: `dl:perf_nav`（返事待ち＝responseStart−requestStart・受取・組立・load）／`dl:perf_loaf`（最初の60秒の長い描画を原因のファイルごとに足した上位4）／`dl:perf_loaf_prev`（前の頁＝検索を押した頁を離れるまでの同じ集計・pagehide で sessionStorage `axlx_perf_prev`）。次の実機の回でリアプロの返事待ちか拡張のどのファイルかを見て、重い所を削る。
+- **点検の段（search-audit.js KEEP_STEP）**: `dl:panel_text`・`dl:perf_nav`・`dl:perf_loaf`・`dl:box_live_restore`・`reset_press_late_check` を足した。
+- **試験**: 新規 `tests/chrome-extension/reset-receipt-box-v28329.test.js`（36件・印を置いてから押す順・輪の後に必ず1行・古い印を数えない・done の門・枠の戻し・計測）。`bulk-panel-grasp.test.ts` に位置ごとの つぎ・英字の段名を出さない・TS と JS の写しが同じ文、を足した。loop-flow-map／panel-from-flow-map／bulk-panel-playbook-sync／playbook-reset-skeleton／audit-step-phantoms 緑。tsc は既存の古いテストの22件だけ（今回の変更の分は0）。
+- **まだ**: 実機（再読込→2客以上→`check-playbook-sync` ⑧）は未確認。重さを削るのは計測の結果を見てから。上の青い帯（score-overlay）が古いまま・1人目の送付のあとのリセットが無い（`再開:batch_done_no_lo`）は別に。
+
+## 2026-11-27 **拡張 2.8.328 段階1: 入れる前の「前客の残り」は1つずつ外さず、残っていれば止める（外す係を全部消す途中）**
+竹内さんの指示（そのまま）: 「１」（段階1から進める）／「これでおねがい」（段階1の計画）／「従来の1つずつ外しを完全に消す」（2.8.328 の指示）。
+決まり（そのまま・2026-11-27）: 「一番最初のお客さんはリセットされた状態で検索進めるためリセットしなくて大丈夫　格調の休憩時間明けのお客さんとかはリセットする」。
+- **何を変えたか（page-script.js）**: 入れる前に前客の欄（駅・沿線／区・町／間取り・ペット・その他の欄）が残っていたら、クリックで1つずつ外さず `_leftoverAbort("leftover_stuck: …")` で止める。
+ - 新しい関所: `_residueGateThen(kind, next, why, tag)`（残りを数える・0なら次へ・あれば止める）／`_softResidueThen(why, done)`（欄の残りを見て止める）。
+ - 置き換えた所: `_clearWardsOneByOne` → 区・町の関所／`_clearStationsBeforeWardThen`・`_clearWardsBeforeStationThen` → 関所／`_uncheckLeftoversThenRest`（残ったチェックは外さず止める）／`_resetRest` の欄の掃除 → `_softResidueThen`／`_cleanStartGate`（指定しない欄の残り）→ 止める／配置の残り → 止める。
+ - 駅・沿線の押して外す状態機械（`_placeClearOneJudge`・`_placeClearOneShow`・`_uncheckVisibleStationsLikeHuman`・`_uncheckVisibleLinesLikeHuman`・`_uncheckStationsThenLinesLikeHuman`・`_learnedStationTransitLabels`・旧 `_advanceForcePlaceClearViaStationFirst`）を削除（約630行）。`_advanceForcePlaceClearViaStationFirst` は「駅・沿線が残っていれば止める（1分に1回だけ合図）・無ければ true」の関所に置き換え。モーダルを閉じる前の2か所も関所へ。
+ - 消した関数: `_clearChecksOneByOne`・`_resetFieldsOneByOne`・`_leftoverSweepNames`・`_leftoverNamedInputs`（＋前段で消した分）。
+- **background.js**: `_scrapeAndSendRealpro` で fill-done の error が `leftover_stuck:` なら一括を止める（`_batchShouldStop = true`・`_resetStopNotify`・`__BATCH_STOPPED__`）。次の客へ進まない。
+- **点検の段（search-audit.js）**: 出なくなった名前を KEEP/RULE から外す（`clear_field_ng/done/grasp`・`station_clear_reopen_after`・`station_back_force_try`・`station_back_wrong`）。関所の印は `leftover_` で見える形（`leftover_station_stop`・`ward_clear_one_stuck`・`ward_clear_gate_stuck`・`station_clear_gate_stuck`・`leftover_soft_stay`）。
+- **決まり（auto-procedure-rules.ts）**: `clear_per_panel`・`ward_clear_one`・`clear_one_by_one`・`station_clear_continue_after_stations` の text・marker・verify を「外さず止める」に直した。`clear_single_owner` は印が無いため `RULES_CODE_ONLY`（理由つきの例外）へ。`task_grasp_now_done_next` から死んだ外しの印を外した。
+- **試験**: 拡張 `ext-test-all.ts` 全352本 青350／赤2（赤2は基準＝2026-11-26 の古い赤）。新規: `tests/chrome-extension/stage1-no-one-by-one-v2832.test.js`（13件・構造＋自己点検）。
+ - 退役（段階1の理由をコメントで残した）: `active-clock-v2819`・`place-switch-v2818`・`leftover-progress-v2825`・`ward-clear-one-v28146`・`clear-one-owner-v28147`・`clear-one-visible-v28270` の6本を削除。ほかは確かめていた ok を `// 退役（段階1・2026-11-27）` の注記に置換（continuous-human・loop-clear-grasp-chain・station-clear-continue・task-grasp-clear-fill・ward-clear-human・wire・ai-customer-mode・clear-per-panel-search-decide・hit-point-switch・sidebar-opener・stuck-retry-bottleneck）。
+ - TS: `auto-procedure-rules`（222件）・`auto-rules-verify-exists`・`playbook-rule-evidence`・`playbook-retired-phrases`・`action-playbook`・`loop-flow-map`・`playbook-served` など緑。`tsc-gate` 型エラー10件（基準どおり・新規0）。`gen-panel-words --check` 一致。
+- **段階2-A（2026-11-27 追加）**: 「沿線のみ」（駅の指定なし）で残っている駅を外す同期の処理を、関所 `_residueGateThen("station", _closeAndSearch, "沿線のみ", "station_clear_only_gate")` に置き換えた（残りがあれば止める・無ければ閉じて検索）。試験は `stage1-no-one-by-one-v2832.test.js` に1件追加（14件）。拡張全体は青350／赤2（基準）。
+- **段階2-B（2026-11-27 竹内さん「リセットボタン基準で行く」「残りがあれば止める」を選択）**:
+ - 停止フラグ `window.__axlxLeftoverHalt`: `_leftoverAbort` で立つ。`waitForClick` は立っていたら判定・クリック・失敗時の後始末（フォールバック検索）へ進まない。新しい客の入力の開始（`__axlxRunId` を置く所）で下ろす。
+ - 不要駅（今の客の駅指定の外＝前客の残り）: 1つずつ外さず数え、残りがあれば `leftover_station_stop` ＋ `_leftoverAbort`（`station_clear_cursor` の外しは消えた）。
+ - 所在地の余り（`gate_ward_clear`）・所在地前の駅（`_clearStationsBeforeWardThen`）は段階1の関所のまま。点検の文言と古いコメントだけ直した。
+- **まだ残っている（段階3）**: 手順書の骨組み・`loop-flow-map.ts` の言葉（「1つずつ外す」を含む文）。`PLAYBOOK_BUILD_V` を上げるかは未決め。実機で「残りで止まる」が想定どおりか未確認（再読込→2人以上）。
+- **段階2-B 後半（竹内さん 2026-11-27「stop_all」を選択: 人が選んだ物も含め、残りがあれば外さず止める）**:
+ - 所在地を開く前の事前外し（`_clearBeforeOpen`・`area_preclear_stop`）: 残りがあれば `_leftoverAbort`（外さない）。点検の文言も直した。
+ - 開いた直後の前客の地域外し（`_clearPrevAreaSelection`・`area_prev_clear_stop`）: 「自動で入れた物だけ外す・人が選んだ物は残す」は退役。残りがあれば止める。
+ - 沿線の不要沿線外し（`station_line_stop`）: この run で自分が押した沿線（`__axlxLinePickedRun`）だけ残し、それ以外（前客の残り・被り・人が選んだ物）は外さず止める（`return false`）。
+ - 残りの押して外すは `eq_rm[]`（今の客の「外:ペット」条件を合わせる所・約541）1か所だけ。これは前客の残りを外す所ではないので据え置き（竹内さんに確認が要る場合はここ）。
+ - 試験: `stage1-no-one-by-one-v2832` 19本、旧い仕様を見ていた4本（area-and-search-press・line-repress-v2816・pick-with-pointer）を 退役コメント付きで新しい止め方に直した。全体 350 青・基準の赤 2。
+ - 実機で「残りで止まる」が想定どおりかは未確認（再読込→2人以上）。
+- **段階3（2026-11-27・言葉と文の直し。動きは変えない）**: 枠（パネル）と次の動きに出ていた「前客の選択を1つずつ外す」を、**「リセットで空にして次のお客さんへ」**に統一（`page-script.js` 11箇所・`background.js` 5箇所・`bulk-dl.js` 5箇所・`handoff-loop-ledger.ts`）。場所の版「前客の場所を1つずつ外す」→「前客の場所もリセットで空にする」。いまの行動「外している最中」→「リセットで空を確かめている最中」（`_publishNowAction`・`bulk-panel-grasp.js` の判定も同じ言葉を拾う）。`playbookAction` の判定は「外している最中」と「リセットで空を確かめ」の両方を見る。
+ - 手で書いた説明文を現在の決まりに合わせた: `page-script.js` の連続検索の説明（「残りを1つずつ外す」→「残りがあれば外さず止める」）・`_doReset` の注記・残区・駅ページ直の順番の注記（旧の経緯は残す）。`.cursor/rules/auto-clear-not-reset.mdc` の「失敗時は1つずつ外す」→「止める。1つずつ外す保険は無い」。
+ - `app/lib/auto-procedure-rules.ts` の決まりの文の3か所: 同種（駅→駅・地域→地域）の「先に外す」→「残りを確かめ、残りがあれば止める」／いまの行動の「外している最中なら『外す』」→「リセットで空を確かめている最中」／最後の保険の外し（reset_fallback）の文を削除（2.8.328 で送付後の保険は廃止）。
+ - 地図（`loop-flow-map.ts`）は今の形のまま正しかった（`gen-panel-words --check` が「地図と同じ」）。手順書の正本 `action-playbook.ts` は build_v 33 のまま（今回の変更は拡張の言葉と決まりの文のみ・手順書の中身は変えていない）。
+ - **据え置き（理由つき）**: `eq_rm[]` のペット外し（今の客の「外:ペット」条件を合わせる所・約541行）。`itandi-page-script.js` / `auto-itandi-rules.ts`（ITANDI は消すボタンが無いため、1つずつ外すのが今の唯一の方法・リアプロの決まりの対象外）。
+ - 試験の直し: `app/lib/__tests__/ward-reselect-loop.test.ts` の3本（引き取り後は積まない・止める・印を戻す）は**HEAD の時点で既に赤**だった（停止印の掃除の行が入り、正規表現が古い形を見ていた）。動きは残っていることを確かめてから、正規表現だけを現在のコードの形に合わせた（16本青）。
+ - 残った赤: `customer-sim.test.ts`・`reapply-customer.test.ts`（AI返信の判定。読んでいるのは `post-apply`・`alt-pii-gate`・`staff-todo-list` で、今回の作業では触っていない。HEAD での赤の有無は未確認）。
+ - 版は 2.8.328 のまま（未コミット・未 push。`ext-release.ts` は③「未コミットなし」だけ止まっている）。エリア事前外し（所在地の precheck）・沿線の clear（`line_clear`）・`station_clear_*` 系の小窓も段階2。手順書の文（決まり以外の骨組み）と `loop-flow-map` の文言は段階3。`PLAYBOOK_BUILD_V` は未更新（文言の版を上げるか未決め）。
+- **リセットが押せない・邪魔の調査（2026-11-27 竹内さん「ちゃんとリセットがでるようにして…時間差のところで邪魔しないようになっているのか 徹底的に調査」）**:
+ - 原因（DB #1661・#1666・#1671）: 押せなかった回は全部 `tab_hidden`。ボタンは見つけて列に積めている（`enq=ok btn=queued`）が、見えないタブでは Chrome が時計を遅くして人の動きのクリックが120秒で終わらない。`window_restore` 無し＝最小化ではなく他の窓に隠れていた。
+ - **見えるまで待って知らせる**（竹内さん選択 wait_notify・設計知見 67da6f24）: `background.js` `_waitRealproVisible`。前に出しても hidden なら押さずに待つ（5秒ごとに見る・最大10分・段と窓 quiet reset を1分ごとに伸ばす・ストップ要求で抜ける）。Windows の通知（`notifications` 許可を足した・押すと窓を前に出す）と枠（⏳ `reset_hidden`・押した結果 `hidden_wait`／`hidden_stopped`）。10分見えなければ押さずに止める（`hiddenStuck`→保険へ行かず `reset_stop`・グループへ見えない時用の文）。印 `reset_hidden_wait`／`reset_hidden_visible`／`reset_hidden_stuck`（KEEP/RULE に `reset_hidden_`）。地図に分かれ道 `b_reset_hidden_wait`（親 reset・見えたら reset へ）と止まり `b_reset_hidden_stop`、待ち `reset_hidden`。決まり `reset_hidden_wait`（`_AXLX_RULES_DONE` にも）。
+ - **遅れて来るリセットのクリックを止めた**: `_resetPress` の `_fireReset` は押す処理が「押せず」で終わった後（finished && !fired）は押さない（`reset_press_late_blocked`）。旧は120秒で押せずの後も実行途中のクリックが残り、見えた時に遅れて押され、保険の押し直し・次の客の入力中にページを読み直し得た。
+ - **残りの関所が自分の選んだ物で止まる誤停止**（調査で3か所を確認）: ①沿線のみの関所（`station_clear_only_gate`）が自分の沿線を数えて必ず止まる ②強制の確かめ（`_advanceForcePlaceClearViaStationFirst`）は `__axlxLineForceClearedOnce` を立てる所が無く、自分の沿線を押した2回目で止まる ③詰まりの立て直しも同じ関数。→ `_isOwnPlacePick`（`__axlxLinePickedRun`・`_axStationPicked`）で自分が押した駅・沿線を数えない（区・町は対象外）。覚えは入力の開始で空に戻るので、入力前の関所は今まで通り全部数える。止めの合図の1分の印 `__axlxResidueAbortAt` も入力の開始で戻す。
+ - 手順書: DB は build_v 30・本番コード 2.8.325（手元 33・2.8.328）。コミット→デプロイ→attach→拡張の再読み込みが要る。
+ - 本番の点検の記録（120段の上限）で、入力中の押した印（駅の設定へ進む等）は「残す段」に無いので真っ先に捨てられていた（#1673 にも `search_press_ok` 無し）。→ 押した把握の強化で直す（続き）。
+ - 試験: `reset-press-late-block-v28328`（8）・`residue-own-pick-v28328`（15）・`reset-hidden-wait-v28328`（19）。`loop-flow-map`（失敗の道5本）・`wait-words-from-map`（待ち9つ）・`reset-before-fill-v2296`（KEEP に reset_hidden_）を新しい形に。拡張 355本中 353 青（基準の赤2）・型エラー基準10。
+- **2.8.328 押したことの把握の強化**（2026-11-27 竹内さん「ボタンの把握の部分弱い…ちゃんと押したら押したってこと理解できるように それぞれの手順書のところでも」・設計知見 530603c3）
+  - 本番の点検40回（#1612〜#1675）で、確定・所在地を開く・駅の設定へ・検索の押した印が**1つも残っていなかった**（120段の上限で KEEP/RULE に無い段から捨てる）。押した証拠に「列に積んだ」「列が空いた」を使っていた所（確定・検索・リセット）は、安全弁・取り消し・人の割り込みで消えても押したと同じに見えた。
+  - **押した（押す関数が実際に呼ばれた）と効いた（画面が変わった）を別の印に**:
+    - ページ: `_humanPointerClick` は外側（受領）＋`_humanPointerClickCore`（動き方の中身・自分を呼び直す3か所は中身を直接）。受領 `press_ok_<種類>`／`press_ng_<種類>`（種類は `_pressKindOf`・チェック欄は押せなかった時だけ `press_ng_pick`）。列の取り消し `press_ng_cleared`・20秒の安全弁 `press_ng_stuck`。入力の終わりに `press_sum`（押せた・押せなかったの数）。リセットの返事は fired を見る（`queue_idle_not_fired`）。
+    - 確定してリストへ: `_confirmEffectThen`（小窓が閉じるまで最大6秒→押し直し1回→閉じなければ止める）。所在地・駅とも次の手の前に通す。
+    - 所在地絞り込み: 開いたかは `_graspAreaModalScreen`（見えているか）で見る（旧の input が有るかは閉じていても真）。押している最中は押し直さない・9秒で打ち切り・`area_open_ok`。
+    - 一覧: 印刷用PDFは押せたかを返す（旧はいつも成功）・`press_ng_pdf`／`press_ng_pdf_effect`・頁ごと `press_pdf_sum`。次へ `press_next`→頁番号で `press_next_moved`／`press_ng_next_page`。高→低は**時間差で認める**（下の「並べ替えの時間差の認識」・旧の読み直した URL で確かめる所は通らない道だったので外した）。
+    - 枠: `_setPressNote` に press・confirm・pdf・next・sort の効いた／効かない。
+    - 点検: KEEP_STEP／RULE_STEP／ページの `_PIN` に押した印を追加（**先頭は変えない**＝古い試験が先頭の並びを見ている）。
+  - **地図が正本**: `loop-flow-map.ts` の `FlowNode.presses`（リセット・所在地絞り込み・駅の設定へ進む・確定してリストへ・検索・高→低・印刷用PDF・次へ）。手順書の文は `pressLine()` で作り、③④④の1⑤・所在地①③・検索①・before_clear に付ける＋決まり `press_grasp_each` に全部（手順書 build_v 34）。`checkPresses`（押す手に presses・押した≠効いた・待たないなら「記録」）・`checkPressPlaybook`。手の欄の判定は「押したことの把握」より前だけを見る（`stepHead`）。検索の文に「印刷用PDF」を書かない（`_pbListNext` が一覧と取り違える）。
+  - 時間差の邪魔の続き: `_ensureRealproTab` はエラー無しの無返事を確かめ直す（#1675 は重いだけで読み直していた）・リセットで押すタブを `_pickRealproResetTab` に1本化・リセット前に `axlx_sort_pressed_sync` も消す・物件の比較も一括中は後回し・手動の入力前リセットの `sender` 未定義を直した。
+  - 道具: `scripts/press-grasp-count.ts --n=40 [--per-run]`（本番の押した印の数・読むだけ）。
+  - 試験: `app/lib/__tests__/press-grasp-map.test.ts`（131）・`tests/chrome-extension/press-grasp-v28328.test.js`（52）。古い試験は形の変化に合わせた（中身は `_humanPointerClickCore`・所在地の開いた判定・grace 2400・固定の待ちの許可に読むだけの3つ・模擬に `_pickRealproResetTab`）。拡張 356本中 354 青（基準の赤2）・型エラー基準10。
+  - 残り（未着手）: 引き継ぎリセットの待ちが20秒短い・`clickByText`／`_pressLearned` が1.6秒以内の飛ばしでも true。（入力前リセットの二重・同じ秒の `bulk_phase` の重複・町／管理費／構造の確かめは下で直した）
+- **2.8.328 並べ替えの時間差の認識**（2026-11-27 竹内さん「ならべ化ののところはおしたののこらないなら 前後の手順と時間差をちゃんとあけて 時間差で並べ替えしたということの認識にすればよいのではないかな」・設計知見【決定】並べ替え（高→低）は…時間差…）
+  - 本番60回: 読み直しの URL で確かめる所（ad_sort_reload）は0回＝通らない道。#1673 は並べ替え済みの後に新しい行の道から並べ替えがもう一度始まり、物件取得の最中にカーソルの取り消しが3回。
+  - `bulk-dl.js`: 押した時刻（同じページ `_sortPressedAt`／読み直し後 `axlx_sort_pressed_sync.at`）から、④の直前に `_sortTimeRecognized` が12秒以上あいていれば `press_sort_effect_ok`（押してからN秒）・短い／時刻不明は `press_ng_sort_effect`（記録して④へ・押し直さない）。`_sortRecognizedDone` を `_scheduleSortCursorAfterSearch`・`_kickSortAfterSearch` の先頭で見て、並べ替え済みの一覧では始めない（`sort_skip_done`）。地図 sort.presses も時間差の認識（gate）。道具 `scripts/sort-timing-check.ts`。
+- **2.8.328 入力前リセットの二重・同じ秒の段の重複・町／管理費／構造の確かめ**（2026-11-27 竹内さん「裏が起き直した後の入力前リセットが二重になる 同じ秒に同じ段（bulk_phase）が重複して記録される 町の選択や管理費・構造の選択は、効いたかを確かめていない ここも順に改善する 徹底的に改善する」）
+  - **本番の記録（読むだけ・`scripts/reset-double-check.ts`）**: #1666 は裏の起き直しの後に一括の入力前リセット（runId 付き）とは別に `bulk_phase pre_fill_reset` が同じ秒に16回＋13回、#1671 は58回。**元は popup**: 一括の印（`dataset.automated` 等）を `autofillBtn.click()` の直後に同期で外しているのに、onclick が先頭で `await _axLearnRefreshBeforeAutofill` してから印を読んでいた＝自動なのに手動扱いになり、手動の入口から入力前リセットをもう一度頼んでいた（2.8.112 から）。古い試験 auto-run は「await より前に読む」を見ていたのに、await より前の行の文字があれば通る形で、誤って青だった。
+  - 直し: ①popup のリアプロ onclick は印・形の値を全部読んでから await（学びの取り直しは入力の直前）。ITANDI は押した時点の値を `_btnSnap_it` に写し取って本体へ渡す。②background: `axlx-reset-before-fill`（手動の入口）は一括の最中なら断る（`reset_before_fill_dup_skip`）。`_resetBeforeFill` を1本化（同時に来た2本目以降は1本目の結果を待って使う `reset_before_fill_join`・6分で見切る）。③search-audit: 同じ段・同じ本文が2秒以内に続いたら1行にまとめて `n`・`to`（押す・送る・失敗・完了・リセットの段はまとめない＝数える元）。
+  - 裏の起き直しを跨いで「リセット済み」の印は持ち越さない（`_resetBeforeFill` は先に空かを確かめるので、持ち越すと途中まで入った形でリセットを飛ばす恐れがある）。
+  - **町・管理費・構造**（page-script.js）: 本番の直近60回（読むだけ）で町を入れた回は1回（#1658 detail_area=上本町・段の記録0件）、構造・管理費は0回＝本番ではまだ確かめた事が無い。実機では町・構造のある客で `cond_effect_*` を見る。旧は「押す列が空いた」を選べた証拠にしていた。`_condEffectCheck` で列が空いてから画面の印を読み直す（管理費 `_feeEffect`・構造 `_structureEffect`＝欲しい数・付いた数・足りない・余計・町 `_townPickedState`＝町ごと）。付いていなければ**1回だけ**選び直し（町は付かない町だけ）→それでも付かなければ `press_ng_cond_effect` を残して次へ（**検索は止めない**・2026-11-27 竹内さんが「記録して次へ進む」を選んで承認）。町は確定の前、管理費・構造は1欄ずつの列の中。町を選ぶ時と確かめる時は同じ当て方（`_townLabelMatches`）。印 `cond_pick_idle`／`cond_effect_ok`／`cond_effect_retry` は KEEP・RULE・`_PIN` に入れた。枠は `_setPressNote` の pick。
+  - 地図: fill の押す物に「町（ピンポイント）」（駅の設定へ進む と 確定 の間）・「管理費・共益費込み」「構造」（確定の後）。手順書は所在地②と条件①に地図から把握の文（`PLAYBOOK_BUILD_V = 35`）。道具 `scripts/pick-effect-check.ts`（本番の町・構造の回を数える・読むだけ）。
+  - 試験: 新 `reset-dup-burst-v28328`（21・3本同時のリセットを動かして押すのは1回）・`pick-effect-v28328`（31・確かめる手を4通りで動かす）。形の変化に合わせた古い試験: auto-run（await より前を構造で見る）・realpro-guide-town・resume-lag-wait-v2324・search-nav-pending-light-scan-v28264・sort-pressed-then-list-v2322・switch-once。拡張 358本中 356 青（基準の赤2）・地図162・型エラー基準10。
+- **2026-11-27 済**: 竹内さんの OK でコミット `09d4e1d89`→origin/main を取り込み `71ee0d7b8`（衝突は kb-eval-set.ts の問いの足し合いだけ・取り込んだ Claude Code 側の試験2本の型エラー3件を型だけ直した＝exam-intake-openai・substate-multi-station・動きは同じ）→ `ext-release.ts --all`（main・cursor-ext へ push・本番 2.8.328・手順書 attach 3行）。
+- **2026-11-27 手順書の抜けの点検（竹内さん「これで手順書にぬけはないのか」）**: 本番の手順書（row 2865 realpro・2866 itandi）を読んだ。①**私の誤り**: 条件の薄いガイド（録画に条件の場面が無いサイトだけに足す＝実際は ITANDI だけ）に管理費・構造の把握の文を足していた → ITANDI に混ざり、リアプロの手には載っていなかった。`PLAYBOOK_COND_GUIDE_STEPS_REALPRO` に分けて build_v 36（コミット `baac413fa`・push と attach は竹内さんの OK 待ち）。試験 playbook-site-split 1-b で止める。②リアプロの所在地・条件の手は録画から作る＝欄の名前だけ（「区の欄」「管理費込みの欄」）。押したことの把握の文は決まり `press_grasp_each` の中だけで、町・構造は手に無い（録画に一度も無い）。③ITANDI の新しい抜け（③揃ったら検索ボタンへ進む・票が3回未満）は当て方が前の版と同じ＝ITANDI の「検索」の票が1〜2回たまって区分が変わっただけ（今回の変更が元ではない）。
+- **2026-11-27 ②の直し＝入れ物を先に直す（手順書 build_v 37・拡張の版は上げない）**: 竹内さんの選択「手ごとに押したことの把握を流れの地図から付ける・町と構造も手に足す（入れ物を先に直す）」。**理解の書面**: ①形＝町・管理費・構造は「条件を入れる（fill）」の中の押す物。管理費は毎回の手（欄があって印が無ければ必ず押す）／町は町（ピンポイント）がある客だけ・構造は構造の希望がある客だけ＝**要る時だけの手**（毎回の通し番号の手ではない）②前提＝所在地は 開く→区→（町）→確定、条件は1欄ずつで構造は最後（page-script の `_basicQueue` の順）。効かなければ1回選び直し→記録して進む ③入れ物＝録画の手は欄の名前の一列で「要る時だけ」も「把握」も表せない → `PlaybookStep` に `grasp`／`when`／`from:"map"` を足し、地図の押す物に `playbookStep {scenes, fields, when?, after?}` を足して結ぶ ④言い直し＝「手ごとに、押したら何が効いたら良いかが書いてあり、町と構造も（要る時だけの手として）手順書に出る」。**直し**: `loop-flow-map.ts` の押す物10個に `playbookStep`（リセットは場面が無いので除く・`checkPresses` が結んでいない押す物と毎回の手の `after` を止める）→ `action-playbook.ts` の `buildPlaybook` でリアプロの録画の手に把握と条件を付け、録画に無い要る時だけの手（町＝区の後ろ・構造＝条件の末尾）を地図から足す。手の文＝「名前（条件）。押したことの把握…」を最後に描く（固定ガイドが同じ文を持つ場面は二重にしない）。`detail.step` は名前のまま。地図から足した手は「押す位置を学んでいない」に数えず、抜けに「録画に無く流れの地図から足した要る時だけの手」と正直に出す。`structured_type[]`（リアプロの構造の欄・page-script の実名）を PLAYBOOK_FIELD_JA に足した。ITANDI には付けない。**試験**: 新 `playbook-step-grasp.test.ts`（66項目: 地図の欄名の実在・町/構造は要る時だけ・管理費は毎回・悪い地図を止める・町は区のすぐ後ろで確定の前・構造は末尾・録画に在れば足さない・ITANDI に混ざらない・拡張の `_pbListNext` が見る1手目に PDF／次ページの字が入らない）。名前の一致を見ていた試験3本（action-playbook・auto-procedure-rules・playbook-search-extra-guides）は `detail.step` で名前を見る形に。関係する TS 試験 27本・拡張 358本（新しい赤 0）・tsc-gate（新しい型エラー 0）。**本番の束 2868 で作り直し**: realpro の抜けが 15→17（足したのは町・構造の2行＝基準に無い型→受け入れは竹内さんの OK 待ち）・itandi は 20→20（変化なし）。**別件**: realpro の束 2868 の一覧場面に未分類の欄「次タスクAPI結果」（直す前の HEAD のコードで作り直しても同じ＝今回の変更とは別・本番の保存済み v36 の手順書には無い＝束の後の更新で入った物。リアプロの欄ではなく拡張の枠の文字を拾った疑い・推測で FIELD_JA に足さない）。
+- **2026-11-27 分かれ道の場面は回数で「薄い」と言わない（竹内さん「4階と2回のパターン」＝設計どおり）**: 次のページ（地図の `b_all_sent_next`＝この頁が全部送付済みで次の頁がある時だけ）は分かれ道なので、2回しか無いのは設計どおり。ところが警告（「検索2回だけ」「一連の流れ 次ページ が薄い」）は全部の場面に同じ3回の基準を当てていた＝誤警告。直し: `branchOnlyScenes()`（地図の branch の押す物の場面のうち、順に行う手に使われない物＝地図から求める）の場面は回数の警告から外す。押す位置が学べていないかの警告は残す。試験 playbook-step-grasp 7（次のページは分かれ道・順に行う手の場面は分かれ道にしない・分かれ道でない検索2回は今まで通り警告）。本番の最新の束 2870（realpro）で作り直し: 新しい抜け 0・残るのは「次のページへ：押す位置の票が3回未満」1件（分かれ道で実際に押した数が少ないため・人が1回通すと消える）。ITANDI の「開く欄4件は推測のまま」は前からの未決（今回と無関係）。
+- **2026-11-27 竹内さんの OK**: 抜けの基準に realpro の「所在地絞り込み／条件：録画に無く流れの地図から足した要る時だけの手」2行を理由つきで受け入れ（`memory/playbook_gaps_baseline.json` の reasons）。build_v 37 の反映も OK。**ただし反映の前に止めた**（下）。
+- **2026-11-27「次タスクAPI結果」の出所（DB で確かめた）**: page-script.js の点検の段の名前を学習の記録へ渡す表 `_STEP_JA2`（`axlx-rec-note-name`・2.8.232 で `task_api_refresh_res: "次タスクAPI結果"` 等の**押す物でない記録の印**も入った）→ 録画の操作の並びに印の名前が混ざる。今夜 22:23 JST に束が作り直された（2867 all・**2868 realpro**・2869 itandi・元の記録 11-11〜11-27 の 22,638件＝前の 2865 は 11-24〜 の 846件）。2868 の scene_flows は **list＝["次タスクAPI結果"]（12回）・next＝2回**（2865 は list＝印刷用PDF 24回・next 13回）。2868 に保存されている手順書は based_on 13:09 の**前の手順書を持ち越した物**（list 24回・next 13回）で、まだ壊れていない。**危ない所**: 手順書の作り方の版を上げると、API が渡す時に束から作り直す（`refreshPlaybookIfStale`）＝ build_v 37 を本番に出した時点で 2868 の汚れた並びから作り直され、一覧の手に「未分類（次タスクAPI結果）」・次ページが2回の薄い場面が拡張に届く（attach しなくても）。→ build_v 37 の push は**止めて**竹内さんに確認。
+- **2026-11-27 竹内さんの選択「手順書の側で記録の印を落とす＋構造の試験→ build_v 37 を反映。束の作り方（API）の直しは Claude Code へ申し送る」**: `PLAYBOOK_MARKER_RE`（完了済:・未完了:・押す済:・押す失敗:・選ぶ済:・外す済:・次タスク…・理解台帳・流れ台帳 等）を `normalizePlaybookSteps` で落とす（録画には F41/F45 の点検のため残す・手にしない）。試験 playbook-step-grasp 6（page-script の `_STEP_JA`／`_STEP_JA2` の名前を全部読み、印か操作（17個の明示の一覧）のどちらか一方に仕分けられていることを求める＝新しい名前を足したら仕分けるまで赤・束 2868 の形で未分類が出ない）。本番の束で作り直し: realpro の問題 1→0（未分類が消えた）。**残る新しい抜け3件（今夜の束の作り直しが元・直す前のコードでも同じ・基準には入れていない）**: realpro「次のページへ：検索2回だけ」「一連の流れ 次ページ が薄い（検索2回）」（束 2868 の next が 13→2 回）／itandi「開く欄 4件は推測のまま」（束 2869）。**Claude Code への申し送り**: 束の scene_flows を作る所で、拡張の点検の印（上の `PLAYBOOK_MARKER_RE`）を操作の並びから外す。今の束は一覧の一番多い並びが印だけになり、next の回数も減っている（11-11〜の広い窓で作り直した 2867〜2869）。
+- **未実施（人の手）**: 実機（拡張の再読込→リアプロ／ITANDI のタブを開き直す→自動2客以上→`check-playbook-sync` ⑧が verified）まで「反映済み」と言わない。同期点検の残り: itandi の手順書の抜け1件（③揃ったら検索ボタンへ進む・押す位置の票が3回未満）＝今回の変更とは別。`git worktree` の `%TEMP%\axbase` は残っている（`git worktree remove --force` で消せる・竹内さんが実行）。
+
+---
+
+## 2026-11-27 **拡張 2.8.328: 作業ごとに完了してから20秒あける。送付後の「1つずつ外し」は完全に消す**
+竹内さんの指示（そのまま）: 「完了の合図の直後（待ち0秒）にリセットを始めます／ここ完了の20秒以降にする／手順書完了から時間空けないと止まってしまうこと多いので／ちゃんと作業ごとに完了してから時間空けて作業するように手順書かえる／１つずつ作業完了してつぎにいかないと固まってしまうので１つずつおこなってつぎにうつる／テストではここの部分あまりわかないとおもうが実際のリアプロ等はラグや反映のところの問題からここで止まってしまうことが多いので、作業完了ごとに時間あける／従来の1つずつ外しを完全に消す」。
+- **変更（流れの地図 `app/lib/loop-flow-map.ts` が正本・手順書はそこから）**: LOOP_WAITS に 3 つ足した: `reset_gap`（送付が終わって完了の合図の後 20 秒・そのあとリセット）、`reset_done_gap`（リセットで空を確かめた後 20 秒・次の客の条件を読み直す）、`api_reload_gap`（読み直した後 20 秒・入れる）。
+- **background.js**: `_postSendClearOrReset` が `_gapBeforeNext(…,"reset_gap",20000)` → `_resetWithInsurance` → 完了なら `reset_done_gap` 20 秒。API 再読込（`_refreshCustomerBeforeSearch` の前）に `api_reload_gap` 20 秒。**消したもの**: `_postSendClearRealpro`（送付後の1つずつ外し・125秒の待ち）、`axlx_reset_button_mode`（旗で旧方式に戻す道）、`axlx_post_send_clear_off`（旗）。
+- **page-script.js**: `_doReset` の入口で送付後の外しを待つ処理（`_waitPostSendClearThen`・`_postSendClear`・`window.__axlxPostSendClear`／`__axlxPostSendClearP`・`__axlxPostSendGen`・`post_send_wait`／`post_send_cancel`）を消した。**残っているもの（未決定）**: 次の客の入力の前に残りを外す fill 入口の1つずつ外し（`_clearChecksOneByOne`・駅／区の外し・`__axlxPostSendClearGap` の強制外し）。竹内さんに「fill 入口も消すか」を確認する（毎回の入力に効くので勝手に消さない）。
+- **手順書**: `app/lib/action-playbook.ts` PLAYBOOK_BUILD_V = 33（clear ①④⑤・switch ③④ に 20 秒あけの文）。`auto-procedure-rules.ts` の reset_between_customers・reset_replaces_clear・post_send_clear_grasp を新設計に（marker を `__axlxResetPressP` へ）。
+- **試験**: 拡張の試験は青 355／赤 2（基準の古い赤 2 本のまま）。直した試験: sim の送付後の模擬を消し（リセットの模擬だけ）、切り出しの目印を `var RESET_PRESS_TIMEOUT_MS` に。bulk-loop-sim（S1 はリセット3回・S3/S16 は新しい時刻で間で止める・S6 は「リセットの返事が返らない」に差し替え）。bulk-loop-chaos（リセットの確かめられない客は止まる＝ボタンの有無に関係なし）。消した機能の「あること」を見る試験は「無いこと」を見る形に（leftover-progress・clear-one-owner・post-send-clear-grasp・loop-clear-grasp-chain・reset-between-customers・reset-before-fill・reset-count-evidence・human-wait の固定の待ち表・press-receipt（版 33））。
+- **未確認（実機で見る）**: 20 秒あけの効き（実際のリアプロのラグ）。`search_review_wait` 9〜12 秒・並べ替えの 40〜50 秒・15〜20 秒など、他の間は 20 秒に揃えていない（竹内さんに確認予定）。
+- **反映**: 版 2.8.328（manifest.json・page-script.js・itandi-page-script.js・決まりの見直し上限2つ）。**コミット・push・attach は竹内さんの OK の後**。実機（再読込→自動2客以上→check-playbook-sync ⑧ verified）まで「反映済み」と言わない。
+
+## 2026-11-27 **拡張 2.8.327: リセットは「押して空を確かめたら完了」。空とみなして次へは無くす・確かめられなければ止める**
+竹内さんの設計（そのまま）: 「1で完了させる。残りがある状態で次の客に進まない。2は保険（通知が来なかった時だけ・さらに60〜90秒後に確かめ→押し直し1回）。『空とみなして次へ』の分岐はなくす」。AskQuestion で「押してから30〜34秒待って確かめ、空でなければさらに60〜90秒後に保険（合計約90〜125秒）」を選択。
+- **新しい流れ（background.js _postSendResetRealpro → _resetWithInsurance）**:
+  1. 押す → 読み直しを待つ → 30〜34秒待って画面を1回読む。空と読めたら完了（eset_settled・confirmed）。
+  2. 空と読めない・押せない → 完了の通知が来なかった扱いで、さらに60〜90秒待つ → 画面を1枚撮って読む（eset_stuck_shot／eset_stuck_grasp）。空なら完了（eset_stuck_recovered）。
+  3. まだ残っていれば、リセットを**1回だけ**押し直して30〜34秒後に空を確かめる（eset_retry）。
+  4. それでも空を確かめられなければ**止める**（eset_stop・_resetStopNotify で一括を止めて枠・グループへ知らせる）。次のお客さんへ進まない・画面は残す。
+- **消したもの**: 「空とみなして次へ」（件数・残り表示だけで空と見なす分岐）。「1つずつ外す」への戻り（送付後・入れる前の両方とも。タブが無い時も止める）。_reset_retry／_reset_fallback の道。
+- **入れる前のリセット（_resetBeforeFill）**: 同じ _resetWithInsurance を使う。止まった時・空を確かめられなかった時は次の客へ入れず一括を止める（残りを持ち越さない）。見送り（off・最初の客・前客が空と確かめ済み・入力の最中）は今まで通り。
+- **地図（正本）**: pp/lib/loop-flow-map.ts の reset 分岐は _reset_insure（保険・branch）と _reset_stop（止める・stop）。LOOP_WAITS に eset_insure（60〜90秒）。checkFlowMap は stop が next を持つことを禁止。
+- **枠（bulk-dl.js）**: 「✗ リセットを押せなかった → 60〜90秒後に確かめる保険へ」「✗ 空を確かめられず止めた（次のお客さんへ進まない・画面を確かめてください）」。「空とみなして次へ」の文言は消した。
+- **手順書**: ction-playbook.ts PLAYBOOK_BUILD_V = 32。clear の手④⑥を新設計に（⑥＝保険→止める）。uto-procedure-rules.ts の reset_between_customers・series_handoff_order・reset_retry_insurance などの文を同じ設計に。
+- **点検の段**: search-audit.js の KEEP／RULE に eset_insure_wait|reset_stop| を足した。
+- **試験の直し（設計変更に合わせた期待値）**: 「全員に届く」→ リセットの故障で止まった時は届いた客が先頭からの連続で止まっていること（チャオス試験）。loop-simplify・eset-between-customers・playbook-loop-consistency・eset-before-fill・eset-loop・press-receipt（版 32）・playbook-reset-skeleton（最後の手は止める）。
+- **反映**: 版 2.8.327（manifest.json・page-script.js・itandi-page-script.js・決まりの見直し上限2つ）。拡張の試験は青 355／赤 2（基準の古い赤 2 本のまま）。型エラーは基準 10 件のまま。**コミット・push・attach は竹内さんの OK の後**（今は未コミット）。実機（再読込→自動2客以上→check-playbook-sync ⑧ verified）まで「反映済み」と言わない。
+- **次にやること**: 押した秒数（完了→押すまで）は DB に時刻が無いので未計測。必要なら時刻の印を足す（竹内さんに確認）。
+## 2026-11-27 **拡張 2.8.326: リセットの「押した」結果を枠に出す（予定と結果を分ける）**
+竹内さん「リセットして押したことを把握できていない／ほかにも把握していない部分がないか調査して」。
+- **実測（DB）**: 直近の run #1675（13:10 JST・版 2.8.323）は段が「begin」と「bulk_pos 3/3」の2つだけで、リセットを押した段が1つも無い。枠の「いま」は「リセットを押して待っている最中」と出ていた。
+- **原因（コード）**: 枠の「いま」は予定の動き（nextMove＝「前客の選択を1つずつ外す」）から作られ、`actionFromMove` が「外す」を「リセットを押して待っている最中」に変えていた。つまり**押す前から押した後のように見えた**。押したか・押せたかの結果は枠へ送られていなかった（背景の `_resetWithInsurance` は監査の段だけ書いていた）。
+- **直した所**:
+  - 背景（background.js）: `_bulkPressShow(what, result, detail)` を足し、押した（pressed）・押せず（not_pressed）・遅れて押せた（pressed_late）・空の確認（reset_check: empty／not_empty／unknown）を、realpro・ITANDI のタブへ `axlx-bulk-press` で送る。
+  - 枠（bulk-dl.js）: 把握の下に `#axlx-press`（最初は隠す）。`_setPressNote` が「✓ リセットを押した（時刻）→ 画面の読み直しを待つ」「✗ 押せなかった → 1つずつ外す保険へ」「✓ 空を確認」「⚠ 残りが見えた → 空とみなして次へ（確認できず）」を出す。
+  - 言葉: 地図の reset の panel を「リセットを押す最中」に直した（押す前の段の言葉。押したことは押した行で示す）。TS・JS の判定 `/リセットを押/` も合わせた。
+- **試験**: `tests/chrome-extension/press-receipt-v2326.test.js`（送る・出す・言葉・隠し方の5まとまり16項目）。決まり `press_receipt_reset`（2.8.326）。
+- **調査（押した結果が枠に届くか・2.8.326 時点・コードで確認）**:
+  | 押す所 | 押した結果 | 枠に出るか |
+  |---|---|---|
+  | リセット（background `_resetWithInsurance`） | 押した／押せず／遅れて押せた／空の確認 | **出る（2.8.326 で直した）** |
+  | 並べ替えの「高→低」（bulk-dl・`sort_pressed`） | 押せた（okPress）は監査の段のみ。押せなかった時は `done(false)` で枠に何も出ない | **2.8.326 で直した（✓高→低を押した／✗押せなかった→押し直す）** |
+  | 検索（page-script・`search_press_ok`） | 「検索を押した」は監査の段のみ。枠は「検索を押す最中」のまま | **2.8.326 で直した（✓検索を押した）** |
+  | カーソルが着かず押した・見えないまま押した（page-script `press_no_arrive`・`press_no_cursor_ui`・`hidden_press`） | 押したが確かめられていない | **2.8.326 で直した（⚠押したが確かめられず）** |
+  | 押さずに客完了へ（bulk-dl `all_sent_no_press`） | 押さなかった理由 | 言葉だけ出る（押さない理由は出ない） |
+  - ①「いま」の予定由来の言葉（外す→リセットを押す最中）は、押す前にも出る。押した行で補う。いま欄を結果から作り直すかは竹内さんに確認する。
+  - ②2.8.326 で表の3つを直した（並べ替えの押せず・検索・確かめられなかった押し）。「押さずに客完了へ」は押さない理由を枠に出していない（まだ直していない・竹内さんに優先度を確認）。
+- **反映**: 版 2.8.326（5か所）。コミットのみ。push・attach は竹内さんの OK の後。実機での確認（再読込→自動1客→押した行が「✓ リセットを押した（時刻）」に変わる）まで「反映済み」と言わない。
+
+## 2026-11-27 **拡張 2.8.325: 待ちを枠に出す（待っている物・残りの秒数）。言葉は流れの地図が正本**
+竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように／ボックスにも細かく何しているか表示されるのが理想」。
+- **起きていた形**: 並べ替えの押したあとの猶予・読み直しの猶予・検索後の並べ替え待ち・リセット後の30〜34秒は、枠の「いま」が前の言葉のまま止まり、待っていることも残りの秒数も見えなかった。
+- **直した所**:
+  - `app/lib/loop-flow-map.ts`: `LOOP_WAITS`（4つ・どの手か・言葉・秒数）。`checkWaits`／`renderWaitWordsJs`。
+  - `chrome-extension/bulk-dl.js`: 枠に `#axlx-wait`（いまの下・最初は隠す）。`_setBulkWait`／`_paintWait`（1秒ごとに「あと N 秒」・0で消す）。言葉は `WAIT_WORDS`（scripts/gen-panel-words.ts が作る）。
+  - 使う所: 押したあと（sort_lag）・読み直したあと（sort_resume_lag）・検索後の並べ替え待ち（search_to_sort）。
+  - `chrome-extension/background.js`: リセット後の待ち（reset_settle）は id と秒数だけを `axlx-bulk-wait` で送る（言葉は地図から bulk-dl に1つだけ）。
+- **試験**: `app/lib/__tests__/wait-words-from-map.test.ts`（地図と同じ・手書きの言葉なし・4つとも配線・悪い地図4形を止める）、`tests/chrome-extension/box-wait-v2325.test.js`（枠の位置・1秒の数え方・配線・言葉の無い id）。どちらも pre-commit に入れた。
+- **決まり**: AUTO_RULES `box_shows_waits`（2.8.325）。
+- **まだ入れていない待ち**: 検索を押す前の条件の見直し（9〜12秒・page-script の `search_review_wait`）。短いので次の回で入れるか、竹内さんに確認する。
+- **反映**: 版 2.8.325（5か所）。コミットのみ。push・attach は竹内さんの OK の後。実機（再読込→自動2客以上→押したあとに「⏳ …（あと N 秒）」が出て0で消える）で確かめるまで「反映済み」と言わない。
+
+## 2026-11-27 **拡張 2.8.324: 高→低のあとの読み直しでも、15〜20秒あけてから物件取得へ（実測 #1673）**
+竹内さん「AD並べ替えのあと取得するまでの期間がはやすぎる気がする／並べ替えのあとはラグが起きるので時間を少し開けるのが理想」。
+- **実測（search_audits #1673・2.8.323）**: `dl:sort_pressed`（279秒）→ `dl:sort_lag_grace 15秒` の印は出たが、`dl:sort_done pressed_resume`（283秒）で読み直し後の入口が猶予なしに一覧を始め、約4秒後に `list_press`（物件取得）が始まった。
+- **原因**: `_maybeAutoPressOnLoad` の pressed_resume 分岐が、押したあとの猶予（15〜20秒）を取らず `_startAutoPressRun()` を直接呼んでいた。猶予の印は出るが、待つ処理が読み直し側に無かった。
+- **直した所**: pressed_resume は `_lagGraceMs()`（15〜20秒）を取ってから一覧を始める（`setTimeout`）。待っている間も押した印（`axlx_sort_pressed_sync`）は残す。`_startAutoPressRun` は走っている一覧があれば戻る（同じページの待ちと読み直し後の待ちが重なっても、押しは1回だけ）。
+- **地図**: `sort.playbook`（③）に「押したあとは15〜20秒あけてから一覧を取る」「読み直しのあとも15〜20秒あける」を入れた。手順書とルールはそこから作られる。
+- **試験**: `tests/chrome-extension/resume-lag-wait-v2324.test.js`（pre-commit に登録）。
+- **反映**: 版 2.8.324（5か所）。コミットのみ。push・attach は竹内さんの OK の後。実機（再読込→自動2客以上→#1673 のように `sort_pressed` から `list_press` までの秒数が15秒以上あるか）で確かめるまで「反映済み」と言わない。
+
+## 2026-11-27 **拡張 2.8.323: パネルの言葉は流れの地図が正本。地図から作る（改善したらパネルも改善される）**
+竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」。
+- **起きていた形**: パネルの「いま／つぎ」の言葉が TS（PANEL_PHASE_WORDS）・拡張の写し・page-script の `_publishNowAction`・bulk-dl.js の手書き（`"物件取得最中"` など）に散らばっていた。地図を直してもパネルの文字は手で探すしかなく、並べ替えのあと「並べ替え最中」が残った。
+- **直した所（正本を1か所に）**:
+  - `app/lib/loop-flow-map.ts`: 各手に `panel`（段・いま・つぎ・要の語 short・次の段 then・切り替え先 switchTo）か `noPanel`（持たない理由）。`checkPanelWords`／`panelPhaseWords`／`renderPanelWordsJs`。
+  - `app/lib/bulk-panel-grasp.ts`: `PANEL_PHASE_WORDS = panelPhaseWords()`（地図から作る）。拡張の写し（bulk-panel-grasp.js）と page-script.js の `_AXLX_PANEL_WORDS` は `scripts/gen-panel-words.ts` が目印（PANEL_WORDS:BEGIN〜END）の間だけ書く。
+  - `bulk-dl.js`: `_panelWord(段, now|next)` で引く。手書きの言葉を無くした。並べ替えは地図の `switchTo=list` で、高→低を押した直後（猶予の前）にパネルも「物件取得最中」へ（`_announcePhase("list","sort_pressed")`）。
+- **直す順番（これからの決まり）**: ① 地図の panel（手を足したら panel か noPanel）を直す → ② `npx tsx scripts/gen-panel-words.ts` → ③ 試験。道具: `change-premise.ts --area=list` の ①d にパネルの言葉が出る。
+- **試験** `app/lib/__tests__/panel-from-flow-map.test.ts`（pre-commit にも入れた）: 手を足してパネルを決めていない／いまの言葉の重なり／つぎが次の段の要の語を含まない／パネルの言葉を持たない手だけを通る地図の道が無い／輪が閉じない／写しが古い／生成部分の外の手書きの古い言葉。悪い地図 8 形を止める自己点検つき。`bulk-panel-playbook-sync`・`bulk-panel-grasp` も pre-commit に追加（今まで入っていなかった）。
+- **新しい決まり**: AUTO_RULES `panel_words_from_flow_map`（2.8.323）。
+- **反映**: 版 2.8.323（5か所）。push・attach は竹内さんの OK の後。実機（再読込→自動2客以上→高→低を押した直後にパネルが「物件取得最中」になる→`check-playbook-sync`）まで「反映済み」と言わない。
+
+## 2026-11-27 **手順書の強化: 改善した中身を、決まり1行ではなく手順書の手（③④）にそのまま載せる（build_v 30）**
+竹内さん「改善する際手順書の部分強化する仕組みになっているのか／ここの部分細かく徹底的に強化するようにする」。
+- **それまでの仕組み**: 流れの地図から④以降を作る。決まり（AUTO_RULES）を1行足す。build を上げて attach する。直す前に change-premise を出す。
+- **足りなかった所**: 2.8.322 で「高→低を押したら完了、読み直し後は④」をコードと決まり1行には書いたが、手順書の手（③④の文）にはその完了の言葉が無かった。パネルが「並べ替え」のまま、という見え方を手順書が言っていなかった。
+- **強化**: 地図の sort.playbook（押した時点で並べ替えは完了。読み直した一覧ではもう一度並べ替えず④物件取得。パネルは物件取得最中）を、③の末尾にそのまま載せる。④の文も地図の「物件取得・完了を把握してから押す」をそのまま載せる。一連の流れの並べ替えは「押したら完了→④物件取得」、把握の印に sort_pressed を足した。決まり sort_pressed_then_list の文も、同じ地図の文を含む（手と決まりがずれない）。
+- **見張り**: checkListPlaybookStrength。③から完了の文を消すと試験が止まる。change-premise --check も同じ点検をする。--area=list は手順書の手をそのまま出す。
+- **試験**: loop-flow-map.test.ts 91本、playbook-ad-sort-clear、bulk-panel-playbook-sync、change-premise --check。
+- **反映**: 手順書 build_v 30。拡張の版は 2.8.322 のまま（動きのコードは前の直し）。push・attach は竹内さんの OK の後。
+
+## 2026-11-27 **拡張 2.8.322: 高→低を押したあとの読み直しは並べ替え完了。④物件取得へ進む（手順書 build_v 29）**
+竹内さん「並べ替えした後物件取得するのちゃんと手順書にはいっているのか／並べ替えしたあとにつまっている／ちゃんと④のところ物件取得するように／拡張ツールのところも今の部分並べ替えになっているので並び替え完了していること把握できていない可能性が高い」。
+- **手順書**: ④は入っている。流れの地図の並べ替えの次が list_press（印刷用PDF）で、手順書の一覧の④から先は `renderListPressSteps()` が地図から作る。足りなかったのは手順書の文ではなく、押したあとに④へ進む手。
+- **理解の書面**: ①形＝順に行う手（③高→低を押す → ④物件取得）。④の場合分け（全部送付済み・0件）は押す物が無い時だけで、今回の止まりではない。②前提＝高→低はページを読み直す。押したあとの待ち（lag）は読み直しで消える。読み直し後は「押した」を同期では知らず、「検索前だから押さない」で戻る。パネルの言葉は押す前の「並べ替え最中」のまま残る。③入れ物＝手順書は④を表せている。足りない入れ物は、読み直しをまたぐ「押した」印（sessionStorage・同期）。④言い直し＝「高→低を押したら並べ替えは完了。読み直した一覧で④へ進み、パネルも物件取得にする」。
+- **DB（id 指定・読み取りのみ）**: #1668（2.8.320・11:23）は sort_hilo（高→低）→ sort_lag_grace 18秒 のあと、sort_done も list_flow_announce の list も無い。steps はそこで終わっている（status=started）。
+- **直し**: 押した瞬間に `axlx_sort_pressed_sync` を書く。読み直し後（URL が ad 順、またはアドレスが変わった時）は並べ替えを始めず `_startAutoPressRun`（④）。同じページの待ちの間は始めない。パネルは物件取得最中に直す（あとから「並べ替え」が来ても戻さない）。決まり `sort_pressed_then_list`。PLAYBOOK_BUILD_V = 29。
+- **試験**: tests/chrome-extension/sort-pressed-then-list-v2322.test.js 18本（同じページでは④にしない／ad 順・アドレス変化では④／印は lag より前／検索前の戻りより前に④／パネルが戻らない／手順書の④は地図から）。pre-commit に登録。
+- **まだ確かめていない（実機）**: 拡張を再読込し、並べ替えのあとパネルが「物件取得最中」になり印刷用PDFが押されるか。点検に sort_pressed と sort_done（pressed_resume）が残るか。**再読込→自動2客以上→check-playbook-sync ⑧が verified まで「反映済み」と言わない。**
+- **反映**: 版 2.8.322（manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO）。push・attach は竹内さんの OK の後。
+
+## 2026-11-27 **拡張 2.8.321: 押す物は「カーソルが着いてから」押す（移動が途中で打ち切られたら動かし直す・手順書 build_v 28）**
+竹内さん「駅入れるところで直接入力が入ってしまうところがあった　原因見つけて改善する　1つ1つ人間のようにカーソル動かして押していくようにする」。見た場面: 駅を1つ押す時、カーソルが着く前（または動かないまま）にチェックが入った（#1668・桜川/難波/大国町）。
+- **理解の書面（CLAUDE.md 8）**: ①形＝「順に行う手」の中の「着いてから押す」（動く→着く→少し見る→押す）。分かれ道ではない。②前提＝pointer-ui の moveTo は途中で打ち切られる（別の移動が始まる・ensure 失敗・欄の大きさ0）と reject せず false で終わる。③入れ物＝押す手（_humanPointerClick）が戻り値を見ない形だった。点検の印が KEEP に無いと間引かれ、後から数えられない。④言い直し＝「カーソルが着いたと確かめてから押す。着かないなら動かし直す」。
+- **原因（確認済み）**: _humanPointerClick は _move().then(待って押す)。moveTo が false（打ち切り）で終わっても then の成功側に入り、カーソルが途中で止まったまま押していた（reject 側の _fireAt 直行も同じ）。
+- **DB で確かめられたこと／確かめられなかったこと**: #1668 は steps が上限 120 件で間引かれ、駅を押した 25〜79秒の段が残っていなかった（駅の押しの印は KEEP に無い）。実際に打ち切りが起きたかは、この回の記録からは**確かめられない**。コードの経路としては確実に起こり得る（実機で move_retry／press_no_arrive が出るかで確かめる）。
+- **直し**: _humanPointerClick に _moveUntilArrived: moveTo が true・かつ見えるカーソルが欄の±10px以内で「着いた」。着かなければ欄の位置を取り直して最大3回動かし直す（move_retry）。3回でも着かない時だけ押し（駅を落とさない）press_no_arrive を残す。見えるカーソルが無いまま押す時は press_no_cursor_ui を1ページ1回残す。
+- **点検**: search-audit.js KEEP_STEP に page:move_retry／page:press_no_arrive／page:press_no_cursor_ui。ページ側 _PIN・_clearKey にも入れた（即送信・間引きで消えない）。決まり human_move_arrive（scene area・since 2.8.321・verify は move_retry／press_no_arrive が出た時）。PLAYBOOK_BUILD_V = 28。
+- **試験**: tests/chrome-extension/human-move-arrive-v2321.test.js 21本（偽のカーソルで「着く前に押さない」を順番で確認・3回で諦めて押す・旧の形に戻すと赤）。pre-commit に登録。
+- **まだ確かめていない（実機）**: 駅の押しで move_retry が出るか／press_no_arrive が出るか。出なければ別の経路（hidden_press＝見える欄が無い押し・toggle_direct）を DB で読む。**拡張の再読込→自動2客以上→check-playbook-sync ⑧が verified になるまで「反映済み」と言わない。**
+- **反映**: 版 2.8.321（manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO）。push・attach は竹内さんの OK の後。
+## 2026-11-27 **拡張 2.8.320: リセットは押す前に背面のタブを前に出す／押せない時の印を消さず点検へ運ぶ／流れの地図に失敗の道と割り込みを足す（手順書 build_v 27）**
+- **なぜ（実測・本番 DB 読み取りのみ・id 指定）**: #1666（2.8.318）は 3s にリセットを開始→135s まで押されなかった（背景の待ち 130秒で切れ「返事=press_timeout」・押した印 `axlx_reset_pressed` も無し＝押す処理そのものが動かなかった）。#1661（2.8.314）も 27s「押せず」→後で押された（遅れ）。ページ側の「15秒で押せず」の印（reset_press_slow）は**一度も残らなかった**。
+- **原因（2つ・確からしさの区別）**: ①【確認済み】ページ側の点検（_audit）は次の入力の開始で作り直され、その前に出たリセットの印は前の点検ごと捨てられていた（_auditStepP は _audit が無いと黙って戻る）。②【強い仮説・記録では直接確かめられない】リセットの押す処理は人の動きの列（setTimeout 連鎖）で動く。タブが背面だとブラウザがタイマーを遅らせ（長く背面だと1分単位）、押す処理が 120秒経っても動かない。#1666 では tab_front が 270s にやっと入った（リセットより後）。
+- **直し**:
+ 1. 背景 `_postSendResetRealpro`: 押す前に `_probeRealproTab` で見え方を確かめ（reset_vis）、背面なら `_bringRealproTabFront`（入力前の tab_front と同じ・ウィンドウは最小化を戻すだけ）で前に出す（reset_front）。見えなくても止まらない（そのまま押す）。
+ 2. ページ側 `_resetPress`: 押す処理の途中の印（reset_press_start／queued／slow／cancel）を専用の箱 `_resetStepBuf` に残し、押す処理の返事（fin・遅れた確かめ __axlxResetVerifyP）に載せる。背景が `page:` 付きで点検へ移す（ページの点検に依存しない）。
+ 3. search-audit.js: RULE_STEP に reset_vis／reset_front、KEEP_STEP に tab_front／tab_hidden／window_restore（点検が長い回でも落ちない）。
+ 4. 決まり `reset_front_visible`（scene clear・since 2.8.320・verify は reset_vis）。手順書のリセットの文に「押す前にタブが背面なら前に出す＝2.8.320」を足した（PLAYBOOK_BUILD_V = 27）。
+- **流れの地図（土台の続き）**: `app/lib/loop-flow-map.ts` に失敗の道を足した。リセットの分かれ道3本（返事が遅れた→押した跡があれば先へ／押せず→もう1回／もう1回も押せず→従来の外し）、読み直しの分かれ道1本（読めない→このお客さんを飛ばす）。割り込み3本（裏が起き直す i_sw_restart／入力の仕組みが応答しない i_tab_reload／タブが見えないまま止まる i_tab_hidden_stall）は流れの途中の分岐にせず別に持つ（どの段からも同じ回復）。分かれ道は 客完了・親の手・次客の読み直し（api_reload）にしか出られないと試験で止める。
+- **試験**: loop-flow-map.test.ts 87本（失敗の道・割り込み・点検の印の実在・悪い地図の自己点検を追加）、reset-front-visible-v2320.test.js 26本（新規・pre-commit に登録）、reset-press-late-grasp-v28315.test.js は試験の取り出しに _resetStepBuf／_resetStepP を足して 22 項目通過。ext-test-all は赤 2 本（基準どおり）。tsc-gate は基準 10 件のまま。
+- **まだ確かめていない（実機で確かめる）**: 背面のタブが本当に押す処理を遅らせていたか。次の自動の回で reset_vis が hidden かどうか・reset_press_start の hidden=1／slow・queued の印が残るかで見る。改善が出なければ仮説を捨てて次の原因を DB で読む。
+- **反映**: 版 2.8.320（manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO）。push・attach（手順書を本番へ）・実機確認は竹内さんの OK の後。手順書は build_v 27 になり、本番の手順書はまだ 26 のまま。
+
+## 2026-11-27 **拡張 2.8.319: 全部送付済み／次頁も全部送付済み／検索結果0件でも、客完了→リセット→次客へ（手順書 build_v 26）＋パネルの言葉を手順書と同じに**
+竹内さん「並べ替えした後物件取得するところで止まった／全部送付済みの場合次へで次のページにうつること手順書は把握しているのか／拡張ツールのアナウンスも手順書とあわせる（確認できるから）」「検索結果が0でも、すべて送付済みで次ページも送付済みでも、リセットして次のお客さんにうつる。リセットからの流れは同じ」。
+
+- **手順書**: 一覧の手 `PLAYBOOK_LIST_AD_SORT_STEPS` に、④（印刷用PDFを押す）の**場合分け**として ④の1 この頁が全部送付済み→印刷用PDFは押さず「次へ」で次のページ／④の2 次頁も全部送付済み・最後まで→客完了（all_sent_done）／④の3 0件→待たず客完了（zero_count0_finish）を足した（順に行う手ではない・④で押す物が無い時の分かれ道。最初は⑤〜⑧と通し番号にして紛らわしかったので直した）。最後に ⑤客完了（④で送り終えた・④の1〜3のどれでも）→リセット→30〜34秒→空とみなす→次客の条件をAPIから読み直して入れる→検索（リセットからの流れは同じ）。一連の流れ（next／handoff）の文も同じ。決まり `all_sent_advance_no_stuck` を強め、新しい決まり `zero_result_finish_reset`（印 dl:zero_count0_finish → post_send_clear 等）を足した。
+- **コードは既に進む形**だった（_autoFinish が all_sent_page→次へ／次無しは _sendBatchDone、0件は _zeroCount0Check→_sendSkipDoneFor、どれも _scrapeAndSendRealpro の送付後リセットを通る）。今回は手順書に書き、点検の印 dl:zero_count0_ を search-audit.js の KEEP_STEP／RULE_STEP に足した（今まで点検に残らなかった）。
+- **パネルの言葉**: PANEL_PHASE_WORDS（app/lib/bulk-panel-grasp.ts／chrome-extension/bulk-panel-grasp.js の写し）。「外している最中」「新しい条件を入れている最中」は手順書の言葉（リセットを押して待っている最中／条件を入れている最中 …）に直して出す。bulk-dl.js の _announcePhase（印 dl:list_flow_announce）が、並べ替え・物件取得・全部送付済み・次ページ・客完了で枠を更新し、session の axlx_bulk_grasp にも書く（読み直しで古い言葉に戻らない）。試験 bulk-panel-playbook-sync.test.ts が JS と TS の一致と、手順書に要の語が在ることを見張る。
+- **止まった原因は未確定**: 実測（#1663）では sort_lag_grace の後が何も残っていない。_maybeAutoPressOnLoad に黙って return する所があった（	racked.length === 0＝押せる行0・sig 同じ・新しい行なし等）。全行が送付済みで押せる行が0の時はここで黙って止まる疑い。**今回は理由を残すだけ**（印 dl:list_flow_wait_reason・同じ理由は10秒に1回）。次の実機で 	racked0 sentVis=… が出れば確定できる。挙動はまだ変えていない。
+- **土台強化（2.8.319 の後・拡張の版は上げていない）**: 竹内さん「なんで前提や流れを理解せずに変更したのか／根本を理解して改善できる仕組みを」。原因＝手順書の入れ物（文字の一列・`PlaybookFlowPhase.next` が1つ）が分かれ道を表せないのに、形を確かめず ⑤〜⑧ と一列に足した・試験が自分の文言の有無しか見なかった。直し＝①流れの地図 `app/lib/loop-flow-map.ts`（step／branch／join・どの分かれ道も客完了→リセットへ合流・コードの目印と点検の印が実在）が正本 ②手順書の一覧の手の④から先は地図から作る ③試験 `loop-flow-map.test.ts`（形・合流・実在・手順書との一致・悪い地図を止める自己点検）を pre-commit に ④直す前に `scripts/change-premise.ts --area=list|reset|all` で前提と流れを出して読み、理解の書面4点を書く ⑤CLAUDE.md 絶対ルール8・`.cursor/rules` に明記。設計知見はP1【決定】とP2（入れ物の形）の2本。
+- **版**: manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO すべて 2.8.319。設計知見 e9bf9f5b（P1）。
+
+## 2026-11-27 **拡張 2.8.318: 次客の条件を読み直せなかったら、古い条件では検索せず飛ばす（手順書 build_v 25）**
+
+竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」（精度を優先する決定。kb-insert で P1 に記録）。
+
+- **変更**（background _batchAutofill）: _refreshCustomerBeforeSearch が3回とも読めなかった時（または読み直した一覧に居ない時）は、条件を入れる前に例外 AXLX_API_RELOAD_FAILED で止める。点検の段 customer_api_reload に「飛ばす」と理由を残す。一括（_manualBulkRun）も自動（_passGuard）も、既存の「そのお客さんの例外 → 検索できなかったと知らせて次へ」に乗る。
+- **知らせの文**（batch-guard failureNotice）: AXLX_API_RELOAD_FAILED を「最新の条件を読み直せなかった→古い条件では検索せず飛ばした」と言う。
+- **手順書**（auto-procedure-rules 
+ext_customer_api_reload・action-playbook 切り替え③④）: 「全部だめな時だけ手元の条件で続ける」を「古い条件では検索せず飛ばす」に直した。series_handoff_order の目印を新しい行に合わせた。PLAYBOOK_BUILD_V 24→25。
+- **版**: manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO すべて 2.8.318。
+- **テスト**: bundle-storm-and-conds-v2775 の「読めなくても止まらない」を「読めなければ飛ばす」に置き換え（順番の確認も新しい形に）。loop-simplify-v28317 の目印を更新。
+- **注意（精度と引き換え）**: 読み直しが続けて失敗すると、そのお客さんは検索されない。失敗の多い回は「検索できなかった」の知らせが増える。点検の段で件数を見る。
+- **未確認（実機）**: 本番の拡張を再読込して、自動または一括で3客以上を通すまで「反映済み」と言わない。飛ばす側の動き（知らせが1通・次の客へ進む・古い条件で入力されない）は実機で確かめる。
+
+---
+## 2026-11-27 **拡張 2.8.317: リセット簡素化（30〜34秒だけ）／検索前10秒／並べ替え40〜50秒／次客の条件を毎回APIで読み直す（手順書 build_v 24）**
+
+竹内さん「前客のリセットが多すぎてバグる可能性。30〜34秒のところだけでリセット。最初の客はリセットしない」「リセットしたら必ず空。そのまま条件を入れる」「検索を押す前 1〜2秒は短い→10秒ほど」「並べ替えは検索確認から40〜50秒。押した後の猶予15秒〜。マウスが途切れないように」「外した後、拡張ツールからAPIで次の客の条件を読み込んで入れる（毎回・ループ安定の要）」。質問の答え: 把握→並べ替え開始は 40〜50秒の1本。
+
+- **リセット**（background `_postSendResetRealpro`／`_resetBeforeFill`）: 押す→再読み込み待ち→**30〜34秒待つ＝空とみなす**（読み戻しの繰り返し・写真・ラグ猶予は廃止。クリーン印を付けるための ≤1.5秒の確認だけ残す）。失敗時の保険（従来の外し）は残す。`lag_grace_after_reset` は廃止。
+- **最初の客はリセットしない**（`_bi === _startIndex && !_resume`）。前客の送付後リセットが成功済み（20分以内・cid一致）なら入力前リセットも見送る（段 `reset_before_fill` に理由を残す）。
+- **検索**（page-script `_searchReviewMs` 9〜12秒・`search_review_wait`）。見直し予約の二重ガードを 30秒に拡大。
+- **並べ替え**（bulk-dl）: 検索把握から **40〜50秒**（`SORT_AFTER_SEARCH_*`）・押した後の猶予 **15〜20秒**（`LAG_GRACE`）・マウス移動の取り消しは1回やり直し（`dl:sort_mouse_retry`）。`SORT_WAIT_OWN_MAX_MS` 90→**120秒**。
+- **次客の条件を毎回 API から読み直す**（`_refreshCustomerBeforeSearch`・最大3回・段 `customer_api_reload`）。手順書の決まり `next_customer_api_reload`・`first_customer_no_reset`・`search_review_wait`・`sort_mouse_retry` を追加。
+- **手順書の追記（同日・build_v 24 のまま・未配信）**: 竹内さん「次客のとき必ずAPIで拡張ツールいれるように手順書ちゃんとする」。「条件場面」の①に【毎回・全員】API読み直しを入れ（最初の客も同じ）、ITANDI の次客切り替えにも③として入れ、一連の流れ末尾（客完了→次客）の名前にも書いた。決まり `next_customer_api_reload` を条件場面・ITANDI 切り替えにも紐づけ。確かめ方（verify）は客1回ごとに `customer_api_reload` の段が必須（一括の回）。
+- **版**: manifest・page-script・itandi-page-script・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` すべて 2.8.317。
+- **未確認（実機）**: 拡張再読込 → 自動で2客以上 → `check-playbook-sync` ⑧ が verified になるまで「反映済み」と言わない。ITANDI の一回の通しも未確認。popup 単発の入力前リセット（`axlx-reset-before-fill`）は今回変えていない。
+
+---
+
+## 2026-11-27 **拡張 2.8.316: 押した後のラグ猶予（並べ替え・リセット）／リセットの押し待ち 120秒以上**
+
+竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」「出来ている場合の40秒は判断が早すぎるので、止まって120秒以上にする」。
+
+- **押す待ち（リセット）**: page-script `_RESET_PRESS_HARD_MS` 40000 → **120000**（15秒の「まだ押していなければ」→120秒まで待つ→それでも押していなければ積んだクリックを取り消して「押せず」）。background `RESET_PRESS_TIMEOUT_MS` 45000 → **130000**（ページの120秒より長く待つ）。決まり `reset_press_late_grasp` の文も 120秒に。
+- **押す待ちに合わせて窓を広げた**（これを忘れると、押す待ちの最中に窓が切れる）: 送付後のリセットの段の上限・窓 reset `260秒 → 330秒`（background の `_bulkPhaseSet("post_send_clear"／"pre_fill_reset", …)` と `_quietSet("reset", …)` の4か所＋comment）。計算: 押し120〜130秒＋読み直し8秒＋待機30〜34秒＋確かめ25秒＋写真の間4秒＋写真25秒＝約230秒。2%の従来の外し（最大125秒）が続く最悪は約330秒。`quiet-window-v2295` の繰り返し試し（5000回）で 260 のままだと最悪 1〜2回が窓を越えたため広げた（10回連続で 0）。
+- **ラグの猶予（新規）**: 並べ替えの高→低を押した後 `_lagGraceMs()`（5000〜8999ms・毎回揺らす）を置いてから一覧へ（bulk-dl `sort_lag_grace`・`step(1200 + _lagG, …)`）。リセット空を確かめて写真の後にも同じ猶予（background `reset_lag_grace`）。**検索後は既に 30〜36秒、リセット後は既に 30〜34秒の待ちがあるので、そこには足さない（二重にしない）**。決まり `lag_grace_after_sort`（list）・`lag_grace_after_reset`（clear）を追加。
+- **版**: manifest・page-script `_AXLX_PAGE_VER`・itandi-page-script・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` すべて 2.8.316。`_AXLX_RULES_DONE` にも2件追加。
+- **テスト**: 新規 `tests/chrome-extension/lag-grace-v28316.test.js`（25項目・猶予の範囲を vm で 2000回実行）。120秒・130秒・330秒に合わせて `reset-press-late-grasp-v28315`・`quiet-window-v2295`・`reset-between-customers-v28284`・`search-reset-wait-30s-v2292` を更新。
+- **未確認（実機で確かめる事）**: 猶予の分だけ1客あたりの時間が延びる（並べ替え後 +5〜9秒・リセット後 +5〜9秒 ＝ 1客あたり約10〜18秒）。実機で「押した後の画面の追いつき」が本当に効いたかは、次の本番の `sort_lag_grace`／`reset_lag_grace` の段と `reset_press` の遅れ（`page:reset_press_slow`）で見る。
+
+---
+
+## 2026-11-27 **拡張 2.8.315: 並べ替えが自分のパネルを掴む／裏の再起動後に前客の物件取得を割って次客へ進む（実測 #1659→#1661）**
+
+竹内さん実機（2.8.314）「並べ替えの場所を手順書で把握できていない・マウスが変な動き・検索が重い／並べ替え後に物件取得せずリセットを押した／リセット後に次客の条件が入らない」。**本番 DB（search_audits #1659・#1661）を時刻順に読んで**原因を2つ確かめた。
+
+**原因① 並べ替え見出しが自分のパネル**（bulk-dl.js）: `byTextLoose(["並べ替え"],28)` と `_findSortHeadEl` が拡張自身の行「𝑅.さん／並べ替え最中（1/2）」（17字）を本物の見出し（143字の塊）より先に掴み、そこへカーソルを置いて AD が出ず（`sort_no_ad menu_only 見えていた: AD/いま𝑅.さん／並べ替え最中`）数十秒やり直し。パネルを左へ避けた後でやっと本物（`sort_head_buried len=143`）に行けて成功した。
+→ 直し: `_isOwnUiEl`（id が `aixlinx-`／`axlx-` で始まる要素の中）を追加し、`_sortOnce` の `visible`・`_findSortHeadEl`・`_findSortHeadByAim` の `vis` で外した（byText／byTextLoose／_visibleWords／AD・高→低の探索も同じ `visible` を通る）。
+
+**原因② 裏の再起動後の見張りが検索後の途中を「放置」とみなす**（background.js）: #1659 は 22:14 に裏が再起動（`sw_restart_restored`）。90秒後の見張り（`batch_done_sw_watchdog`）が `fillRunning` だけを見て「入力中ではない＝放置」と決め、並べ替えが終わった5秒後（22:16:05）に次客 #1661 を開始。次客のリセットが前客（R.）の一覧・PDF取得を割り、`reset_press 押せず press_timeout15`×2 → 従来の外し → 前客の鍵（axlx_pipeline_job）が生きているため `wait_prev_customer`（最大10分）で**次客の条件が入らない**（画面は「新しい条件を入れている途中」のまま）。
+→ 直し: 見張りを `_swWdRun(try)` にして、**同じ客の鍵（`_pipelineJobLive`）か検索後の印（axlx_pending_auto_send・10分内）が生きている間は次へ進めず60秒ごとに見直す**（上限40回・beatAt は更新しない）。鍵は無進捗12分・開始30分で切れるので永久には待たない。
+→ 手順書: 決まり `sort_skip_own_ui`（list）・`sw_restart_wait_post_search_flow`（switch）を `auto-procedure-rules.ts` に追加（verify は点検記録に段が出ないので RULES_CODE_ONLY に理由つき）。`_AXLX_RULES_DONE` にも追加。
+
+**原因③ リセットは押せていたのに「押せず」と把握した**（page-script `_resetPress`・background `_postSendResetRealpro`）: 竹内さん「今回リセットボタンはちゃんと押せていた」。#1661 は `reset_press 押せず: press_timeout15` が2回。ページ側は 15 秒で「押せず」を返すが、人の動きのクリックは**キューに積まれて遅れて実行される**（タブが背面だと特に遅い）ので、実際は押されていた。裏は「押せず」→画面を撮る→**もう1回押す**→従来の外し、と二重に動き（外しは過去に1308秒かかった例 #1656）、読み直し中のページを読んで「読めず」になった。
+→ 直し: ①`_fireReset` でクリックが実際に実行された所を捉える ②15秒で諦めず、まだなら最大120秒まで待つ（`page:reset_press_slow`・2.8.316 で 40→120秒に広げた：竹内さん「止まって120秒以上にする」）③120秒でも押していなければ積んだクリックを取り消してから「押せず」（`page:reset_press_cancel`＝あとで勝手に押されない）④enqueue が断られた時は `enqueue_refused` ⑤裏は上限を130秒にし（2.8.316 で 45→130秒）、返事が時間切れ／無しでも押した印の起動番号がいまのページと違う（読み直された）なら「遅れて押した」として待機→空の確認へ進む（もう1回押さない）。決まり `reset_press_late_grasp`（clear）を追加。
+→ テスト: `tests/chrome-extension/reset-press-late-grasp-v28315.test.js`（仮想時計で `_resetPress` を実際に動かす・22項目）。古い試験3本（reset-between-customers／quiet-window／…）の固定値を新しい作りに更新。
+
+**ボトルネックの調べ**（実測 #1654/#1656/#1659/#1661 と定数）:
+- 人の間の待ちは竹内さんの決定（リセット後30〜34秒＝2.8.292／検索確認後30〜36秒＝2.8.292）。1客あたり リセット ≒50〜80秒・並べ替えまで ≒30〜36秒＋作業。ここは**保険ではなく決めた待ち**。
+- 保険が**失敗した時**に積み上がる分が大きい: リセット失敗（押せず→撮る→もう1回→従来の外し）で41秒、従来の外しは #1656 で**1308秒（22分）**かかり最後は `leftover_stuck 200秒` で中止。並べ替え失敗は 30〜36秒待ち→やり直し（#1659 は自分のパネルを掴んで約60秒）。
+- 重さ: #1654/#1656/#1659/#1661 すべて `page:perf_*`（長い処理・メモリ）の記録が**0件**＝ページの JS が重かった証拠は無い。`tab_hidden`（タブが背面・ウィンドウが隠れている）は #1656／#1661 に記録あり（背面だと人の動きのタイマーが遅れる）。
+- 点検の段の枠（120）を `page:guide_phase_one`／`loop_*`／`next_move_grasp` の繰り返し（#1659 は41/120）が使い、肝心の並べ替えの最初の段が落ちて見えなくなっている（記録の問題・動きは変えていない）。
+- 手順書の台帳の誤り（未修正・表示のみ）: `page:loop_task_list` が fill_done（`_graspCustomerLoopPhase("handoff","ready_next")`）の時点で「並べ替え・一覧まで完了」と記録し、「次の動き=前客の選択を外す」を出す。実際の一連の完了（物件取得・送付）はその後。80〜120秒の `bulk_done→外す`（`list_done`）も検索前から繰り返し出ていた（前の回の印の持ち越しの疑い）。
+
+**まだ分かっていない／未確認**（推測で直していない）: ①「検索が重くて固まる」は実測の裏付けが無い（perf 段は未確認）②リセットボタンが押せなかった理由（`press_timeout15`・`tab_hidden` ＝タブが背面）③ page-script の `loop_task_list` が fill_done の時点で sort/list を完了扱いにする（`loop_advance 客完了→次へ` が検索直後に出る）。表示の台帳だけで動きは変えていないが、紛らわしい。
+**テスト**: `tests/chrome-extension/sort-own-ui-sw-watchdog-v28315.test.js`（23項目）。
+**実機で確かめる事**: 再読込→自動2客→並べ替えの最初の hover が本物の見出し（`sort_head_hover` の d が「並べ替え更新日時…」）／裏が起き直しても前客の PDF が終わってから次客のリセット。
+
+---
+
+## 2026-11-27 **拡張 2.8.314: 古い赤 104 本の整理（→赤 2 本）＋ 本物の退行 3 件の直し／戻し**
+
+竹内さん「残っていることも徹底的に細かく改善お願い」。8 人に 13 本ずつ割り振り、失敗した項目ごとに A（試験が古い＝今の設計に合わせて直す）／B（本物の退行の疑い）／C（意図した設計変更＝その項目だけ退役してコメントを残す）に分けて整理した。**コードを見て根拠を確かめてから**直した（推測で通していない）。
+
+- **結果**: 全 347 本中 青 345／赤 2（前は赤 104）。ファイルごとの退役はゼロ。C の退役は項目単位（`// 2.8.313 退役: …` のコメント付き。スタッフも選んだ客は自動で押す 2026-11-22／レインズを拡張から外した 2026-11-26／写真の見張りは自動・録画中だけ 2.8.154／スクロールは中央寄り 2026-11-16・17／統括Proが n≥1 に緩めた 2026-11-16・17／リセットボタン方式 2.8.284 ほか）。
+- **試験の道具の誤り（直した）**: `ext-test-all.ts` が「結果: ✓8 ✗0」のような**件数の行の ✗ を失敗と数えて**、青い試験 7 本がずっと赤扱いだった（基準の赤 104 のうち 7）。行頭の ✗／❌ だけ数える形に直した。
+- **本物の退行（コードを直した 3 件）**:
+  1. **`humanRand` が上限で頭打ち**（page-script.js）: `Math.min(hi*2.6, out)` で、ためらいを足した値の約 3 割が**ちょうど上限の同じ値**に積み上がっていた（hi=200 → 520ms が 30.5%・実測 2 万回）。等間隔に見える機械の印で、竹内さんの「人間の動き」に反する。上限は越えないまま、超えた分を上限の 86〜100% にばらけさせた。`ai-customer-mode-v2634` の「クリック間の値がばらける」2 項目が青に戻った（60 回連続で青。駅の間の「同じ値が3回続かない」は約 1% で揺れるまれな不安定で、今回の直しとは別）。
+  2. **リセット完了の段 `reset` が消えていた**（audit-timing の B）: 手動クリアからリセットボタン方式（2.8.284）に置き換えた時に `_auditStepP('reset')` が戻っていなかった（点検の `page:reset$` は期待していた）。`_startResetAfterReflect` の `_doReset` 完了時に戻した（点検だけ・動きは同じ）。
+  3. **`list_handoff_seen` を出す側が無かった**（2.8.166・2.8.187 の復旧で戻っていなかった）: 客切替の判断の所で `_auditStepP("list_handoff_seen", 前客→今客)` を戻した（点検だけ）。
+- **2.8.313 の直しの精度（ついでに）**: すでに別の所が強制を立てている回（送付後の外し未完／前の回のリセット引き継ぎ／結果違いの入れ直し）は、リセット済みでも省かない（旧は「省いた」印だけ残して強制は立ったまま＝新しい決まりの実機確認が誤って OK になりうる）。`_switchedCust && !window.__axlxForceClearAllPlace && _resetCleanSkipsForcePlace(true)`。
+- **実行試験を追加（弱点5の残りを埋めた）**: `reset-clean-decision-runtime-v28314.test.js`（21）。fillRealpro は約 1400 行で偽の画面では動かせないので、**判断の 3 か所（_willClear／_switchedCust／_needForcePlace）の実コードをそのまま取り出して**偽の window・印・フォーム状態で動かし、旗と記録（reset_clean_no_force_place／place_redo／place_keep）を確かめる。文が書き換わって取り出せなくなったら赤になる。直す前のコードに戻すと 1 件赤になることを確認済み（試験が効いている）。
+- **残す赤 2 本（本物の欠落・竹内さんの判断待ち）**:
+  - `guide-plan-link-v28162`（3 項目）: **2.8.162 の「指定駅・沿線だけ先に押す」（`primaryPending`／`station_primary_only`／`line_primary_only`）が page-script.js に無い**。履歴に一度もコミットされておらず、2.8.187 の復旧事故（`git checkout HEAD -- page-script.js` で未コミットの 2.8.155〜186 が消え、2.8.154 を土台に会話記録から部品を戻した・上の 2026-11-22 の節）で戻っていなかったと見られる。今は `_applyGuideLikeStationGrasp` が指定駅を `station_names` の先頭に並べるだけ（「指定駅が済むまで他の駅を押さない」止めと点検の印は無い）。先頭に並べる分で実害は小さいと見るが**実機では未確認**。戻すなら駅の入力の流れに手を入れるため実機確認つきで別作業にする。
+  - `realpro-guide.test.js`（1 項目）: 一括バーの「キャッシュ確認」ボタン（`axlx-cache-btn`）が 2.8.232（0831076bc）の大きな差分で消えていた。`probeCache` 本体と結果の箱は残っているが呼び出しが無い。スタッフ向けの診断ボタンなので、UI を戻すかは竹内さんの判断。
+- **確認が要る点（A と判断したが記録が薄い）**: 検索前の関所の入れ直しが「1 回だけ」→最大 6 回（`_AX_GATE_RETRY_MAX`）／`FILL_DONE_TIMEOUT_MS`（リアプロ）がページ側の見張りと同じ 1800 秒（旧は「ページ側より5秒長く」）／`clear_then_fill` で clear 段が立たず fill 段へ移る／`stuck-after-sort` の「スタッフなら止める」が外れた理由はコードのコメントのみ／`blocked_not_new_rows` 退役で「Case A で新しい行が無い」時の理由の印の経路は試験でもコードでも見ていない／`human-wait` の固定待ち表に足した `bulk-dl.js` の `setTimeout 1500`（並べ替え失敗後の再試行の間）は人の間か未確認／`location-any-axis-v2692` の「URL に条件が載っていても場所ありとみなす」は `urlHasArea` の存在だけの弱い見張り（実コードは「この回で選んだ印がある時だけ」に締まっている）。
+- **土台強化（竹内さん「ミスが見つかったら改善して反映される仕組み・ここで改善したら拡張ツールに反映されていくように」）** — 今回見つけた「穴の種類」ごとに止める道具を足した:
+  1. **機能が黙って消える（2.8.162／166・reset の段）** → `tests/chrome-extension/audit-step-phantoms-v28314.test.js`＋`_audit-step-phantoms.json`。点検の保持表（`search-audit.js` の KEEP_STEP／RULE_STEP・285 個）の名前を取り出し、**拡張のどこにも出てこない「幽霊」**が増えたら赤。直った物が受け入れ表に残っても赤（片付ける）。今の幽霊 14（動的 `tag+_done/_ng/_grasp` の 9・旧名 `dl:loop_handoff_grasp`・**【未整理】`guide_plan_act`／`station_primary_only`／`line_primary_only`／`fill_progress`**）。試験が効くことは `list_handoff_seen` を消して赤になるのを確認済み。
+  2. **見張る道具が読み違えて赤の山を作る** → `scripts/lib/ext-test-parse.ts`（`countNg`／`failLines`／`failKeys`／`normFail` の純関数）＋`app/lib/__tests__/ext-test-parse.test.ts`（11・実際にあった「✓8 ✗0」型の件数の行を失敗と数えない）。`ext-test-all.ts` はこれを使う。フックにも入れた。
+  3. **反映の鎖の抜け・順番違い（記録の更新忘れ・版の不揃い・本番を待たずに attach・実機待ちを忘れる）** → `scripts/ext-release.ts`。①版5か所一致 ②`dept_search_tool.md` に版の記録 ③反映に関わる場所の未コミット無し ④拡張の試験に新しい赤無し ⑤型エラー増無し ⑥origin/main に早送りで入る、を点検（何も書かない）。`--push` で main と cursor-ext へ（force なし）・`--attach` で本番が手元の版になるのを最大15分待ってから attach-playbook（控えはリポジトリの外）→ check-playbook-sync・`--all` で続けて。push 時は `work_log` に「実機の確認待ち」を残す。終わりに「人にしかできない手（拡張再読込→自動2客以上→⑧）」を必ず出し、**実機で確かめるまで「反映済み」と言わない**。`.cursor/rules/sumora-ai-ui.mdc` にも書いた。
+  - まだ道具が無い穴（残り）: ⑧の実機の証拠は人が自動を回さないと増えない／「A と判断した試験の書き換え」が妥当かは人の目（文字列を見る試験は動きを見ていない）／幽霊の【未整理】4件の判断。
+- 版: **2.8.314**（manifest／`_AXLX_PAGE_VER`／`_AXLX_ITANDI_PAGE_VER`／`AUTO_RULES_REVIEWED_UP_TO`／`ITANDI_RULES_REVIEWED_UP_TO` を揃えた）。決まり（AUTO_RULES）の中身は変えていない。デプロイ後に `attach-playbook.ts --apply --backup-dir=<リポジトリ外>` → `check-playbook-sync.ts` が要る（`rules_v` は版を含む）。実機は拡張再読込→自動 2 客以上→⑧で確認。
+
+---
+
+## 2026-11-27 **反映の「抜け・弱い所」を見つける仕組みの点検と強化（2.8.313 の後・拡張本体は変えていない）**
+
+竹内さん「改善した際の反映での抜けや弱い部分ないか／抜けや漏れを細分化して見つけて改善する仕組みはできているのか」。2.8.313 の反映作業（push→デプロイ→attach→sync）を実際に通して見つけた弱点。
+
+- **弱点1（直した）: 「確かめられていない」が見えなかった**。決まりを足しても、拡張が古い／その場面が出ないと `per_rule` は no_data のままで、効いたかどうか誰にも見えない。
+  → `newRulesEvidence`（auto-procedure-rules.ts・純関数）で直近3版の決まりを 5 状態に分ける（verified／ng／waiting_ext=新しい版の自動がまだ無い／no_scene=回ったが場面が出ない／no_verify）。`fetchPlaybookReflect` の `new_rules` と `playbookReflectNote`（統括Pro の材料）、`check-playbook-sync.ts` ⑧ に出す。試験 `new-rules-evidence.test.ts`（17）。
+  **実測の発見**: 2.8.309／2.8.312／2.8.313 の決まりはどれも実機の自動で一度も確かめられていない（最後に動いたメイン自動は 2.8.295）。つまり 2.8.296〜313 の改善は「コードと試験では正しい」までで、実機では未証明。
+- **弱点2（直した）: 試験の基準がファイル単位**。赤112本の中で、今回触った所を見張る試験（now-action-no-single-clear-loop-v28227・post-send-clear-grasp-v28223）も赤で、中の失敗が増えても「古い赤」で通っていた。
+  → `scripts/ext-test-all.ts` が赤のファイルごとの失敗項目（数字・版は丸める）も基準 `_known-red.json` に持ち、中で新しく失敗した項目を止める。乱数・時間で揺れる試験（bulk-loop-chaos は直列だと12/12青・並列の負荷で赤になる／ai-customer-mode）は疑わしい物だけ2回やり直し、毎回赤の物だけ止め、揺れる物は「不安定」として別に出す（隠さない）。
+- **弱点3（直した・フックへの組み込みは承認待ち）: 型エラーがコミットの見張りに無かった**。絶対ルール5を見ているのは人だけで、型エラー 8 ファイルが残ったままコミットが通った。
+  → `scripts/tsc-gate.ts`＋基準 `scripts/_tsc-baseline.json`（今ある 10 件・今回の変更で増えていない）。基準に無い型エラーで終了コード 1。
+  ⚠ `.githooks/pre-commit` への追加（new-rules-evidence・拡張の試験全部・tsc-gate）は自動の確認で止められたため**未実施**。竹内さんの OK 後に入れる。
+- **弱点4（意図的にそのまま）**: ④で別PC（staff）の拡張が 2.5.91 のまま動いている（#1658・#1554）。竹内さん「別PCのはまた更新させる従業員のなので今はそのまま」（2026-11-27）。⑤は警告止まりのまま。
+- **弱点5（一部直した・残りは報告）**: ページ側の3か所の呼び出しは「正規表現の目視＋helper の実関数」まで。fillRealpro を偽の画面で通して「リセット済みなら place_redo が出ない」を見る実行試験は無い（残り）。
+  **直した（古い赤8本→青）**: 版の固定が `2.8.2xx` だけを通す書き方で、2.8.3xx から全部赤になっていた。数の大小（semver 以上）で比べる形に直した:
+  `clear-per-panel-search-decide-v28135`・`clear-samekind-transition-v28220`・`guide-phase-task-link-v28231`・`human-serial-v2832`・`loop-sort-cursor-keep-v28226`・`now-action-no-single-clear-loop-v28227`・`ward-clear-human-v2829`・`post-send-clear-grasp-v28223`。
+  `post-send-clear-grasp` はもう1つ、`KEEP_STEP から200文字以内に post_send_clear_gap` の窓が、段の名前が増えて届かなくなっていた（実際は両方に入っている）ので、行ごとに見る形に直した。
+  基準の赤は 112→104 本。残りの赤 104 本のうち、版の固定だけで赤の物は0（失敗の中身が古い設計を見る物が大半・1本ずつ「今の設計に合わせて直す／捨てる」の判断が要る）。
+
+---
+
+## 2026-11-27 **危険な所の改善（2.8.313）: リセット済みなら客切替でも強制の全部外しを省く／手順書の間の数え方／旧い決まり文の矛盾を直す**
+
+竹内さん「危険な部分徹底的に改善するようにする　動きも人間の動きと速さにするように」。実データ（#1656 など 2.8.295 の記録・手順書 id 2851・人の録画 n=297）を読んだ上での最小の直し。
+
+- **変更（page-script.js）**: `_resetCleanSkipsForcePlace(stamp)` を追加（`_axResetCleanFresh()`＝リセットで空と読み戻せた印が10分以内かつ今も空）。次の3か所で「客が変わった」だけを理由にした旗を立てない:
+  ① 前客の外しの予告 `_willClear`／② `_switchedCust`（`__axlxForceClearAllPlace`・`place_redo`）／③ `_needForcePlace`。立てなかった時は audit 段 `page:reset_clean_no_force_place`。
+  **変えない物**: 送付後の外し未完（`__axlxPostSendClearGap`）・前の回のリセット引き継ぎ・空でない回（今まで通り外す）・印（`axlx_reset_clean`）自体（leftover 判定 `reset_clean_skip_clear` が使う）。
+- **決まり**: `reset_clean_no_force_place`（scene clear・marker `_resetCleanSkipsForcePlace`・verify: 印があるのに `place_redo` が出たら違反）を追加。`task_change_api_every` の文（幹段は force・他は soft と読める旧文）を `task_gate_no_forced_refetch`（2.8.309）に合わせて直した。`search-audit.js` の KEEP/RULE に `reset_clean_no_force_place` を足した（120 段の上限で落とさない）。
+- **手順書の間（`learn-flow-steps.ts`）**: 場面ごとの `gap_ms` で 0.15 秒未満の差を数えない（`MIN_REAL_GAP_MS`）。手順書 id 2851 の area の間が 95ms だったが、人の録画（通常・n=297）の区→区は 677〜772ms で 0.15 秒未満は0件。**原因は推測**（二重記録・旧い行の機械的連続）。直した後の手順書で area の中央値が 0.6〜0.8 秒に寄るかを確かめる。
+- **版**: manifest／`_AXLX_PAGE_VER`／`_AXLX_ITANDI_PAGE_VER`／`AUTO_RULES_REVIEWED_UP_TO`／`ITANDI_RULES_REVIEWED_UP_TO` = 2.8.313。**手順書の作り直し（`attach-playbook --apply`）はまだ**（竹内さんの OK 待ち）。
+- **試験**: `tests/chrome-extension/reset-clean-no-force-place-v28313.test.js`（26）・`learn-flow-steps.test.ts`（72）・`auto-procedure-rules.test.ts`（205）・`ext-test-all`（新しい赤なし・基準 112）。tsc は既存の無関係な試験 8 ファイルの型エラーのみ（今回の変更では増えていない）。
+- **今回やらなかった物（理由つき）**: 待ち時間の定数変更（人の録画の実測に合わせる根拠が不足）／全体の `nextMove` 表示名の改名／重複行の本番側除去／旧い決まり本文（約30本）の書き直し。いずれも別作業。
+- **確かめ方（実測は未）**: 拡張を 2.8.313 に再読み込み → 続けて2客以上を自動 → 記録で `reset_press → reset_verified → … → page:reset_clean_no_force_place → clear_then_fill_ok` が出て、`place_redo`／`force_clear_place` が出ないこと。
+
+---
+
+## 2026-11-27 **実ランタイム結合テスト＋本番 DB 実データ検証で発覚した抜け7件の完全修正（2.8.312 追試強化）**
+
+竹内さん「これでちゃんと改善されたのか 抜けなどはないのか テストして調査するようにする」を受け、本番 DB 実行（読み取り専用：`all` id=2846 / `realpro` id=2847,2849 / `itandi` id=2848,2850）・API ハンドラ直結（`?touch=0`）・VM 実ランタイム結合テストで再検査し、**実動時に起きる 7件の抜け**を追加で特定・修正した。
+
+1. **`app/lib/learn-bundle-preserve.ts`（`syncSupervisorImproveLoop` の本番実データ破壊バグ3点）**:
+   - **全角 `％` パース漏れ**: 本家の `自動モード完成度` は全角 `％`（`再現20％・欄×観点68％・精度31％`）だが、旧同期が半角 `%` のみ見ていたため `id=2847/2848` で値が消えて完成度 `38→27（再現?％・欄×観点?％・精度?％）` に下落していた → 全角/半角両対応＋`todayCompLine` 併用で `38→45`（`itandi` は `41→48`）へ正しく同期。
+   - **`meeting.today` 参照先ズレ**: 統括の本番構造は `supervisor.today` ではなく **`supervisor.meeting.today`** だったため、`today` 内の `自動モード完成度` / `完成度の残り` / `完成度↑` が一切同期されていなかった → `meeting.today` を同期するよう修正。
+   - **4本柱 & `linkDone` 誤判定**: `buildLinkPipeline` の `"5.自動で使う: ..."` が「段階」を含まない時に `linkDone = true`（`✗` なのに `✓` 表示）になるバグ、および `学習完成・学習期間`/`土台` 行が省かれた `realpro` で `1/4 ✓` が `1/2 ✓` に半減していたバグを、`学習期間・構築の細部` / `学習土台点検（F番号）` / `rowChain` 補完で修正。
+2. **`chrome-extension/itandi-page-script.js`（ITANDI 学習座標の座標系取り違え & 入力中タブ保護）**:
+   - `window.__axlxLearnPoints` と `pb.positions (source !== "screen")`（要素内割合）を最優先し、`source === "screen"` / `window.__axlxLearnScreen`（画面全体割合）の時は `_itScreenPosToElAim` で `getBoundingClientRect()` と `innerWidth/Height` から要素内相対座標へ変換（矩形外なら誤爆防止のため `aim` を付けず `pointer-ui.js` に任せる）。
+   - 入力開始〜`_safeDone`/`_watchdog` の間 `data-axlx-it-fill-running="1"` を立て、`itandi-content.js` (`axlx-ping`) と `background.js` (`_probeItandiTab`) が `fillRunning` を返して更新時の誤リロードを防止。
+3. **`chrome-extension/human-learn.js`（ISOLATED world のサイト横断汚染修正）**:
+   - `_serverMotion()` / `_loadServerGap()` に `_hlSiteNow()` / `_pickSiteValue()` を追加し、ホスト名に応じた `axlx_learn_motion__<site>` / `axlx_learn_gaps__<site>`（フォールバックも `axlx_learn_for_site` 一致時のみ）を読むよう修正。
+4. **`app/lib/human-learn-profile-guard.ts` & `app/api/human-learn-profile/route.ts` & `chrome-extension/background.js`（CDN `stale` 残存ゼロ化）**:
+   - `cacheHeaders("light")` から `stale-while-revalidate=300` を外して `"public, s-maxage=30, must-revalidate"` に変更（30秒経過後に古い `stale` を返す穴を遮断）。
+   - `route.ts` の `?refresh=1` と `if (fresh)` 応答にも `bundle_v` と `cacheHeaders("none")` を付与。
+   - `background.js`: `allBundle` フォールバック fetch に `?v=` を付与、`axlx-learn-status` も `msg.site` に応じた専用キーを返すよう修正。
+5. **`content.js` / `itandi-content.js` / `popup.js` / `page-script.js` / `pointer-ui.js`**:
+   - `bootLearnIfNeeded` の版判定を `bv < 19` かつ `rules_up_to < manifest.version` へ更新（2.8.311 以前を残さない）。
+   - `popup.js` 学習レポート小窓の `serverLearnLines` がアクティブタブのサイト専用キーを優先読込するよう修正。
+   - `page-script.js` レガシー `onChanged` に `__realpro` 優先＋`axlx_learn_for_site` 保護を追加、`pointer-ui.js` の `_ptrBridgeFetch` に `"axlx_learn_for_site"` を同梱。
+
+**検証結果（実ランタイム結合＋本番 DB 実測＋全テスト）**
+- 実 DB コピー（`id=2846 / 2849 / 2850`）＋ API `GET ?touch=0` 実測：`Cache-Control: public, s-maxage=30, must-revalidate`、`bundle_v` 出力、`realpro` 104ルール (`db8d3064`) / `itandi` 17ルール (`71e38ffd`) へ正常更新、完成度 `38→45` / `41→48`、`meeting.today` 完全同期、`1/4 ✓` 維持、自己矛盾・破壊 0。
+- 新規実ランタイム結合テスト（`reflect-pipeline-v28312.test.js` 23/0・`reflect-mechanism-hardening.test.ts` 27/0）＋ `ext-test-all.ts`（345本・新規赤 0）＋ `pre-commit` 全 17 スイート全合格。
+- `check-playbook-sync.ts`: 自己点検⑦ 9項目すべて ✅。残る ⑥ の ITANDI 新しい抜け 1件（「押す位置の票が3回未満の手：③揃ったら検索ボタンへ進む」）の正体は、前日 0票（`学んでいない手`）から `points` に 1票入って進歩したため種別が変わったもの（`shots.learned` には `n=4` があるが要素内座標の精度を守るため `points` `n=1` を画面座標で上書きせず残している仕様。通常検索であと 2回「検索」を押せば消える正常な進歩）。
+
+---
+
+## 2026-11-27 **改善・手順書の確実な反映仕組み化と実行停止ボトルネック解消（2.8.312・PLAYBOOK_BUILD_V = 19）**
+
+竹内さん「ちゃんと拡張ツールの手順書や動きは最新のが反映されるように、そして最新のに対してボトルネックになっている部分やバグの部分取り除ける仕組みは徹底的に細かくできているのか」「改善しても反映うまくできないことが今まで多かったので、その面もちゃんと改善できるように仕組み化を徹底しておこなっていく」。
+
+### 1. 改善しても反映されなかった根本原因（ボトルネック）の除去
+1. **サーバー／CDN キャッシュで旧束が返り続ける問題**（`app/lib/human-learn-profile-guard.ts`, `app/api/human-learn-profile/route.ts`）:
+   - `?touch=0` に `bundle_v`（`${generated_at}_${rules_v}_${build_v}`）を追加し、拡張が取得時に `?v=<bundle_v>` を付与（`buildBundleFetchUrl`）。
+   - 本体 GET で `forceFresh` / `playbookRefreshed` または要求 `?v=` と実束 `actualBundleV` の不一致時は `cacheHeaders("none")`（`no-store, no-cache, must-revalidate`）で旧 CDN キャッシュを完全バイパス。
+2. **統括の自己矛盾（「一連=段階5〜6」と「自動モード完成度=0%・まだゼロ」の同居）**（`app/lib/learn-bundle-preserve.ts`）:
+   - `syncSupervisorImproveLoop` で `shots.learned` 継承後に `自動モード完成度`（`measureAutoCompletion` で `evidence`・`today`・`agenda` 再算定。`reproPct` 変数バグ修正含む）および `学習完成（期間・土台・つながり・一連）`・`学習完成の道筋`・`学習完成・つながり`・`学習完成・一連の動き` を実測値へ同期。
+3. **拡張側サイト分離と反映ゲート・配線漏れ**（`learn-refresh-gate.js`, `background.js`, `content.js`, `itandi-content.js`, `pointer-ui.js`）:
+   - `projectLearnStorageForSite(st, site)` / `buildBundleFetchUrl` を新設し、`_headCheckAtBySite` でサイト別に確認間隔を分離。共有キーを他サイト側へフォールバックしないよう遮断し、ITANDI の `pb.rules.length < 1` 時は強制リフレッシュ。
+   - `content.js`: `_realproLearnView`、全キーフル化（`PUSH_KEYS` 末尾 `"axlx_learn_gaps"` 維持）、`axlx-page-learn-refresh` / `axlx-page-learn-auto-linked` へ `site: "realpro"` 明示、`axlx-ping` に `extVer` 返却。
+   - `itandi-content.js`: `_itandiLearnView`、他サイト共有遮断、`axlx-page-learn-refresh` / `axlx-page-learn-auto-linked`（`site: "itandi"`）中継、`bootLearnIfNeeded`（`__itandi` 監視）、`axlx-ping` に `extVer` 返却。
+   - `pointer-ui.js`: `CURSOR_HAND_KEY` / `MOTION_KEY` に `__realpro` / `__itandi` 優先＋フォールバック、`moveToEl(el, opts)` の `opts.aim` 対応。
+4. **SW 途中終了・ハング・古いタブ残存の解消**（`background.js`, `search-audit.js`, `underbar.js`, `popup.js`）:
+   - `search-audit.js` に `_auditPersistNow`（`begin` / `attachFill` / `attachResult` / `finish` の即時 `chrome.storage.session` 永続化）・`adopt()` 復元時の `restored: true`・`listOpen()` を追加。
+   - `background.js` に `_manualBulkRun` 開始時の未完了掃除（`superseded_by_new_bulk`）、SW 起動時 90秒ウォッチドッグ（`batch_done_sw_watchdog`）、`axlx-set-fill-customer` 全4箇所の 4秒タイムアウト保護（`_withTimeout`）、`_reloadOrphanTabsOnInstall` の `extVer !== ver && !p.fillRunning` 旧タブ強制リロードを追加。
+   - `underbar.js`: `startForward` 8秒フォールバック＋二重発火ガード、`Extension context invalidated` 時の赤リロードバナー `_showReloadBanner`。`popup.js`: `ext_behind` 警告を両サイト共通文言へ改善。
+5. **実操作フロー・順番バグの解消**（`page-script.js`, `itandi-page-script.js`, `auto-procedure-rules.ts`, `auto-itandi-rules.ts`）:
+   - `page-script.js`: `_startResetAfterReflect` により反映ゲート `_learnReflectP` 完了後に `_doReset` を開始する順序へ変更し、`notifyDone` で `clearClickQueue()` を必ず実行。リアプロ決まり正本に `learn_reflect_before_reset`, `notify_done_clears_queue` 追加。
+   - `itandi-page-script.js`: `_itEnsureLearnReflectedForFill`（`fill()` の `_itResetForm` 前および `_guideOn()` で実行）、`_itSerialType`（`rent_max`/`rent_min`/`area_min`/`area_max`/`walk_minutes`/`building_age` の複数数値入力をカーソル取り合い無しで直列完了待機・単体抜き出しテスト互換維持）、`_pointerMoveTo`/`_humanClick` の学習位置 `aim`（`learnNames` 指定含む）反映を実装。ITANDI 決まり正本に `it_learn_reflect_gate`, `it_learn_aim_pointer`, `it_serial_numeric_input` 追加。
+   - 版数統一：`manifest.json` = `_AXLX_PAGE_VER` = `_AXLX_ITANDI_PAGE_VER` = `AUTO_RULES_REVIEWED_UP_TO` = `ITANDI_RULES_REVIEWED_UP_TO` = **`2.8.312`**。
+
+### 2. 「直しても抜けない・すぐ検知する」仕組み化（自動検証と監視）
+- `scripts/check-playbook-sync.ts` に **⑦ 反映仕組みの自己点検**（CDNバイパス・サイト分離・統括同期・SW耐性・ITANDI配管の 9項目決定論チェック）を追加。
+- `app/lib/__tests__/reflect-mechanism-hardening.test.ts`（24/0：CDNバイパス・統括自己矛盾同期・正本/拡張構文検証 `vm.Script` + `node --input-type=module --check`）と `tests/chrome-extension/reflect-pipeline-v28312.test.js`（11/0）を新設し、`.githooks/pre-commit` へ組み込み。
+- 仕様強化に伴い旧正規表現がズレていた4本の拡張テスト（`head-ttl-served-v2310`, `human-reset-orphan-v2294`, `look-before-act-v2610`, `task-gate-no-forced-refetch-v2309`）を最新仕様照合へ更新。
+
+**検証結果（すべて 2.8.312 で完走）**
+- `npx tsx scripts/ext-test-all.ts`: 全345本 青 233 / 赤 112（**新規赤 0本**、基準維持）
+- `reflect-mechanism-hardening.test.ts`: 24 passed / 0 failed、`reflect-pipeline-v28312.test.js`: 11 passed / 0 failed
+- `pre-commit` 全テスト（`site-split-guard`, `notation-copies-sync`, `realpro-guide-town`, `site-key`, `playbook-site-split`, `auto-rules-verify-exists`, `playbook-rule-evidence`, `learn-opens-and-itandi-flow`, `playbook-gap-baseline`, `playbook-clean-and-itandi-sync`, `site-contamination-guard`, `playbook-and-motion-hardening`, `auto-procedure-rules`, `itandi-rules-separate`, `head-ttl-served-v2310`, `learn-bundle-site-sync`）全合格
+- `npx tsc --noEmit`: 今回編集・新規作成ファイルの型エラー 0件（既存テスト 8ファイルのみ以前のまま）
+- `check-playbook-sync.ts` ⑥ の `itandi` で既知の抜け1件（「条件：押す位置を学んでいない手」が実記録1〜2票化により「押す位置の票が3回未満の手（③揃ったら検索ボタンへ進む）」へ変化・要竹内さん確認）を検出。
+
+**反映手順（次ステップ）**: commit & push（main → Vercel 本番）→ `attach-playbook --apply` → 手元 Chrome 拡張 `git pull` & 再読み込み（`2.8.312`）→ タブ開き直し・自動1回後に `check-playbook-sync.ts` 完了確認。
+
+---
+
+## 2026-11-27 **残課題の徹底改善・実データ確認とリアプロ手順書の完全整理（PLAYBOOK_BUILD_V = 18・2.8.310）**
+
+竹内さん「ほかに改善できていない部分あれば改善する」「ちゃんとリアプロ手順書も綺麗に整理されたのか徹底的に確認する」。
+
+**実 DB 比較で確認した主な成果（読むだけ・`realpro` id=2829 / `itandi` id=2830 / `all` id=2831）**
+1. **リアプロ手順書（`PLAYBOOK_BUILD_V: 16 -> 18`）の整理完了**:
+   - `points` の許可されないキー・他サイト混入・ゴミキー（`id`, `input`, `iframe`, `#[object HTMLInputElement]`, ITANDI の `#_r_*_` 等）: **28件 → 0件**（全170件 → 浄化後139件）。
+   - `n > 5000` の `0.5,0.5` 爆発ポイント（`id(n=545748)`, `eq_rm[](n=405150)` 等）: **5件 → 0件**（実測 `learnPoints` でも `effN <= 50` 制限＆爆発点低優先化）。
+   - `station` 手順の押す位置 `aim`: 4手中2手欠損（`route_id[]`, `station_id[]` が `null`）→ **4/4 手すべてに実測集約 `aim`（`label.one_line` / `label.one_station`）を付与**。
+   - `list` 4手目「④並べ替え後に印刷用PDFを押す」が誤って「並べ替え」と判定されていたバグを修正（`印刷用PDF` を先に判定）し、`AD`・`高→低`・`印刷用PDF` すべてに実測 `aim` を付与。
+   - 統括ログ（`supervisor` / `supervisor_by_site.realpro`）と `scene_flows` の食い違いを解消（`transportation_id → required_time` 残骸 → `沿線・駅絞り込み＋ → route_id[] → 駅の設定へ進む → station_id[]` に同期、`syncSupervisorSceneFlows`）。
+   - `checksAfter: []`（不整合・未分類 0件）、`AUTO_RULES` 検証カバレッジ **97/102（95.1%、5件のみ検査検証用に意図的維持）**。
+2. **ITANDI・全体（`itandi` id=2830 / `all` id=2831）の汚染除去**:
+   - `itandi` 内の `station`（リアプロ `沿線・駅絞り込み＋` 等）と `area`（連結ラベル `路線・駅選択都道府県北海`）を `sanitizeBundleForSite` で自動除去、`checksAfter: []`。
+3. **Chrome 拡張の残課題修正**:
+   - **単発自動のリセットリロード耐性**（`popup.js`, `background.js`, `auto-procedure-rules.ts`）: `underbar.js` 内 `iframe` 埋め込みの `popup.js` がリアプロ「リセット」押下のリロードで破棄される問題に対し、`axlx_pending_auto_send` / `axlx_score_data` / 記録をリセット前に保存し、`axlx-reset-before-fill` の `autoFillAfter` で `background.js` がリロード完了後に `axlx-set-fill-customer` + `axlx-realnetpro-autofill` を直接再送する経路を実装。
+   - **`point_fields[k].n` 指数爆発の根絶**（`human-learn-record.js`, `human-learn-upload.js`, `app/api/human-motion/route.ts`）: 累計 `_livePoints` の毎回再送信（1450万→8709万）を止め、保存窓ごとの増分 `_sessionPoints` / `_sessionAutoPoints`（`n <= 200`）だけを `uploadDelta` で送信し、サーバー受付側でも `isAllowedMotionFieldName` フィルタと `1..500` 上限を強制。保存済みストレージの旧爆発値も `_sanitizePointStore` で自動浄化。
+   - **`opens` 記録・`directText`・`stageOf` バグ修正**（`human-learn-record.js`, `human-learn.js`）: `click` のみ `noteBeforeClick` / `noteOpened` を実行し（`mousedown` 先取り併用）、`_pushOp` が返した操作オブジェクト `o` に直接 `o.opened` を書くことで `_ringAt` ズレを解消。`fieldName` での裸タグ名（`input`/`select`/`iframe`）返却を廃止、`directText` の多数要素連結（`路線・駅選択都道府県北海`）・記号のみ（`-----`）を遮断、`stageOf()` / `uiCounts()` を `getClientRects()` と主要モーダル列挙で正確化。
+   - **`shot-learn.ts` / `latest-learn-loop.ts` 誤警報・ゴミ除外**: 日本語間取り（`左の2LDK｜label`）・`更新日`・日本語セレクト欄名・`左の次｜td.pager` / `ページ送り` / `pager` の無害な UI 揺れを抑止し、`-----`・`input` 等のゴミを `findWeakPoints` / `latestAutoChallenge` から除外。
+   - **`site-split-rules.json`**: `app/lib/human-motion-sanitize.ts` を両サイト汚染除去の正本として `shared_mix` に登録。
+
+**検証結果**
+- Chrome 拡張テスト全 344本（`ext-test-all.ts`）: 青 232 / 赤 112（新規赤 0本・基準維持・全 67 JS 構文検証 OK）。
+- TS 防衛テスト群（`playbook-and-motion-hardening.test.ts` 25/0・`shot-learn.test.ts` 50/0・`action-playbook.test.ts` 56/0・`auto-rules-verify-exists.test.ts` 8/0・`playbook-rule-evidence.test.ts` 35/0・`playbook-site-split.test.ts` OK・`auto-procedure-rules.test.ts` 202/0・`site-contamination-guard.test.ts` 11/0・`learn-opens-and-itandi-flow.test.ts` 30/0・`bundle-write-prepare.test.ts` 12/0・`playbook-downgrade-guard.test.ts` 29/0 ほか）全通過。
+- `npx tsc --noEmit`: 今回編集・新規作成ファイルの型エラー 0件（既存テスト 8ファイルのみ以前のまま）。
+
+**反映手順（未実行・竹内さん承認後）**: commit & push → Chrome 拡張の再読み込み（`2.8.310`）→ `npx tsx --env-file=.env.local scripts/attach-playbook.ts --apply` で DB 手順書を `build_v=18` に更新。
 
 ---
 
@@ -13597,22 +14065,22 @@ const skipSent = process.env.SKIP_SENT_PROPERTIES !== "off" && staff_mode !== tr
 竹内さん「画面操作を別の PC で行う場合、その操作ちゃんと動いているかスマホで確認できるツールできるかな？」「この画面の見張りの部分もちゃんと人間が動いているか確認もできるように」
 
 ### 1. スマホで見る画面（読み取りだけ・新しい表・列は作らない）
-- pp/lib/extension-live-server.ts（新規）: 今ある表を**読むだけ**で「今どうなっているか」を1つの形にする。
+- app/lib/extension-live-server.ts（新規）: 今ある表を**読むだけ**で「今どうなっているか」を1つの形にする。
   - extension_devices（1分ごとの心拍）: 版・モード・実行中の命令・今のお客様・サイト・待っている事・最後に進んだ時刻・3分以上来ない＝止まっている・10分以上進まない＝止まった疑い
-  - utomation_commands（6時間・pending/running/error）: たまっている指示・拾った PC・失敗の理由
+  - automation_commands（6時間・pending/running/error）: たまっている指示・拾った PC・失敗の理由
   - search_audits（15分）: 直近の検索の1回・ページ数・行数・送信数・最後の段・操作の記録・**人の操作**
   - screen_watch_events（15分・normal 以外）: 見張りの印
-- pp/api/extension-live/route.ts（新規）: GET ?view=… は JSON・&format=html でスマホ用の画面（20秒ごとに自分で更新）。
+- app/api/extension-live/route.ts（新規）: GET ?view=… は JSON・&format=html でスマホ用の画面（20秒ごとに自分で更新）。
   認証は今の見張りと同じ内部認証（Authorization: Bearer INTERNAL_API_SECRET）＋ スマホのブラウザ用に ?key= も受ける。
-- **書き込みは一切しない**（スマホから止める・動かすはできない）。止めたい時は今まで通りサーバーの止めの印（utomation_settings.paused）。
+- **書き込みは一切しない**（スマホから止める・動かすはできない）。止めたい時は今まで通りサーバーの止めの印（automation_settings.paused）。
 - 出る物: PC ごとの「動いている／止まっている／進んでいない」・今のお客様・待っている事・直近の検索（人か自動か）・指示の残り・見張りの印。
 
 ### 2. 人が動いているかの記録（chrome-extension/human-trace.js・新規）
-- ブラウザが人が起こしたイベントは isTrusted === true、拡張が dispatchEvent／el.click() で作った物は alse。**これで「拡張の操作」と「人の操作」を分ける**。
+- ブラウザが人が起こしたイベントは isTrusted === true、拡張が dispatchEvent／el.click() で作った物は false。**これで「拡張の操作」と「人の操作」を分ける**。
 - 数える物: 押した（click）・打った（keydown）・選んだ（change）・スクロール（人のホイールから 400ms に1回）の回数、最後の操作の種類・欄の名前・操作の間の平均（ms）。**入力した中身（値）は残さない**（個人の情報を記録に載せない）。
 - judge(human, guideMode): 人が動いていれば「人が操作している（N回）」／案内モードで 0回なら「**誰も触っていない＝止まっている疑い**」／自動系で 0回は「拡張だけで動いている（正常）」。
-- 配線: manifest の先頭の段（human-wait.js の次）で読む（リアプロ・ITANDI・レインズ全部）。page-script.js・itandi-page-script.js が自分の器を持ち、点検の illed.human に載せる。案内（
-ealpro-guide.js・itandi-guide.js）は別の段なので自分で数えて xlx-guide-filled の human で送る（background が illed.human に入れる）。
+- 配線: manifest の先頭の段（human-wait.js の次）で読む（リアプロ・ITANDI・レインズ全部）。page-script.js・itandi-page-script.js が自分の器を持ち、点検の filled.human に載せる。案内（
+ealpro-guide.js・itandi-guide.js）は別の段なので自分で数えて axlx-guide-filled の human で送る（background が filled.human に入れる）。
 - 点検の記録（search_audits.filled.human）と、スマホの画面（検索の1行ごとの「👤 …」）の両方で見られる。
 
 ### 3. 版と確認
@@ -14844,3 +15312,208 @@ Claude（統括役）からの依頼2件への対応。
 - 設計知見: 8430edb2【決定】（P1）。
 - ⚠ 既知の穴: 単発の自動（ポップアップの自動ボタン）には入力前のリセットが無い。ポップアップはページ内の iframe（underbar.js）で、リセットの読み直しで消えるため。_resetBeforeFill は background の一括ループ（_manualBulkRun）だけが呼ぶ。直すなら『単発も1人の一括として background に渡す』か、background が入力の再送を持つ形が要る（拡張の動きの変更・竹内さんの OK）。
 - ⚠ 決まり版が変わったので DB の手順書は古くなる（main 反映・本番デプロイ後に attach-playbook・竹内さんの OK）。
+- 2026-11-26 反映の記録（2.8.305）: 40e7df606 を main に push（f79d2e810..40e7df606）→ 本番 2.8.305 を確認 → attach-playbook --apply で DB の手順書（2813/2815/2814）を rules_v=5d81f15d・97件・見直し2.8.305 に（控え: %TEMP%\playbook-backup-2.8.305）。残り: 拡張は 2.8.295 のまま（再読み込み→タブ開き直し→自動1回が済むまで『反映済み』と言わない）。単発の自動への入力前リセットは、手動の単発クリックが対象（直近14回では3回・brain_normal）で、一括に流すと送付の動きまで変わるため保留（竹内さんの判断待ち）。
+
+### 2026-11-26 2.8.306 連続客の受け渡しの順番を手順書に1本で明記（series_handoff_order）・並べ替えの待ちの古い文言を直す
+- 竹内さん「手順書は連続するお客さんの流れをちゃんと理解してるのか／完了したらリセット→数秒後に空を確認→次の客の条件を拡張のAPIから入れるか／検索後の並べ替えも完了後のログを考えて時間経過してから動くか」。
+- コードの実物（確認済み）: 送付後 _postSendClearOrReset（リセット→30秒以上→空と該当数の確認・だめなら従来の外し）→ 資料を見る間 → 次客: _waitInheritedReset → _resetBeforeFill（空でなければ押す）→ _batchAutofill 内の _refreshCustomerBeforeSearch（/api/property-customers・no-store）→ 入力。条件の読み直しはリセットと空の確認の後。並べ替えは bulk-dl.js _waitMsFromSearchConfirm が検索確認の時刻から30〜36秒を数え、経過した分を引く（残り最低50ms）。
+- 手順書の穴: 「次客の条件をAPIから読み直す」「この順番」を書いた決まりが無かった。search_to_sort_cursor（#322）が旧「1秒以降」のままで、search_confirm_then_wait_sort（30秒以上）とぶつかっていた。
+- 直した: 決まり series_handoff_order を追加（since 2.8.306・marker は _refreshCustomerBeforeSearch の行・background.js）。search_to_sort_cursor の文言を30〜36秒に。動きは変えていない。版 2.8.306。
+- 実データ（search_audits 直近60回）: sort_cursor_wait が残るのは 2.8.206 以前だけ（待ち1〜2秒）。2.8.292 以降の30〜36秒は、止まった回ばかりで、まだ実機の記録が無い。
+### 2026-11-26 2.8.307 連続ループ：リセット成功なら外しも資料を見る間もやらない（手順書も統一）
+- 竹内さん「5（資料を見る間）はいるのか／4 リセットが押せたら1つずつ外しは押さない・ボトルネック／9→2のループを理解しているか／古い決まりのボトルネックは」。実データ: 直近300回の search_audits で reset_press／reset_verified／reset_count_same／reset_before_fill は0段（リセットの流れは一度も実機で動いていない）。動いているのは1つずつ外しだけ（page:clear_done 24回）。
+- 直した（動きを変更）: ①background.js _postSendResetRealpro: 空と読み戻せたらリセット成功（件数が増えなくても）。reset_count_same は記録だけ・ok:false で外しへ回す旧の分岐は廃止。②page-script.js _resetVerify: 時間が来て空なら『きれい』印（axlx_reset_clean）を付け、ページ側の前客の外しも省く。③一括ループ: リセット成功の客は『資料を見る間』を省く（look_skip・_axlxLastPsReset）。リセットが使えない客・最後の客は今まで通り。
+- 手順書: series_handoff_order をループ版に書き直し（各客の最後にリセット→次客は①から・最後の客は待たない）。reset_empty_is_enough・reset_success_skips_look を追加。外す前提だった10本（continuous_customer_loop・flow_series_grasp・flow_series_order_gate・customer_loop_one_by_one・clear_then_fill_gate・one_task_complete_before_next・samekind_clear_before_fill・now_action_clear_then_fill・task_grasp_now_done_next・continuous_series_next_grasp）の頭に『リセットで空なら外しの段は行わない・以下はリセットが使えない時の代わり』を前置き。版 2.8.307。
+- 試験: reset-loop-v2307.test.js（新・19本）。reset-count-evidence-v2289・reset-before-fill-v2296・search-before-sort-next-guard-v28233 を新しい決まりに合わせた。全333→334本・新しい赤0（基準の赤122は変わらず）。
+- ⚠ 実機でまだ見ていない: 拡張は 2.8.295 のまま。再読み込み後の連続で reset_verified・look_skip が出るかで確かめる。
+- ⚠ 反映待ち: 2.8.306・2.8.307 は main・DB 手順書に未反映（竹内さんの OK）。
+
+### 2026-11-26 拡張 2.8.308 — リセットの保険（reset_retry_insurance）
+- 竹内さん「リセットと並べ替えで止まったらスクショして画面把握してそこからもう一度できる保険」→ 並べ替えには有り・リセットには無かったので足した（KB f3d2c5b1）。
+- background.js _resetWithInsurance(customerId, runId, phase)（送付後 _postSendClearOrReset と入力前 _resetBeforeFill の両方）: リセットが空にならない・押せない・例外 → ①_resetShot(...,"reset_stuck")で1枚撮る（reset_stuck_shot）②__axlxResetVerifyPで画面を読む（reset_stuck_grasp）③空なら成功（reset_stuck_recovered）④空でなければ待ち上限260秒を張り直してもう1回押す（reset_retry）⑤それでもだめな時だけ従来の1つずつ外し。skipped（off/no_tab/入力中）・ストップ要求は何もしない。
+- pre_fill_reset を BULK_KICKABLE_PHASES には入れていない（待ちは上限つきで保険の中で張り直すため）。
+- 手順書 eset_retry_insurance を追加・eset_between_customers の古い「空でも数が増えなければ従来の外しへ」を直した。search-audit.js の KEEP/RULE に4つの印を追加。
+- 試験: 新 eset-retry-insurance-v2308.test.js（17）。eset-before-fill-v2296（押す回数 1→2・正規表現）・eset-between-customers-v28284（模擬は画面が空と読めるので recovered）・eset-count-evidence-v2289（文言）を新しい意味に更新。全体: 新しい赤0／基準の赤122のまま。
+- 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.308 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+
+### 2026-11-26 一連ループのボトルネック総点検（コードは 2.8.308 のまま・手順書の文言と試験の強化）
+- 本番DBの実データ（search_audits・realpro 直近14日）: bulk_manual 30件中 完了6件（すべて 2.8.250 以前）。2.8.273 以降は放棄ばかり。最後の自動は 2.8.295（#1654・#1656）で、reset_*・look_skip・保険の印は0＝2.8.296 以降の動きは本番で一度も動いていない。playbook_seen も「なし」。
+- #1656（2.8.295・リセットを押さない旧方式）: 前客の1つずつ外しが 1276 秒かかり、最後に fill_done error「leftover_stuck 前のお客さんの条件を外し切れず中止（残 駅5・沿線13）」で客が落ちた＝1つずつ外しは遅い上に失敗する（リセット優先の根拠）。#1654 は同じ待ちの段（sort_gate_wait_rows 等）で120段が埋まり後半の記録が無い（2.8.297 でまとめる対応済み・拡張が古く効いていない）。
+- 模擬の穴を直した: tests/chrome-extension/lib/bulk-sim.js は止められた裏（SW）の古いループが生き残り、共有の保存先へ古い位置を書き戻して『同じ客を何回もやり直す』偽の失敗を出していた → 止められた裏は保存・送信・画面操作・入力ができない形に（scenario.zombies:true で従来）。
+- 新しい総当たり試験 bulk-loop-chaos-v2308.test.js: 8人×（普通・入力遅い・送付完了の合図落ち・入力済み合図なし・0件・外し固まる/遅い・リセットのボタン無し/返事なし/空にならない・SWが止められる）を乱数で 400通り×2方式（800通り）→ 全員に1回ずつ入り完走（落ち0・1人あたり最大約6分）。時間を食う故障: リセットが押せても空にならない 約367秒/客（普通の約152秒より +215秒＝リセット2回＋従来の外し）・入力が遅い 約272秒・送付完了の合図落ち 約212秒。
+- 手順書の古い前提を直した: 『外す』を命じる11件（clear_one_by_one・clear_single_owner・clear_per_panel・clear_detail_grasp・clear_method_api_grasp_transition・clear_stuck_watch_use_improvements・station_clear_continue_after_stations・guide_clear_fill_gate・next_customer_move_one_by_one・task_api_refresh_before_next・guide_phase_task_link）にリセット優先の断り（reset_replaces_clear）を足した。clear_single_owner はリセット（最大260秒）も待つ相手に。静的試験 playbook-loop-consistency-v2308.test.js が、『外す』系の決まりがリセット優先に触れているか・古い『1秒以降』が現行で無いか・リセット周りの食い違いが無いかを見張る。
+- 調査用道具: scripts/audit-bulk-loop-bottleneck.ts（印の出現数・沈黙の大きい所・放棄の最後の印）／audit-bulk-sessions.ts（一括を時系列）／audit-run-dump.ts（1回の段を相対秒で）／audit-rules-time-scan.ts（手順書の待ち・外しの洗い出し）／bulk-chaos-seed.js（総当たりの1通りを時刻つきで）。
+- 未反映: main/DB は 2.8.305 のまま（2.8.306〜308 と今回の文言は push・attach とも未）。PC の拡張は 2.8.295。実機での通し（reset_verified・look_skip・保険の印）は未確認。
+### 2026-11-26 拡張 2.8.309 — 学習取り直しの受け口を「いつも強制」にしない（task_gate_no_forced_refetch）
+- 調査（竹内さん「古い手順書でボトルネックになる可能性あるのを見つけ出す」）: background.js の `axlx-learn-refresh` はページの force を無視して常に `_refreshLearnedBundleQueued(true)`。強制は版確認を飛ばし scope=realpro／itandi を各最大40秒で取る。タスク切替の関所（`_graspBeforeNextTaskThen`：clear_start／fill_start／clear_then_fill 等）が毎回呼び、ページは8秒で timeout して進むが裏の取得は走り続ける（1人あたり複数回・サーバーへ追い打ち）。
+- 実測の限界: 関所の印（task_api_refresh_res／task_transition_gate）は KEEP_STEP に無く120段の上限で落ち、DB に実測が無い（2.8.237 以降の run は20本・関所印は screen_task_grasp 1件のみ）。→ 2.8.309 から保持。
+- 直した所: 強制は `src=popup_open`（popup.js）と `src=boot_need`（content.js）だけ。それ以外は `_learnRefreshForAutofill`（gate 判定）。search-audit.js の KEEP_STEP に `page:task_api_refresh_res|page:task_transition_gate`（one-send-cache の並び順の試験に合わせ pdf_click_nocap の後ろ）。決まり `task_gate_no_forced_refetch`（kb 新規 P2）。試験 task-gate-no-forced-refetch-v2309（9）。
+- 古い手順書の構造（未変更・要判断）: `PLAYBOOK_FLOW_SERIES` は before_clear→clear_then_fill の1つずつ外し前提でリセット段が無く、handoff.next=null。`PLAYBOOK_EXTRA_GUIDES.clear` も①〜⑤が1つずつ外し。実際の動きは決まり側（reset_*）が優先しているが、手順書の骨組みは古いまま。
+- 未反映: main/DB は 2.8.305 のまま。2.8.306〜2.8.309 は push も attach も未（竹内さんの OK 待ち）。PC の拡張も 2.8.295 のまま。
+### 2026-11-26 手順書 build_v14 — 骨組みの「1つずつ外す」をリセットボタンへ（竹内さん「1つずつ外すのはボトルネックなので抜く」）
+- 変更: `app/lib/action-playbook.ts`。flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_before_fill／reset_verified／reset_clean_skip_clear。旧の印も残す）。extra_guides.clear を ①完了の小窓を閉じる ②左の「リセット」(160×30)を人が押す形で ③読み直し→30秒以上のラグ待ち ④空を名前付きで読み戻し（空なら件数が増えなくても成功） ⑤clear_then_fill_ok→入れへ ⑥止まった時だけスクショ→画面把握→もう1回押す（最後の保険として従来の外し）。switch ③もリセット。決まりは reset_replaces_clear／reset_between_customers／reset_retry_insurance を載せ、clear_one_by_one／clear_per_panel を clear から外した。
+- 試験: app/lib/__tests__/playbook-reset-skeleton.test.ts を追加。関連の app/lib 試験は全部通る。continuous-clear-sequence は 2.8.285 以降の既存の赤（_doReset 内の clear_then_fill_ok の位置が変わったため・今回の変更とは無関係）。
+- 副: search-audit.js の KEEP_STEP の追加位置を末尾へ（先頭近くだと bulk-stop-takeover／one-send-cache の並びの試験が赤になる）。
+- 反映: コミット後に main→Vercel→attach-playbook（build_v 13→14）。拡張のコードは変えていない（骨組みを読む側は件数と文を表示するだけ）。
+### 2026-11-26 手順書の改善の仕組み（A・B・C・D・E）— 古い手順が残る原因への対策
+- 原因（竹内さんの問い「なんでこんなに古い手順書が残るのか」）: 直し方が『上に貼り足す』だった。外しの決まり5本は冒頭に『リセットで…』を貼っただけで本文は『1つずつ外す』のまま。さらに同じ『この外しの段は行わず次へ進む』という断りが、外しと関係ない決まり12本にも一括で貼られていた（flow_series・次客の流れ等）。骨組み（action-playbook.ts）と決まり（auto-procedure-rules.ts）は別々に書かれ、変更時に両方を見る仕組みが無かった。試験は『語があるか』しか見ていなかった。
+- 直したこと:
+  - 外しの決まり6本（clear_single_owner／clear_detail_grasp／clear_then_fill_gate／clear_per_panel／clear_one_by_one／guide_phase_checkpoints）の本文を書き直した（リセットを主手順・古い手順は『最後の保険（リセットが押せない・空にならない時だけ・reset_fallback）』と本文に書く）。
+  - 一括で貼られた断り12本を、事実だけの札『外しはリセットで空にする（reset_replaces_clear）』に置き換えた（外しと関係ない決まりから『外しの段は行わず』を消した）。
+  - reset_replaces_clear と series_handoff_order の文を、保険と否定が分かる書き方にした。
+- A（変更時の確認）: scripts/rules-change-check.ts --words=外す,リセット [--base=HEAD] [--strict]。変えた言葉で決まりと骨組みを探し、版と比べて『本文が変わった／変わっていない（要確認）』を出す。
+- B（廃止された手順）: app/lib/playbook-retired.ts（RETIRED_STEP_RE・BANNED_PREFIX_RE）。通常の手順として『1つずつ外す』を保険と断らず書いた文と、『以下は…代わりの手順』の貼り足しを出す。試験 app/lib/__tests__/playbook-retired-phrases.test.ts（決まり102・骨組み140 件で 0 件・自己点検あり）。
+- C（骨組みと決まりの参照）: 骨組みの rules が指す id が実在することを試験で固定。手順の文言そのものを決まりから生成する一本化は未（build_v14 の出力と試験の並びを大きく変えるため・別の作業）。
+- D（版の比較）: driftFlags（rules-change-check --drift）。リセット（2.8.305）より古い外しの決まりで、リセットに触れない物を出す。現在 0 件。自己点検あり。
+- E（反映の確認）: rules-change-check --sync で check-playbook-sync を呼ぶ（DB を読むだけ）。本文を変えると rules_v が変わるので、push → Vercel → attach-playbook --apply → check が必要。今は DB が rules_v 0fe72c33、コードが c87c8397 で、attach し直すまで古い。
+- 試験: reset-loop-v2307.test.js の『前置き』の期待を、事実の札の期待に更新（貼り足しを残さない）。ext-test-all の赤は基準どおり 122（新しい赤 0）。
+- 未: 本番の反映（push・attach）は竹内さんの OK 待ち。拡張の再読み込みも未。
+### 2026-11-26 残りの作業の完了（C・push・attach・反映確認）
+- C: リセットの幅（幅160×高さ30）と待ち（30〜34秒・3回に分けて）を app/lib/reset-facts.ts の正本に一本化。骨組み（clear・switch・一連の before_clear）は正本から文を作る。試験 reset-facts-single-source（決まりと骨組みの数字が一致・リセットの『N秒以上』はどこも 30）。コミット 2d3bb61ee。
+- push: origin/main 828071e1f → 2d3bb61ee（承認のうえ）。本番 Vercel は 11:39:33 作成の Production が Ready（commit 2d3bb61ee の push と同時刻）。
+- attach: attach-playbook --apply --backup-dir=C:\Users\Admin\Desktop\playbook-backup-20261126-1149。3件（all 2813／realpro 2815／itandi 2814）とも決まり版 c87c8397・件数 102。控えは同フォルダ。
+- 反映確認: check-playbook-sync は、本番と DB の手順書が一致（残りは拡張の版だけ）。
+- 残り（竹内さん側）: 拡張を再読み込み（2.8.295 → 2.8.309）→ リアプロのタブを開き直す → 連続のお客さんで自動を1回 → reset_verified／look_skip／playbook_seen／page:task_api_refresh_res を確認。それまで『反映済み』とは言わない。
+- 既存の赤（参考・今回と無関係）: continuous-clear-sequence（2.8.285 以降の _doReset の並び）。
+
+### 2026-11-26 項目2・3（計測と手順書の自動反映・2.8.310）
+- 項目3の本当の原因（実測で確認）: 拡張が使う版の確認（touch=0）は DB の行の手順書の版（rules_v）をそのまま返していた。一方、渡す時の束は refreshPlaybookIfStale でコードの手順書に作り直される（DB は書かない）。だから決まりを直しても DB を書き直すまで、拡張は『版が同じ』と見て取りに行かず古い手順書を使い続けた。
+- 直し: app/lib/playbook-served.ts（servedPlaybookRulesV・純関数）。human-learn-profile の軽い確認も通常の応答も、渡す時の版（作り直しが要る時はコードの版）を返す。DB は書かない＝attach や cron を待たず、デプロイ後の次の確認で拡張が取り直す。試験 app/lib/__tests__/playbook-served.test.ts（refreshPlaybookIfStale と5場合で判定が一致）。
+- 項目2: background.js の版の確認に TTL を効かせる（_headCheckAt・確認間隔＝自動中60秒・通常5分）。2.8.309 まで _checkMs は計算されるだけで未使用＝タスク切替のたびに版の確認が走っていた。同じ版・取り直し無しと確かめた時だけ時計を進める。強制の経路（popup・起動・needs_auto）は TTL を見ない。
+- 計測: page-script の task_api_refresh_res の文頭に経過ミリ秒（例: 120ms 取らず same_version）。次の実走で待ち時間を実測する。
+- 試験 tests/chrome-extension/head-ttl-served-v2310.test.js（13本）。ext-test-all は基準の赤 122（新しい赤 0）。
+- 版: 2.8.310（manifest・_AXLX_PAGE_VER・AUTO_RULES_REVIEWED_UP_TO）。
+- 決めた事: DB を1時間ごとに書く cron は作らない（書き込みを増やさない）。DB の行は日次の human-learn-brain（22:20 JST）が prepareBundleForWrite で追いつく・急ぐ時だけ attach。
+- 未: push（main）と DB 反映は竹内さんの OK 待ち。拡張の再読み込み（2.8.310）と realpro の実走で task_api_refresh_res の ms を確認する。
+- 本番確認（2026-11-26・3e2fa5e0b の Production Ready 後）: touch=0 の playbook_rules_v=43eae84d（渡す時の版）・DB の playbook_rules_up_to=2.8.309 のまま（DB は書いていない）。拡張が 2.8.310 に再読み込みされれば、手順書は次の確認で取り直される。
+- 注: 拡張の『attach-playbook が必要』の警告（_pbBehind）は DB の版を見ている。渡す時の版は合っているので、この警告は今は当てにならない（次に直す）。
+
+### 2026-11-26 手順書のサイト分け（作り方の版 15）
+- 確認: 手順書の文面を読んだ結果、itandi の手順書にリアプロ専用の手（並べ替え AD・印刷用PDF・高→低・検索の把握）が入っていた。ITANDI は並べ替えが無い（auto-search-plan.ts）。
+- 直し: buildPlaybook(bundle, site) で itandi の時は一覧・検索の手を載せない。site 未指定・realpro は従来どおり。prepareBundleForWrite・refreshPlaybookIfStale・API・cron（human-learn-brain）・shot-learn-server・attach-playbook は、行の scope を渡す。
+- 版: PLAYBOOK_BUILD_V 14→15（既存の束は読み出し時に作り直される）。DB の行は次の書き込みで直る（DB を今すぐ書き換えてはいない）。
+- 試験: app/lib/__tests__/playbook-site-split.test.ts（itandi に手が無い／realpro・未指定は従来どおり／作り直しも site で分かれる）。
+- 未（itandi の事実が要る）: 一連の流れ（flow_series）の sort_ad・list・before_clear（リセット）はリアプロの言葉のまま。itandi に『リセット』が有るかは未確認。itandi の未分類の欄 3 件（リスト検索・room_layout:in・管理費・共益費込み敷金な）。
+- 試験の揺れ: bulk-loop-chaos-v2308 が全体の試験の時だけ1回赤（60秒の時間切れの可能性）。単独 3 回・全体の再実行で通過。
+
+### 2026-11-26 手順書の残り（作り方の版 16・itandi の手順書を itandi の形に）
+- 直し（app/lib/action-playbook.ts）: itandi の手順書から、リアプロ用の自動の決まり一覧（AUTO_RULES・拡張の page-script 用）・リアプロの一連の流れ・リアプロの追加ガイド（リセット幅160×高さ30・30秒待ち・確定してリスト・ペット）を外した。itandi の場面（scenes）の決まりの印も空。realpro・未指定の出力は変えていない。
+- itandi 用の一連の流れ（ITANDI_FLOW_SERIES）: 段の名前は itandi の点検の印（reset_start／reset／reset_confirm／location／lines_done／fill_start）だけで把握する。検索を押す・一覧・次ページ・次客の段は、itandi の点検にまだ印が無いので grasp は空（gaps に「点検の印が無い段（把握できない）」と出す）。
+- itandi 用の追加ガイド（ITANDI_EXTRA_GUIDES）: clear＝①条件削除のボタンがあれば先に（無い画面が普通）②打つ欄を空③間取り・構造・設備のチェックを外す④チップを×で1つずつ⑤空と読み戻す⑥残れば1回だけ・それでも残れば飛ばす（AXLX_RESET_FAILED）。switch＝次客へ・外す・空を確かめて入れる。ペットは載せない（itandi のペット条件の手を未確認）。
+- 根拠（itandi-page-script.js の _itResetForm／_itClearOnce）: 条件削除のボタンは「あれば押す」。打つ欄→チェック→チップ×の順。リセットの 幅160×30 と 30秒待ちは itandi のコードに無い（リアプロの手）。
+- 未分類の欄: room_layout:in を「間取りの欄（チェック）」に（form-guard で「間取り」）。未分類のまま残すもの: 「リスト検索」（どの画面の何か未確認）・「管理費・共益費込み敷金な」（2つの欄の名前が繋がった物か未確認）。推測で名前を付けない。
+- checkPlaybook: itandi は決まりが空でも落とさない（版の確認は両方で行う）。Playbook に site（realpro／itandi）を足した。
+- 試験: playbook-site-split.test.ts に itandi の節（決まり空・リアプロの文言が無い・段と追加ガイドの中身・点検が通る）と realpro の節と版 15 の作り直しを追加。
+- 試験の見本を今の仕様に合わせた（コードは正しい方・テストの書き方が古かった）: playbook-reflect-v28137（手順書の版と一連の印を見本に）／learn-to-autofill-v2722（n≥1 の仕様・_aimOf の中身だけを見る）／clear-one-owner-v28147（_PIN の4語は並び順でなく含むで見る）／learn-scene-flows-v2746（読む鍵の一覧と _applyLearnNextStorage で見る）／customer-loop-grasp-v28221（版は「以上」で見る・呼び方の変更）／continuous-clear-sequence（判定の書き方が _beforeOk 付き）／reset-then-next-customer（波かっこ付きの書き方）／learn-write-path-gate（prepareBundleForWrite に scope を渡した後の探し方）。
+- bulk-dl.js: 並べ替え（高→低）の押し方（press→moveToEl の後の 180〜600ms）に「着いてすぐ押さない」の印を付けた（動きは同じ・コメントのみ）。拡張の版は上げていない。
+- 残った赤（直していない・理由あり）: customer-loop-grasp-v28221「handoff で loop_handoff_grasp」。決まり（customer_loop_one_by_one・auto-procedure-rules.ts の mustHaveAny）と handoff-loop-ledger.ts・search-audit.js の KEEP が「dl:loop_handoff_grasp」を探すが、今の拡張はこの名前を出さず「dl:handoff_grasp」を出す。決まりの判定は他の選択肢で守れるので壊れてはいない。名前を揃えると「守れた」の判定が変わるため、竹内さんの判断待ち。
+- tsc --noEmit: 本体（action-playbook・bulk-dl）は 0。テストに前からある型エラー（overdue-promises-digest・sent-read-retry・exam-select・exam-switch-reach・deepseek-auto-usage・turn-aims-after・continuous-clear-fill-no-gap・continuous-clear-sequence の1件）は今回の変更と無関係（HEAD に既にある）。
+- DB: 書いていない（all 2813／realpro 2815／itandi 2814 は作り方 14 のまま。読み出し時に作り直される）。DB 反映（attach）は竹内さんの OK 待ち。
+- 未（実機）: 拡張 2.8.310 の再読み込み・itandi の実走（リセットの印が来るか）・realpro の実走。
+
+### 2026-11-26 リアプロ・ITANDI を混ぜない見張り（仕組み化）
+- 竹内さん「リアプロと ITANDI がごちゃごちゃにならないように仕組みで整理して行う。ここを徹底する。ここを行わないとバグが起きる」。
+- 調べた結果（拡張の中・1629 ファイル）: サイトの名前が付いたファイル（`realpro-*`・`itandi-*`・`reins-*`）の中に、他方の名前（対応表・画面の名前）は**無かった**（コメントの文字だけ）。両方を扱う共有ファイルは 6（background.js・popup-maps.js・popup.js・resolution-core.js・search-audit-diagnose.ts・migrate-schema/route.ts）。いずれも両方の入口で、理由を書いて登録した。
+- 仕組み: `tests/chrome-extension/site-split-rules.json`（名前の一覧・箱の決まり・登録の理由）と `tests/chrome-extension/site-split-guard.test.js`（`ext-test-all` が毎回回す）。箱の違反・登録していない新しい共有ファイルで止まる。`--report` で一覧を出す。違反を一時的に入れて止まることを確かめ、消して通ることを確かめた。
+- DB_STRUCTURE.md の「混ざっている所 2（一括・自動の更新日は ITANDI もリアプロの値）」は、2026-11-10 の直し（`background.js` 6264〜・`auto-run.js` の `optsForSite`／`optsForSiteRecord`）で直っていた。文書を現状に直した。
+- 拡張のコードは変えていない（バージョンは上げない）。
+- 残り（DB 側・判断待ち）: `station_map.itandi_lines` の 344 行が表と違う（書き換えは未実施・統括役の判断待ち）。
+
+### 2026-11-26（夜）残りの改善: サイトの呼び名を1か所に・コミット前の見張り・station_map の道具
+- 竹内さん「まだ残っていること改善する／ちゃんと仕組み作れるように」。
+- **サイトの呼び名の正本**: `app/lib/site-key.ts`（`siteKeyOf`・`commandSiteKeyOf`）。8か所以上にコピーされていた変換（siteKey・normalizeSite・pickupSiteOf・commandSiteOf・siteOfCommand・human-motion の siteOf・sheet-layout・search-condition-drift・search-update-days・extension-live-server の siteJa）を移した。結果は元の関数と同じ（`extension-live-server` と `sheet-layout` は「リアプロ」の表記も受けるようになった＝より緩い。`search-audits` の受け付けは変えていない）。試験: `app/lib/__tests__/site-key.test.ts`（22件）。周辺の試験（search-audit-check 100・search-widen-chain 75・screen-watch 89・search-condition-drift 47・pickup-sheet 120 ほか）は通った。
+- **見張り ④**: `app` の中で、拡張の呼び名 `realnetpro`・`リアプロ` を直接比べる所は、登録した4か所だけ（migrate-schema の SQL 注釈・search-audits の受け付け限定・automation-sources のコマンドの sites・page.tsx の送り先ボタン）。新しい比べが増えると止まる。止まる事は仮の行で確かめた。
+- **コミット前の見張り**: `.githooks/pre-commit`。この PC で `git config core.hooksPath .githooks` を設定済み。
+- **station_map の道具**: `scripts/apply-station-map-site-lines.ts`（既定 dry-run・`--mode=fill`・`--mode=fill-and-fix`・`--apply` には `--backup-dir` が要る）。書いていない。竹内さんの選択待ち。dry-run の数（2026-11-26）: ITANDI 空を埋める 305・ずれ 20／REINS 空を埋める 315・ずれ 3。ずれの例（ITANDI 表記）「大阪環状線」→「JR大阪環状線」は拡張の正本 `ITANDI_LINE_MAP_FILL` と一致。
+- **今回触っていない既存の赤**: `search-update-days.test.ts` の「号室の正規化」1件（sent-property-record の正規化・サイト分けと無関係）。
+- **station_map の空埋め（書いた）**: `--mode=fill --apply` で 317 行（ITANDI の空 305・REINS の空 315・重なり 3）。控え: `C:\Users\Admin\Desktop\station-map-backup-2026-11-26\station_map_before_fill_*.json`（戻す時は before を各 token に書き戻す）。書いた後の読み直し: ずれ（ITANDI 20・REINS 3）と対応が無い 12 行は残す。
+- **反映の経緯**: 2コミット（d00f39123・978393dce）を、他の作業者の変更が先に入った最新の履歴へ乗せ直して反映した（早送り・強制なし・作業ツリーは触らず一時の作業場所で行った）。最新の履歴の上でも見張りは緑。
+- 注意: この PC の cursor-ext と最新の履歴は中身が同じでもコミット番号が違う。次に cursor-ext から反映する時は、先に最新の履歴を取り込んでから。
+
+### 2026-11-26（深夜）表記の違いを把握して、写しを正本に揃えた（竹内さん「表記のところ、リアプロと itandi で違う部分もあるのでちゃんと把握しておけ」）
+- **把握した表**: `chrome-extension/DB_STRUCTURE.md` の「表記の違い（リアプロ・ITANDI・REINS）」に、主な路線の3サイトの表記を書いた（例: 大阪環状線＝ITANDI だけ「JR大阪環状線」・東西線＝REINS だけ「東西線」・阪急神戸線＝ITANDI「阪急神戸本線」）。正本は `popup-maps.js`。
+- **写しのずれ（実測）**: 一括・自動の経路の `resolution-core.js` は、駅→路線の表が正本 658 駅のうち 306 駅だけ・能勢電鉄妙見線／日生線の路線番号が無い・ITANDI の能勢・信貴・西信貴が無い・REINS の泉北・能勢・水間鉄道水間線・東海道本線が無かった。`popup.js` の手順書の注記の表も、東海道本線・近鉄難波・奈良線がずれていた。
+- **直したこと（拡張）**: `resolution-core.js` の 7 表（STATION_WARD_MAP・STATION_LINE_MAP・LINE_STATION_ORDER・ITANDI_LINE_MAP_FILL・LINE_ROUTE_MAP・LINE_ALIAS_MAP・REINS_LINE_MAP）と、`popup.js` の注記用 ITANDI 表の本体を、`popup-maps.js` からそのまま写した（関数は触っていない）。写す前の控え: `station-map-backup-2026-11-26\resolution-core.before-sync.js`・`popup.before-sync.js`。版（manifest）は上げていない → 拡張の再読み込みで反映。
+- **見張り（新しい）**: `tests/chrome-extension/notation-copies-sync.test.js`（写しの表が正本と同じか・能勢・信貴の約束）。`ext-test-all` の新しい赤は 0（基準の赤 115 は変えず）。
+- **DB（竹内さんの決定）**: 今日の空埋めで REINS 列に入れた `東海道本線` の 11 行を空に戻した（`reins_tokaido_revert_before_*.json` が戻す前の控え）。茨城は空埋めより前から `東海道本線` だったので触っていない。
+- **未決**: (A) REINS の東海道本線の画面の表記（東海道本線か東海道線か）・(B) 近鉄信貴線・西信貴ケーブル線を一括の経路で ITANDI・REINS に回すか（route_id が無い路線は回さない `if (id)` の所・ロジックの変更）・(C) 東海道本線を駅ごとに京都線／神戸線へ振り分けるか。
+- **注意**: 写しを揃えたので、一括の経路は REINS の「東海道本線」を出すようになった（以前は出なかった）。REINS の画面の表記が違えば、一括の REINS 検索で東海道の沿線が当たらない（未確認）。
+
+### 2026-11-26（深夜）レインズは使わない（竹内さん）
+- 実測（直近30日）: search_audits リアプロ 596・ITANDI 84・レインズ 0。property_pickups の site=reins 0。automation_commands の reins 0。
+- 対象外: REINS の表記（station_map.reins_line・REINS_LINE_MAP）・見張りの REINS の箱・写しの試験の REINS。
+- まだ残している（止める・消すは未決）: `reins-content.js`・`reins-bulk-dl.js`・`reins-page-script.js`・manifest の reins の一覧。
+- 設計知見に【決定】として1行入れた。
+
+### 2026-11-26（深夜）レインズ停止・見張りの穴を塞ぐ（竹内さんの選択）
+- レインズは使わない（実測: 直近30日 search_audits リアプロ 596・ITANDI 84・レインズ 0）。
+- 変更: `chrome-extension/manifest.json` から `system.reins.jp` を外した（host_permissions・web_accessible_resources・content_scripts の REINS 分）。`reins-*.js` のファイルは残す（消すかは未決）。版は上げていない（2.8.310 のまま。版を上げるなら `_AXLX_PAGE_VER`・`AUTO_RULES_REVIEWED_UP_TO` も一緒に直す必要がある）。拡張の再読み込みで反映。
+- 試験の期待値を2サイトに直した: `human-learn-save-bug-v2668`・`human-learn-search-flow-v2667`・`mode-gate-v2663`・`search-audit`。拡張の試験は 226 青・新しい赤 0。
+- 写しの見張りを広げた: `tests/chrome-extension/notation-copies-sync.test.js` に、リアプロの `ROUTE_LINE_MAP`（page-script・realpro-guide-plan）・ITANDI の `ITANDI_STATION_ALIAS_MAP`（itandi-page-script・itandi-guide-plan）・サーバー側 `ITANDI_LINE_MAP`（app/lib/station-line-maps.ts）を加えた。16 OK / 0 NG。
+- `.githooks/pre-commit` に `notation-copies-sync` を入れた（コミット前に動く）。
+- DB の点検: `scripts/check-station-map-canonical.ts`（読むだけ）を追加。結果: station_map 778行・リアプロ路線のある行 632・正本とずれた行 20（大阪環状線 17行＝DB が「大阪環状線」・正本は「JR大阪環状線」／東海道本線 3行＝神戸線側が無い）。
+- 未決: 大阪環状線 17行を残した理由が記録に無い（竹内さんに確認中）。東海道本線の粗さ（C）。
+
+- **大阪環状線（竹内さんの答え）**: 「itandiは大阪環状線」。DB の 17 行（ITANDI 列「大阪環状線」）と一致。正本 popup-maps の「JR大阪環状線」と食い違うため、正本は変えていない。ITANDI の実画面で確かめてから揃える（設計知見に【決定】1行）。
+
+
+### 2026-11-26（深夜）大阪環状線の表記を画面で確認して揃えた（竹内さん）
+- ITANDI の路線一覧（スクリーンショット）の表示は「大阪環状線」。正本 popup-maps.js の ITANDI_LINE_MAP_FILL の「JR大阪環状線」を「大阪環状線」に直し、写し（resolution-core.js・popup.js・app/lib/station-line-maps.ts）も揃えた。
+- DB の station_map の ITANDI 列 17 行は書き換えなし（もう正本と一致）。
+- 試験: notation-copies-sync 16 OK／station-line-maps 20 OK／拡張の試験 226 青・新しい赤 0。
+- 点検 check-station-map-canonical: 正本とずれ 3 行（東海道本線・神戸線側が無い行）のみ。これは未決 C（東海道本線の駅ごとの振り分け）。
+- 設計知見: 【決定】を 1 行追加（56f88ca8）、古い未解決の行（c6ca8b8d）は退役。拡張の再読み込みで反映。
+
+
+### 2026-11-26（深夜）リアプロの沿線の画面と照合 → 南海本線に統一
+- 竹内さんのリアプロの沿線一覧（大阪府）と照合。画面の表示「南海電鉄南海本線」に合わせ、「南海電鉄南本線」を使わないようにした（路線番号 6681 は同じ）。
+- 変更: 正本 popup-maps.js（駅の表・並び順・ITANDI/REINS/ROUTE の重複行を削除）→ 写し（resolution-core.js・popup.js）・build-transit-graph.js → transit_graph.js（再生成・辺 1140→1120。消えたのは南本線の重複の辺）・app/lib/station-line-maps.ts・app/lib/osaka-transit-data.ts・app/api/seed-maps/route.ts・app/api/resolve-search-conditions/route.ts。
+- DB station_map: 41 行（hardcoded）の realpro_lines を南海本線に直した。控え: Desktop\station-map-backup-2026-11-26\nanpo-honsen-before-2026-11-26.json。読み直し: 南本線 0 行。
+- 試験: line-repress-v2816 の期待値を南海本線に（湊）。notation-copies-sync 16 OK・station-line-maps 20 OK・拡張の試験 226 青・新しい赤 0・app の transit/station 試験 OK。tsc は既存の 22 件のまま。
+- 未決（竹内さんの DevTools の結果待ち）: 近鉄信貴線・近鉄西信貴ケーブル線・東海道・山陽新幹線はリアプロの路線番号が正本に無い。
+- 設計知見に【決定】1行追加。
+
+### 2026-11-27 徹底改善（Phase 1〜4）: サイト汚染遮断・学習束同期・重複地図解消・詳細地域案内・単発前リセット・仕組み化
+- **Phase 1（サイト汚染完全遮断＋再発防止）**: `app/lib/human-motion-sanitize.ts` で破損名・他サイト要素を除去し、`prepareBundleForWrite(bundle, scope)` に第2引数必須化＋`site-contamination-guard.test.ts`・`human-learn-site-isolation.test.js` で再発防止。
+- **Phase 2（拡張 ↔ API 手順書・学習束の同期とサイト分離）**: `action-playbook.ts` と `learn-bundle-preserve.ts` でサイト別の手順書・流れを同期。`playbook-site-split.test.ts`・`learn-bundle-site-sync.test.js` を追加。
+- **Phase 3（`opens` 消失修正・ITANDI 実在欄・死んだ `verify` 解消・`page-script.js` 補完復元）**:
+  - `human-learn.js` の `mergeAggregate` が `opens`/`open_kinds` を引き継ぐよう修正＋`learnOpens` で `shot_ops[].opened` も回収。
+  - `learn-flow-steps.ts` に ITANDI 実在欄（`リスト検索`・`路線・駅選択`・`rent:lteq`・`floor_area_amount:gteq` 等）を分類。
+  - `page-script.js`: `_lineNameToRouteIdLocal` / `_fillRouteIdsFromStationMap`（`station_route_from_map`）を実装し、`fillRealpro` で `_applyGuideLikeStationGrasp` を呼び出し復元。
+  - `search-audit.js`: ループで大量発火する `ward_pace` 等を `KEEP_STEP` から外し、`RULE_STEP` 側のみで保持（`page:cursor_one` 等の証跡押し出しを解消）。
+  - 仕組み化: `auto-rules-verify-exists.test.ts`（死んだ verify・grasp 印ゼロ検査 8/8）・`learn-opens-and-itandi-flow.test.ts`（30/30）。
+- **Phase 4（地図重複撲滅＋サーバー同期＋詳細地域案内＋単発前リセット＋Pre-commit 強化）**:
+  - **`popup-maps.js`（正本）＆ `resolution-core.js` 重複キー 6件解消**: `吹田`（重複により JR 東海道本線が上書き消滅していた致命バグを `["東海道本線", "阪急電鉄千里線"]` に回復）・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原` を統合・整理。
+  - **サーバー API 完全同期**: `app/api/seed-maps/route.ts` を正本（`STATION_WARD_MAP` 159・`STATION_LINE_MAP` 658・`NEIGHBORHOOD_WARD_MAP` 316・`LINE_STATION_ORDER` 40）と `@/app/lib/station-line-maps` import に同期。`app/api/resolve-search-conditions/route.ts` の `LINE_ROUTE_MAP`（能勢電鉄2線追加）と `LINE_ALIAS_MAP`（短縮線名16本追加・計25本）を同期。
+  - **`tests/chrome-extension/notation-copies-sync.test.js` 強化（43 OK / 0 NG）**: 全マップの重複キー 0件検査＋`吹田` 回帰確認＋`seed-maps` / `resolve-search-conditions` 同期監視を追加。
+  - **リアプロ案内モード 詳細地域（`detail_ward` / `detail_area` / `town_names`）対応**: `realpro-guide-plan.js` で `pick_city (hasTowns)` → `pick_town` を生成し、`realpro-guide.js` で「大阪府」ボタン・`div.next_step_button2`「詳細な地域の設定へ進む」・`label.one_town` / `town_code[]`・確定まで非操作（光らせるのみ）で案内可能に。
+  - **単発自動の前客リセット `_resetBeforeFill` 連携**: `background.js` に `axlx-reset-before-fill`（案内モード `normal` は必ずスキップ＋`preferredTabId` 優先）を追加し、`popup.js` の手動単発自動時（`!isAutomated && _isAutoModeNow()`）も条件投入前に前客クリアを実施。
+  - **仕組み化・フック強化**: `tests/chrome-extension/realpro-guide-town.test.js`（13 OK / 0 NG）追加。`.githooks/pre-commit` に `realpro-guide-town.test.js`・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を組み込み。
+  - **環境注記**: `.env.local` には `SUPABASE_SERVICE_ROLE_KEY` が無い（ANON キーのみ）ため、ローカルから RLS（service_role 専用）テーブル `human_motion` / `extension_snapshots` / `extension_devices` を直接読むと 0/null に見える。本番の実データは Vercel API（`/api/human-motion?summary=1` 20,000行・`/api/human-learn-profile?history=1` 等）で確認すること（2026-11-27 確認済み）。
+  - **版数**: `2.8.310` のまま（`head-ttl-served-v2310` 等と整合）。`ext-test-all.ts` 全 344 本: 青 232 / 赤 112（新赤 0）。変更・追加 TS ファイルの `tsc` エラー 0。
+
+### 2026-11-27 徹底調査＆改善（2.8.311 / 作り方 19）: 手順書浄化・ITANDI 単独稼働・拡張同期・統括ループ矛盾解消
+- **① 手順書（`action-playbook.ts` `PLAYBOOK_BUILD_V` 18→19・`human-motion-sanitize.ts`・`itandi-field-aliases.ts`）**:
+  - 値セル（`147,000円｜td.text_right` 等 `｜td.(?!pager)`）・巨大表コンテナ（`div.main_table`）・拡張の履歴ボタン（`button.history_btn`）・`#top_free` / `#main_form`・生CSSハッシュ単体（`^(?:input|button|div|span|a|label|select|textarea)\.(?:css|sc)-[a-z0-9_-]+$`）を除去（ラベル付き `左のリスト検索｜button.css-...` は保持）。
+  - **ITANDI `#2514` 混載汚染の根絶**: `sanitizeLearnedForSite(learned, "itandi")` でリアプロ亡霊 3件以上＋高票(`n≥50` 2件以上 または `n≥22` 3件以上)を検知し同世代混入を一掃（綺麗な将来の高票 ITANDI 配列は無傷、本物 ITANDI `n=1..15` は維持）。実 DB ドライラン（`#2839`）で 170 汚染項目を除去、`solid=3 → 37 / total=72`（純 ITANDI・0 ゴミ・`checkPlaybook` 0件）を確認。
+  - `shot-learn.ts` の `learnFromShots(shots, { site })`: 他サイト欄（`isCrossSiteFieldName`）を1件でも含む写真行（`#21929` 型）は共通名「徒歩」ごと丸ごとスキップ。
+  - `app/lib/itandi-field-aliases.ts` を新設（リアプロ別名 `field-name-aliases.ts` と物理分離）。`compactBundle` / `buildHumanLearnBundle` / `inheritLinkFoundations` / `buildPlaybook` が `site="itandi"` でリアプロ別名を作らないようにした。
+  - `action-playbook.ts`: `shots.learned` を `source: "screen"`（`field > alias > screen > mismatch`）として手順書位置に組み込み、同一座標・同票の別名複製を1代表へ畳み、`aggDefs`（`route_id[]`/`station_id[]`/`city_code[]`）との重複出力を防止。
+- **② 改善ループ・統括矛盾・API 修正**:
+  - `auto-itandi-rules.ts`: 独立版 `ITANDI_RULES_REVIEWED_UP_TO = "2.8.311"` と `rulesReviewedUpToFor(site)` を分離（リアプロ更新で ITANDI 版が偽更新される問題を解消）。
+  - `app/api/human-learn-profile/route.ts`: `?refresh=1&scope=realpro|itandi` が指定 `scope` を作り直さず `"all"` だけ再生成していたバグを修正（さらに `?touch=0` も `rulesReviewedUpToFor(scope)` 参照に統一）。
+  - `app/lib/human-learn-brain.ts`: `learnPoints` の1行上限を `50` → `500` に統一（中央爆発 `n>500 & 0.5,0.5` のみ `effN=1` 維持）、`site` を各段へ伝播。
+  - `app/lib/learn-supervisor.ts`: `buildProThinkCapability` と `buildImproveConstruct` にベタ書きされていた `readCount: null / autoAfter: null / foundationMissingN: null` を実測値（`m.bundleReflect` / `m.foundationAudit`）へ接続し、`read=3` でも `Pro思考骨格` が「`read_count=0`（読んでいない）」と誤診し続けるバグを修正。
+  - `app/lib/learn-bundle-preserve.ts` & `bundle-write-prepare.ts`: `syncSupervisorImproveLoop(bundle, scope)` を新設し、`inheritLinkFoundations` / `carryLearnedShots` で `shots.learned` が増えた後に `supervisor.meeting.evidence`（「学習→自動の連携」「連携のボトルネック」「改善までの一連」）と `agenda` の段階3偽停止（`n≥3 0` vs `F32 ✓` の食い違い）・`challenge_missing_in_bundle` を実 `screen_solid` に同期。
+  - `app/lib/playbook-gap-baseline.ts`: `gapKey` がネストした括弧（例: `（…・区の欄（チェック）・…）`）の内側閉じ括弧で止まり偽の増減を出していたバグを修正（内側から順に剥離）。
+- **③ Chrome 拡張同期（`2.8.311`）**:
+  - `manifest.json`・`page-script.js`・`itandi-page-script.js`・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` を `2.8.311` に統一。
+  - `itandi-page-script.js`: `_AXLX_ITANDI_PAGE_VER`・`_AXLX_ITANDI_RULES_DONE`（14 ID）・`_itApplyLearnData` / `_itRequestLearnStorage` / `_itLearnPosOf`（手順書消費＆未検出時の学んだ座標ログ）・`_itAuditPlaybookSeen()`（`page_ver` / `playbook_seen` / `playbook_none` / `playbook_behind`）・`_itAuditReset` の `local_it_*` runId 補完・120段上限・`_IT_PIN_RE`・`_itFlushLiveSteps`（リアルタイム途中保存）を実装。`itandi-content.js` に `axlx-guide-live-flush` 転送、`popup.js`/`underbar.js` に ITANDI `customerId` 伝播を追加。
+  - `background.js`: `_refreshLearnedBundle` で反対側サイト（`axlx_learn_other_head_at__<other>`）も確認し古い時は `"same_version"` スキップしない・`perSite.realpro` への混載 `allBundle` 上書きを初回空時のみに制限・ITANDI フォールバック（`:9589`, `:10302`）で `_audit_run_id` / `customerId` 補完＆存在しない `CustomEvent("axlx-itandi-fill")` から `postMessage("axlx-itandi-fill-exec")` へ修正。
+  - `search-audit.js`: `dl:send_bar_show` を `COLLAPSE_STEP` に追加（80連続でも 1段 `n=80` に畳み 120段溢れを防止）。
+- **④ 見張りと実機残**:
+  - 新規・更新防衛テスト: `playbook-clean-and-itandi-sync.test.ts`（46/46）・`itandi-rules-separate.test.ts`（27/27）・`playbook-and-motion-hardening.test.ts`（25/25）・`playbook-site-split.test.ts`・`scripts/check-playbook-sync.ts`・`scripts/ext-test-all.ts`（失敗詳細出力追加、344本 232青 / 新赤0）。`.githooks/pre-commit` に追加済み。
+  - 本番反映待ち（竹内さん OK 待ち）: commit / push（main デプロイ）→ `playbook-gap-audit.ts --write-baseline` → `attach-playbook.ts --apply` & `?refresh=1&scope=realpro|itandi` → ローカル `git pull`・拡張再読込・Realpro/ITANDI 各1回の自動検索で `F6/F38/F55/F63` 通過＆`playbook_seen` 実測確認。
+
+
+

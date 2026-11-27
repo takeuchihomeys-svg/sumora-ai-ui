@@ -34,9 +34,12 @@ function ok(name, cond, extra) {
 console.log("■ ① 所在地の区を1つずつ押す（一気押しをやめる）");
 {
   const i = ps.indexOf("function clickWardPrecise(texts)");
-  const seg = ps.slice(i, i + 5000);
-  ok("  ⚠ コードで探す側もキューに積む", /enqueueHumanClick\(c2 \|\| lb2, _clickEl, 620, 1400/.test(seg));
-  ok("  ⚠ 文字で探す側もキューに積む", /enqueueHumanClick\(inp \|\| wardLabels\[i\], _clickEl, 620, 1400/.test(seg));
+  // 関数の終わり（次の function 宣言）まで。行数が増えても窓が足りなくならないようにする
+  const _end = ps.indexOf("\n  function ", i + 30);
+  const seg = ps.slice(i, _end > i ? _end : i + 20000);
+  // 今の形: 人が押す形の _toggleCheckboxLikeHuman（中で enqueueHumanClick に積む）。直の同期クリックではない
+  ok("  ⚠ コードで探す側もキューに積む", /_toggleCheckboxLikeHuman\(target\.c, true, 620, 1400/.test(seg) && /function _toggleCheckboxLikeHuman[\s\S]{0,1500}enqueueHumanClick\(hit,/.test(ps));
+  ok("  ⚠ 文字で探す側もキューに積む", /_toggleCheckboxLikeHuman\(inp, true, 620, 1400\);\s*else enqueueHumanClick\(wardLabels\[i\], _clickEl,/.test(seg));
   ok("  ⚠ ループ内の同期クリックが残っていない", !/simulateClick\(lb2\); hitByCode/.test(seg));
   ok("  人が区を選ぶ速さ（620〜1400ms）", /620, 1400/.test(seg));
   ok("  ⚠ そろうまで待つ仕組みがある（確定前に確かめる）", /_verifyThenConfirm/.test(ps));
@@ -49,7 +52,7 @@ console.log("\n■ ② 同じ平米数は賃料が一番安い1部屋（実装�
   ok("  ⚠ 候補(cand)を対象にする（チェック状態で絞らない）", /_applyCheapestPerLayout\(state, cand\)/.test(bd));
   // ★ 2026-11-16: 自動押下（_startAutoPressRun）でも最安絞りを通す（旧は一括経路だけ）
   ok("  ⚠ 自動押下の前に _filterCandForAuto がある", /function _filterCandForAuto/.test(bd));
-  ok("  ⚠ 自動押下で最安絞りを呼ぶ", /_applyCheapestPerLayout\(state, allowed\)/.test(bd));
+  ok("  ⚠ 自動押下で最安絞りを呼ぶ", /_applyCheapestPerLayout\(state, allowed(, \{ forAuto: true \})?\)/.test(bd));
 }
 
 console.log("\n■ ③ 送付済みは送らない（実装済みを固定）");

@@ -16,7 +16,13 @@ const ps = read("page-script.js");
 
 console.log("■ ① 待ちを延ばした");
 ok("MODAL_TRIES は 75", /var MODAL_TRIES = 75;/.test(ps));
-ok("_modalTry / _modalRetryMs がある", /function _modalTry\(\) \{ return MODAL_TRIES; \}/.test(ps) && /function _modalRetryMs\(\) \{ return 700 \+ Math\.floor\(Math\.random\(\) \* 300\); \}/.test(ps));
+// 2.8.313: 待ちの間隔は 700〜1000ms の一様乱数 → 対数正規（中央 780ms）＋±30%・420〜1600ms に収める形に変わった（2026-11-17「等間隔 retry をやめ対数正規＋ジッター」・page-script.js _modalRetryMs のコメント）。
+//   「人のペースで待つ（≒60秒）」は同じ。間隔が人の速さの範囲（下限〜上限つき）に収まる事を見る。
+ok("_modalTry / _modalRetryMs がある", /function _modalTry\(\) \{ return MODAL_TRIES; \}/.test(ps) && (() => {
+  const i = ps.indexOf("function _modalRetryMs()"); const j = ps.slice(i).search(/\r?\n  \}\r?\n/) + i;
+  const body = i > 0 && j > i ? ps.slice(i, j) : "";
+  return /logNormalDelay\(780, 0\.4\)/.test(body) && /if \(v < 420\) v = 420;/.test(body) && /if \(v > 1600\) v = 1600;/.test(body);
+})());
 ok("モーダルの4段すべてが _modalTry を使う", (ps.match(/_modalTry\(\), _modalRetryMs\(\)/g) || []).length >= 4);
 ok("旧の 30回×500ms が残っていない（モーダルの段）", !/30, 500, \(500 \+ Math\.floor\(Math\.random\(\) \* 500\)\)/.test(ps));
 

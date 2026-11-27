@@ -56,7 +56,7 @@ ok("一括の間: gap（間＋30秒）", /_bulkPhaseSet\("gap", _gap, \{\}\);\s*
 ok("一括の入力: refill（300秒）", /_bulkPhaseSet\("autofill", 300000, \{ runId: _bulkPhaseRunId \}\);\s*_quietSet\("refill", 300000/.test(bg));
 ok("入れ直しの道（_resultMismatchRedo）も gap と refill", /_quietSet\("gap", gap \+ 30000, \{ cid: cid, runId: runId \}\)/.test(bg) && /_quietSet\("refill", 300000, \{ cid: cid, runId: runId \}\)/.test(bg));
 ok("fill-done の後は sort（150秒・押し始めでページが外す）", /_quietSet\("sort", 150000, \{ cid: String\(customerId\), runId: _runId \}\)/.test(bg));
-ok("送付後のリセットは reset（260秒＝段の上限と同じ）", /_bulkPhaseSet\("post_send_clear", 260000[\s\S]{0,120}_quietSet\("reset", 260000/.test(bg));
+ok("送付後のリセットは reset（330秒＝段の上限と同じ・2.8.316 待ち120秒に合わせて広げた）", /_bulkPhaseSet\("post_send_clear", 330000[\s\S]{0,120}_quietSet\("reset", 330000/.test(bg));
 ok("リセットの後は一括の時だけ gap（単発は窓を外す＝次の指示を3分止めない）", /if \(_manualBulkAlive\) _quietSet\("gap", 180000[\s\S]{0,120}else _quietClear\("reset", "single_done"\)/.test(bg));
 ok("一括の終わり・止める・kick の終わりで窓を外す", (bg.match(/_quietClear\(null, "(bulk_end|bulk_stop|kick_end)"\)/g) || []).length === 3);
 ok("条件を入れる前に前の回のリセットを引き継いで待つ（リアプロ）", /await _waitAfterHumanReset\(_bulkAudit[\s\S]{0,300}await _waitInheritedReset\(_bulkAudit/.test(bg));
@@ -171,17 +171,17 @@ function part3() {
   console.log("\n■ ② 動き（ページ）");
   {
     let now = 5_000_000;
-    const ctx = { Date: { now: () => now }, SORT_WAIT_OWN_MAX_MS: 90000 };
+    const ctx = { Date: { now: () => now }, SORT_WAIT_OWN_MAX_MS: 120000 };
     vm.createContext(ctx);
     vm.runInContext(fnSrc(bd, "_sortWaitState"), ctx);
     const set = (o) => Object.assign(ctx, { _sortWaitRetryPending: false, _sortWaitRetryAt: 0, _sortCursorScheduled: false, _sortCursorScheduledAt: 0, _sortCursorTimer: null, _autoPdfRun: null, _adSortInFlight: false }, o);
     set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 20000, _sortCursorTimer: 1 });
     ok("並べ替えの待ち（20秒前に予約）は waiting", vm.runInContext("_sortWaitState()", ctx) === "waiting");
-    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 95000, _sortCursorTimer: 7 });
+    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 125000, _sortCursorTimer: 7 });
     ok("  上限を過ぎてもタイマーが生きていれば waiting（裏のタブで遅れただけ）", vm.runInContext("_sortWaitState()", ctx) === "waiting");
-    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 95000, _sortCursorTimer: null });
+    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 125000, _sortCursorTimer: null });
     ok("  上限を過ぎてタイマーも無い＝stale（張り直してよい）", vm.runInContext("_sortWaitState()", ctx) === "stale");
-    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 95000, _autoPdfRun: {} });
+    set({ _sortCursorScheduled: true, _sortCursorScheduledAt: now - 125000, _autoPdfRun: {} });
     ok("  押している最中は待ちではない（none）", vm.runInContext("_sortWaitState()", ctx) === "none");
     set({ _sortWaitRetryPending: true, _sortWaitRetryAt: now - 10000 });
     ok("  失敗後の待ち直しは waiting", vm.runInContext("_sortWaitState()", ctx) === "waiting");
@@ -215,7 +215,7 @@ function part4() {
   vm.createContext(autoCtx);
   vm.runInContext(rd("auto-run.js"), autoCtx);
   const A = autoCtx.self.AxlxAutoRun;
-  const sortCtx = { self: { AxlxHumanWait: HW }, window: {}, Math: Object.create(Math), SORT_AFTER_SEARCH_MIN_MS: 30000, SORT_AFTER_SEARCH_MAX_MS: 36000 };
+  const sortCtx = { self: { AxlxHumanWait: HW }, window: {}, Math: Object.create(Math), SORT_AFTER_SEARCH_MIN_MS: 40000, SORT_AFTER_SEARCH_MAX_MS: 50000 }; // 2.8.317: 30〜36 → 40〜50秒
   sortCtx.Math.random = rng;
   vm.createContext(sortCtx);
   vm.runInContext(fnSrc(bd, "_humanWaitAfterSearchMs"), sortCtx);
@@ -223,11 +223,11 @@ function part4() {
   const RESET_MIN = num(/var RESET_SETTLE_MIN_MS = (\d+);/);
   const RESET_JIT = num(/var RESET_SETTLE_JITTER_MS = (\d+);/);
   const PRESS_TO = num(/var RESET_PRESS_TIMEOUT_MS = (\d+);/);
-  const VERIFY_TO = num(/var RESET_VERIFY_TOTAL_MS = (\d+);/);
+  const VERIFY_TO = 1500; // 2.8.317: リセット後の読み戻しは『きれい』の印を付ける1回（最大1.5秒）だけ。旧の25秒の確かめは廃止
   const SILENCE = num(/var AXLX_STUCK_IDLE_MS = (\d+);/);
   const OWN_MAX = num(/var SORT_WAIT_OWN_MAX_MS = (\d+);/);
-  ok("定数を読めた（リセット30秒・揺れ4秒・押し25秒・確かめ25秒・沈黙135秒・待ちの持ち90秒）",
-    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 25000 && VERIFY_TO === 25000 && SILENCE === 135000 && OWN_MAX === 90000,
+  ok("定数を読めた（リセット30秒・揺れ4秒・押し130秒・沈黙135秒・待ちの持ち120秒＝2.8.317）",
+    RESET_MIN === 30000 && RESET_JIT === 4000 && PRESS_TO === 130000 && SILENCE === 135000 && OWN_MAX === 120000,
     { RESET_MIN, RESET_JIT, PRESS_TO, VERIFY_TO, SILENCE, OWN_MAX });
 
   const N = 5000;
@@ -257,8 +257,8 @@ function part4() {
     const fallback = rng() < 0.02;
     const w2r = U(1000, PRESS_TO) * (rng() < 0.9 ? 0.15 : 1) + U(500, 8000) + settle + U(1000, VERIFY_TO) * (rng() < 0.9 ? 0.1 : 1)
       + (fallback ? U(20000, 125000) : U(2000, 4000) + U(1000, 25000));
-    if (w2r > 260000) col.resetQuiet++;
-    if (w2r > 260000 + 60000) col.resetPhase++;
+    if (w2r > 330000) col.resetQuiet++;
+    if (w2r > 330000 + 60000) col.resetPhase++;
     // 間: 8〜25秒（16%で40〜95秒）・窓は 間+30秒
     const g = A.bulkCustomerGapMs(rng);
     gaps.push(g);
@@ -272,16 +272,16 @@ function part4() {
   console.log("    客の間 p50=" + sec(pct(gaps, 0.5)) + " p95=" + sec(pct(gaps, 0.95)) + " 最大=" + sec(Math.max(...gaps)));
   console.log("    1人あたりの決まった待ち（並べ替え＋リセット＋間） p50=" + sec(pct(per, 0.5)) + " p95=" + sec(pct(per, 0.95)));
   console.log("    旧: 並べ替えの待ちの間に見張りが出していた段 合計=" + col.estateOld + "（1人 約" + (col.estateOld / N).toFixed(1) + "段）→ 新: 0（待ちは忙しい）");
-  ok("並べ替えの待ちは 30〜36秒の中（5000回）", Math.min(...waitsSort) >= 30000 && Math.max(...waitsSort) <= 36000);
+  ok("並べ替えの待ちは 40〜50秒の中（5000回・2.8.317）", Math.min(...waitsSort) >= 40000 && Math.max(...waitsSort) <= 50000);
   ok("リセット後の待機は 30〜34秒の中（5000回）", Math.min(...waitsReset) >= 30000 && Math.max(...waitsReset) < 34000);
   ok("並べ替えの窓が押し始めより先に切れる回: 0", col.sortQuiet === 0, col.sortQuiet);
   ok("並べ替えの待ち＋作業が沈黙の見張り（135秒）を越える回: 0", col.sortSilence === 0, col.sortSilence);
-  ok("リセットの一連が窓（260秒）を越える回: 0", col.resetQuiet === 0, col.resetQuiet);
+  ok("リセットの一連が窓（330秒）を越える回: 0", col.resetQuiet === 0, col.resetQuiet);
   ok("リセットの一連が段の上限＋1分を越えて見回りに進められる回: 0", col.resetPhase === 0, col.resetPhase);
   ok("客の間の窓が間より先に切れる回: 0", col.gapQuiet === 0);
   // 2秒ごとの見回り・4.5秒の間＝実際は6秒ごと → 30〜36秒の待ちで4〜6回（そのたびに並べ替えの kick も呼んでいた）
   ok("旧の見張りは待ちの間に1人あたり4段以上出していた（直した価値の確認）", col.estateOld / N >= 4, col.estateOld / N);
-  ok("待ちの持ちの上限（90秒）は並べ替えの待ちの最大（36秒）の2倍以上（待ち直し1回でも stale にしない）", OWN_MAX >= 2 * 36000);
+  ok("待ちの持ちの上限（120秒）は並べ替えの待ちの最大（50秒）の2倍以上（待ち直し1回でも stale にしない）", OWN_MAX >= 2 * 50000);
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   process.exit(fail ? 1 : 0);

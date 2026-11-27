@@ -30,7 +30,8 @@ ok("_abortFillForNextCustomer の関数自体は残す（他の経路が使う�
 console.log("■ 検索は画面に出てから押す（clickSearch の _pressSearchBtn）");
 ok("画面外なら出るまで待つ仕組み（search_wait_view）", /search_wait_view/.test(ps));
 ok("待つ回数の上限が6回", /btn\.__axSearchViewTries <= 6/.test(ps));
-ok("待った後に同じ関数を呼び直す", /setTimeout\(function \(\) \{ _pressSearchBtn\(btn\); \}, 300\);/.test(ps));
+// 2026-11-20 以降: 待ち時間は固定300msでなく人の速さ（520〜900ms）。呼び直す動きは同じ
+ok("待った後に同じ関数を呼び直す（人の速さの待ち）", /search_wait_view[\s\S]{0,300}setTimeout\(function \(\) \{ _pressSearchBtn\(btn\); \}, 520 \+ Math\.floor\(Math\.random\(\) \* 380\)\);/.test(ps));
 ok("画面内に出たら回数を戻す", /btn\.__axSearchViewTries = 0;/.test(ps));
 
 console.log(`\n結果: ${pass} pass / ${fail} fail`);

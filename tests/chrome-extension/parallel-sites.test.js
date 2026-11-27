@@ -135,7 +135,7 @@ console.log("\n■ 2本目のずらし・合流の上限");
     ok("合流の上限を過ぎた本は待ちを解いて置き去り", /_endFillDoneWaiter\(s, cid, "合流の時間切れ"\)/.test(lp) && /_abandonBatchCustomerDoneWaiter\(cid, s\)/.test(lp));
     ok("判定の前にタブ・窓を見て、満たす時だけ実測（axlx-lane-probe）", /var pre = P\.decideParallel\(/.test(bg) && /if \(!pre\.parallel\) return pre;/.test(bg) && /type: "axlx-lane-probe"/.test(bg));
     ok("fill-done の捨てた記録はお客様×サイト", /function _markFillDoneAbandoned\(customerId, site\)/.test(bg) && /_markFillDoneAbandoned\(entry\.customerId, entry\.site\);/.test(bg) && /_abandonedIdsFor\(site \|\| null\)/.test(bg));
-    ok("送信の終わりの待ち手はサイトも持ち、合図の送り主のタブで当てる", /_createBatchCustomerDoneWaiter\(customerId, 300000, _siteKey\)/.test(bg) && /_notifyBatchCustomerDone\(msg\.customerId \|\| null, msg\.propertyCount != null \? msg\.propertyCount : null, msg\.audit \|\| null, _msgSite\)/.test(bg));
+    ok("送信の終わりの待ち手はサイトも持ち、合図の送り主のタブで当てる", /_createBatchCustomerDoneWaiter\(customerId, (?:300000|_batchWaitMs), _siteKey\)/.test(bg) && /_notifyBatchCustomerDone\(msg\.customerId \|\| null, msg\.propertyCount != null \? msg\.propertyCount : null, msg\.audit \|\| null, _msgSite(?:, !!msg\.skipped)?\)/.test(bg));
     ok("見張りの時間切れは自分のサイトの待ちだけを解く", /_abandonBatchCustomerDoneWaiter\(ctx\.customerId, ctx\.site\)/.test(bg) && /_endFillDoneWaiter\(ctx\.site, ctx\.customerId, "見張りの時間切れ"\)/.test(bg));
     ok("時間切れは自分の本の guardId だけで見る（もう片方が替わっても止めない）", /if \(laneSite\) \{\s*var l = _watchLane\(laneSite\);\s*return l && l\.guardId === id \?/.test(bg));
     ok("止まりの見張りは本ごと（activeLaneViews）", /activeLaneViews\(w\)/.test(bg));

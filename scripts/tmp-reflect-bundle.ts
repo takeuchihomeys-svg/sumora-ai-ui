@@ -66,7 +66,7 @@ async function main() {
     lines: all.lines,
   }];
   const { prepareBundleForWrite } = await import("../app/lib/bundle-write-prepare");
-  prepareBundleForWrite(b);
+  prepareBundleForWrite(b, "all");
   const { error: werr } = await sb.from("human_learn_profile").insert(inserts);
   if (werr) {
     console.error("書込失敗", werr.message);

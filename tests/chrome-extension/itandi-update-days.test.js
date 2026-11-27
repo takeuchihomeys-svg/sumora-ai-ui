@@ -176,7 +176,7 @@ const main = manifest.content_scripts.find((c) => c.world === "MAIN" && c.js.inc
 eq("manifest: human-wait.js → itandi-update-days.js → itandi-page-script.js（同じ world:MAIN）", main && main.js, ["human-wait.js", "human-learn.js", "pointer-ui.js", "floor-ijou.js", "itandi-update-days.js", "itandi-form-guard.js", "itandi-page-script.js"]);
 ok("manifest の版 2.5.34 以上", manifest.version.split(".").map(Number).reduce((a, n) => a * 1000 + n, 0) >= 2005034, manifest.version);
 const ps = read("itandi-page-script.js");
-const iUd = ps.indexOf("_itFillUpdateDays(cond, function (udOk, udErr)"), iRem = ps.indexOf("fillRemainingFields(cond);", iUd), iSearch = ps.indexOf('_findBtn("検索")', iUd);
+const iUd = ps.indexOf("_itFillUpdateDays(cond, function (udOk, udErr)"), iRem = ps.indexOf("fillRemainingFields(cond)", iUd), iSearch = ps.indexOf('_findBtn("検索")', iUd);
 ok("afterModal: 更新日 → 残りの欄 → 検索 の順（検索は更新日を入れ終わってから）", iUd > 0 && iRem > iUd && iSearch > iRem);
 ok("入れられず前の値が残る時（ok=false）は検索を押さずに fill-done(error)", /if \(!udOk\) \{ showItandiWarnToast\(udErr\); _safeDone\(udErr\); return; \}/.test(ps));
 ok("点検: 押す直前の読み戻しに update_days（ラベルで見つけた欄だけ）", /if \(ud && ud\.how === "label"\) f\.update_days = String\(ud\.el\.value/.test(ps));
@@ -190,7 +190,8 @@ ok("popup: ITANDI の conditions に rp_update_days（更新日の欄の値）",
 ok("popup: ITANDI でも更新日の欄を見せる", /updateDaysRowIt\.style\.display = "flex"/.test(pop));
 const bg = read("background.js");
 ok("background: _buildBatchConditions の rp_update_days はサイトを問わず（ITANDI の直接入力も同じ値）", /rp_update_days: _rpDays,/.test(bg));
-ok("リアプロの page-script は変えていない（select[name=update_date] のまま）", /queueSelVal\("update_date", String\(cond\.rp_update_days\)\)/.test(read("page-script.js")));
+// 2.8.313: 値は一度 _updVal に置いてから queueSelVal へ渡す形になった（未設定は "" に戻す・select[name=update_date] のまま）
+ok("リアプロの page-script は変えていない（select[name=update_date] のまま）", (() => { const p = read("page-script.js"); return /select\[name="update_date"\]/.test(p) && /var _updVal = cond\.rp_update_days \? String\(cond\.rp_update_days\) : "";/.test(p) && /queueSelVal\("update_date", _updVal\)/.test(p); })());
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

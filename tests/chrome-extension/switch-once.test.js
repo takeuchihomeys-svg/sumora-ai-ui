@@ -196,7 +196,8 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
     ok("underbar は渡しただけで ok を返さない", !/\}, "\*"\);\s*\n\s*sendResponse\(\{ ok: true \}\);/.test(ub));
     ok("1回使い切りの置き場は無い", !/_pendingAuditCtx\s*=/.test(pp) && !/_setPendingAuditCtx\(/.test(pp));
     ok("ITANDI の onclick に実行中の印（始めに見る・finally で外す）",
-      /if \(_itandiFillRunningAt && Date\.now\(\) - _itandiFillRunningAt < 60000\) \{[\s\S]{0,160}return;\s*\}[\s\S]{0,120}_itandiFillRunningAt = Date\.now\(\);[\s\S]{0,160}try \{ await _itandiAutofillRun\(_auditCtx_it\); \} finally \{ _itandiFillRunningAt = 0; \}/.test(pp));
+      // 2.8.328: 押した時点の印を写し取ってから（_btnSnap_it）印を立て、学びの取り直しも finally の内側で待つ
+      /if \(_itandiFillRunningAt && Date\.now\(\) - _itandiFillRunningAt < 60000\) \{[\s\S]{0,160}return;\s*\}[\s\S]{0,900}_itandiFillRunningAt = Date\.now\(\);\s*try \{[\s\S]{0,200}await _itandiAutofillRun\(_auditCtx_it, _btnSnap_it\);\s*\} finally \{ _itandiFillRunningAt = 0; \}/.test(pp));
     ok("3つの onclick とも点検の文脈を await の前に受け取り _auditTag に渡す",
       /_auditTag\("itandi", selectedCustomer, conditions, _auditCtx_it\)/.test(pp) && /_auditTagWith\(_auditCtx_rp, "realpro", c, \{/.test(pp) && /_auditTag\("reins", c0, conditions, _auditCtx_re\)/.test(pp));
     ok("_auditTag は渡された文脈を使う（無ければ single・AIXモードは aix_customer）", /function _auditTag\(site, customer, conditions, ctx\) \{/.test(pp) && /var _trigger = \(ctx && ctx\.trigger\) \|\| \(st\.mode === "ai" \? "aix_customer" : "single"\)/.test(pp));
@@ -207,10 +208,11 @@ const SW = { customerId: "c1", site: "itandi", areaMode: "ward", is_wide: false,
   console.log("\n⑧ ITANDI の onclick: 走っている間の2回目は受けない・例外でも印が外れる");
   {
     const head = pp.indexOf("    autofillBtn.onclick = async () => {\n      if (_itandiFillRunningAt");
-    const tail = pp.indexOf("    const _itandiAutofillRun = async (_auditCtx_it) => {", head);
+    const tail = pp.indexOf("    const _itandiAutofillRun = async (_auditCtx_it, _btnSnap_it) => {", head);
     ok("印の付いた onclick が見つかる", head > 0 && tail > head);
     let runs = 0, release = null, boom = false;
-    const sb = { console: { log() {} }, Date, Promise, autofillBtn: { _axlxAuditCtx: null }, _itandiFillRunningAt: 0,
+    const sb = { console: { log() {} }, Date, Promise, autofillBtn: { _axlxAuditCtx: null, dataset: {} }, _itandiFillRunningAt: 0,
+      document: { getElementById: () => null },
       _axLearnRefreshBeforeAutofill: (cb) => cb(),
       _clickAuditCtx: (b) => { const c = b._axlxAuditCtx; b._axlxAuditCtx = null; return c; },
       _itandiAutofillRun: async () => { runs++; if (boom) throw new Error("x"); await new Promise((r) => { release = r; }); } };

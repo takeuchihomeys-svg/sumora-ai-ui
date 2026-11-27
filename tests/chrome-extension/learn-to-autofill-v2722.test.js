@@ -22,14 +22,16 @@ console.log("■ ① 学んだ押す位置を読む");
 {
   ok("学習を読む関数（_kindOf / _aimOf）", /function _kindOf\(name\)/.test(ps) && /function _aimOf\(name\)/.test(ps));
   ok("  30秒ごとに読み直す（学習が進んだら次から効く）", /now - _learnKindsAt > 30000/.test(ps));
-  ok("  2回以上押した所だけ使う（1回は偶然）", /if \(Number\(v\.n\) < 2\) \{/.test(ps) || /if \(Number\(v\.n\) < 2\) return null;/.test(ps));
+  // 2026-11-16 統括「押した位置28%」: 旧は n<2 を捨てていた → 今は n≥1 なら使う（1回の押しも捨てない）。見本の判定をこの仕様に揃えた（2026-11-26）
+  ok("  1回の押しも使う（n≥1・旧の n<2 捨てはしない）", /if \(Number\(v\.n\) < 1\) \{/.test(ps) && !/Number\(v\.n\) < 2\) return null;/.test(ps));
   ok("  storage の axlx_learn_points を読む", /axlx_learn_points/.test(ps));
   ok("background も points を保存している", /axlx_learn_points: points/.test(bg));
 }
 
 console.log("\n■ ② プルダウンは「人が押した位置」を狙って開く");
 {
-  ok("学んだ位置を chooseSelectLikeHuman に渡す", /\{ forceOpen: true, aim: _aim \}/.test(ps));
+  // 渡す時に slow・field も付くようになった（2026-11-26 見本を今の形に）
+  ok("学んだ位置を chooseSelectLikeHuman に渡す", /forceOpen: true, aim: _aim/.test(ps));
   ok("  学んだ割合の所へカーソルを動かす（moveTo）", /P\.moveTo\(_r\.left \+ _r\.width \* _fx/.test(ps));
   ok("  学びが無ければ真ん中（moveToEl・今まで通り）", /return P\.moveToEl\(el\);/.test(ps));
   ok("  端すぎる所は押さない（0.2〜0.8）", /Math\.max\(0\.2, Math\.min\(0\.8, o\.aim\.x\)/.test(ps));
@@ -44,8 +46,10 @@ console.log("\n■ ③ 点検に残す（あとから「学んだ事を使った
 
 console.log("\n■ ④ 壊れない（学びが無い・変な値でも今まで通り）");
 {
-  ok("学びが無ければ何もしない（null を返す）", /return v && v\.w \? String\(v\.w\) : null;/.test(ps));
-  ok("  壊れた入力でも落ちない（try/catch）", /function _aimOf[\s\S]{0,2500}catch \(_\) \{ return null; \}/.test(ps));
+  // _aimOf は学びが無い時 no_learn の印を残して null を返す（関数が長くなったので、関数の中だけを見る）
+  const aimBody = ps.split("function _aimOf(name)")[1].split("\n  function ")[0];
+  ok("学びが無ければ何もしない（no_learn の印を残して null を返す）", /_noteAimUsed\(name, null, v \? "no_pos" : "no_learn"\);\s*return null;/.test(aimBody));
+  ok("  壊れた入力でも落ちない（try/catch）", /catch \(_\) \{ return null; \}/.test(aimBody));
   ok("  moveTo が無い環境でも動く（moveToEl に落ちる）", /if \(o\.aim && P\.moveTo && el\.getBoundingClientRect\)/.test(ps));
 }
 

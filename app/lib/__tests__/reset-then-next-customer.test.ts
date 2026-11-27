@@ -33,7 +33,8 @@ ok("片方が無い時も別人として扱う", /String\(_runCidNow \|\| ""\) !
 console.log("bulk-dl: 押し始めの後に次の入力が始まったら止める");
 const bd = read("bulk-dl.js");
 ok("_lastFillStartAt がある", /var _lastFillStartAt = 0;/.test(bd));
-ok("入力開始で _lastFillStartAt を進める", /if \(on\) _lastFillStartAt = _autofillStartedAt;/.test(bd));
+// 2026-11-26: 書き方が波かっこ付きに変わった（0831076bc）。動きは同じ（入力が始まった時だけ進める）
+ok("入力開始で _lastFillStartAt を進める", /if \(on\) \{\s*_lastFillStartAt = _autofillStartedAt;/.test(bd));
 ok("別タブの入力（session の印）でも止める", /_haltAutoPdfForNewFill\("fill_busy_changed"\)/.test(bd));
 ok("1件ごとに確かめる", /function _autoPressNext\(list\) \{\s*if \(!_autoPdfRun\) return;\s*if \(_haltAutoPdfForNewFill\("press_next"\)\) return;/.test(bd));
 ok("見る間に始まったら押さない", /look_cancel_new_fill/.test(bd));

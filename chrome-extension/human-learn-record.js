@@ -167,6 +167,36 @@
   var _livePoints = {};
   var _livePointsAt = 0;
   var _orderLive = [];
+  // ★ 2026-11-27 修正: サーバーに送る「今回の保存窓だけの増分」を、ローカル累積（_livePoints）から分離する。
+  //   旧は _livePoints（累計 n）を add にコピーし、さらに mergeAggregate した累計 next を毎回 U(next) で送っていたため、
+  //   同じ PC で保存するたびに n が 1450万 → 8709万 と指数爆発して DB の点・順番・手順書を破壊していた。
+  var _sessionPoints = {};
+  var _sessionAutoPoints = {};
+  function _isCleanLearnFieldName(k) {
+    if (typeof k !== "string" || !k) return false;
+    var s = k.trim();
+    if (!s || s === "__last" || s.indexOf("[object ") >= 0) return false;
+    if (/^[-ー－_・=|]{2,}$|^(input|select|textarea|button|a|span|div|label|iframe|id)$/i.test(s)) return false;
+    if (site === "realpro" && (/^#?_r_[a-z0-9_]+_(?:｜|$)|css-[a-z0-9]{4,}|itandi-bb-ui|:(?:lteq|gteq|eq|in|match|not_eq)/i.test(s))) return false;
+    if (site === "itandi" && (/^(?:eq_rm|city_code|town_code|route_id|station_id|room_layout_id|struct_id|exclusive_area)\[|^rental_cost[12]$|^structured_date$|^#(?:top_free|main_form)$|\.(?:one_city|one_town|one_line|one_station|go_search)(?:[^a-zA-Z0-9_]|$)|駅の設定へ進む|沿線の設定へ戻る|確定してリストへ|沿線・駅絞り込み|所在地絞り込み|路線・駅選択都道府県/.test(s))) return false;
+    return true;
+  }
+  function _sanitizePointStore(obj, maxN) {
+    var cap = Number(maxN) || 500;
+    var out = {};
+    if (!obj || typeof obj !== "object") return out;
+    Object.keys(obj).forEach(function (k) {
+      if (!_isCleanLearnFieldName(k)) return;
+      var v = obj[k];
+      if (!v || typeof v !== "object") return;
+      var nv = Math.min(cap, Math.max(0, Math.round(Number(v.n) || 0)));
+      if (nv <= 0) return;
+      // 旧バグで 0.5,0.5 に膨らんだ異常値を浄化
+      if ((Number(v.n) || 0) > 5000 && v.x === 0.5 && v.y === 0.5) return;
+      out[k] = Object.assign({}, v, { n: nv });
+    });
+    return out;
+  }
   var watching = false;
   var _shooting = false;
   var _diagWriteAt = 0;
@@ -191,6 +221,15 @@
     } catch (_) {}
     return "unknown";
   })();
+  // ★ 2026-11-27 サイト横断汚染防止:
+  //   人の動き・押した場所・自動の動きの storage キーをサイト別（__realpro / __itandi / __reins）に完全分離する。
+  //   共有キー axlx_human_learn / axlx_human_points を読むと、別サイト（例: ITANDI の #_r_5r_）が
+  //   次のサイト（例: リアプロ）の保存時にマージされ DB に混入するため（実測 #28319 等）。
+  var _siteSuffix = (site && site !== "unknown") ? ("__" + site) : "";
+  var SITE_KEY = KEY + _siteSuffix;
+  var SITE_PROFILE_KEY = PROFILE_KEY + _siteSuffix;
+  var SITE_POINTS_KEY = POINTS_KEY2 + _siteSuffix;
+  var SITE_SENT_KEY = "axlx_human_learn_uploaded_at" + _siteSuffix;
   try { _attachOpCapture(); } catch (e) { try { console.warn("[AX] 操作の受け口を付けられません:", e && e.message); } catch (_) {} }
   try { _bootShooting(); } catch (_) {}
   try {
@@ -372,28 +411,39 @@
           })).slice(0, 40);
         }
         /**
-         * 欄ごとの押した位置も `_livePoints` から作る（自動モードでも位置が残る）。
-         *   ⚠ 人の記録が既にある時は上書きしない。
+         * 欄ごとの押した位置は「今回の保存窓だけの増分（_sessionPoints / _sessionAutoPoints）」から作る。
+         *   ⚠ 旧はローカル累計 `_livePoints` を毎回 add にコピーし、さらに mergeAggregate した累計 `next` を
+         *     DB へ送っていたため、保存のたびに n が指数爆発（1450万→8709万）していた。
          */
         if (!add.points || !add.points.fields || !Object.keys(add.points.fields).length) {
-          /** 人の位置が先・人が押していない欄だけ自動の位置（by で区別して送る） */
-          var _autoLive = _liveAutoPoints || {};
-          var _pfNames = _liveNames.filter(function (k) { return _live[k].by !== "auto"; });
-          Object.keys(_autoLive).forEach(function (k) {
-            if (k !== "__last" && _autoLive[k] && _autoLive[k].n && _pfNames.indexOf(k) < 0) _pfNames.push(k);
+          var _sessH = _sessionPoints || {};
+          var _sessA = _sessionAutoPoints || {};
+          var _pfNames = Object.keys(_sessH).filter(function (k) { return _isCleanLearnFieldName(k) && _sessH[k] && _sessH[k].n; });
+          Object.keys(_sessA).forEach(function (k) {
+            if (_isCleanLearnFieldName(k) && _sessA[k] && _sessA[k].n && _pfNames.indexOf(k) < 0) _pfNames.push(k);
           });
           var pf = {};
           _pfNames.slice(0, 40).forEach(function (k) {
-            var human = _live[k] && _live[k].by !== "auto" ? _live[k] : null;
-            var v = human || _autoLive[k];
+            var human = (_sessH[k] && _sessH[k].n) ? _sessH[k] : null;
+            var v = human || _sessA[k];
+            var nv = Math.min(200, Math.max(1, Math.round(Number(v.n) || 1)));
             pf[k] = {
-              n: Number(v.n) || 0, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: human ? "human" : "auto",
+              n: nv, x: Number(v.x) || 0, y: Number(v.y) || 0, w: v.wk || null, by: human ? "human" : "auto",
               ...(typeof v.bw === "number" ? { bw: v.bw } : {}),
               ...(typeof v.bh === "number" ? { bh: v.bh } : {}),
               ...(v.shape ? { shape: String(v.shape).slice(0, 40) } : {}),
             };
           });
           add.points = { n: _pfNames.length, x: null, y: null, fields: pf, order: _orderLive.slice(0, 40) };
+        } else if (add.points && add.points.fields) {
+          var _cleanAddPf = {};
+          Object.keys(add.points.fields).forEach(function (k) {
+            if (!_isCleanLearnFieldName(k)) return;
+            var pv = add.points.fields[k];
+            if (!pv) return;
+            _cleanAddPf[k] = Object.assign({}, pv, { n: Math.min(200, Math.max(1, Math.round(Number(pv.n) || 1))) });
+          });
+          add.points = Object.assign({}, add.points, { fields: _cleanAddPf, n: Object.keys(_cleanAddPf).length });
         }
       } catch (_) {}
       /**
@@ -405,50 +455,45 @@
       try { add.open_kinds = (motion.opens && motion.opens.kinds) || {}; } catch (_) { add.open_kinds = {}; }
     } catch (_) {}
     try {
-      chrome.storage.local.get([KEY], function (r) {
+      chrome.storage.local.get([SITE_KEY], function (r) {
         try {
-          var next = L.mergeAggregate(r && r[KEY], add);
+          // 既にストレージ内で爆発・汚染していた累計があれば先に浄化する
+          var _prevAgg = r && r[SITE_KEY] && typeof r[SITE_KEY] === "object" ? Object.assign({}, r[SITE_KEY]) : null;
+          if (_prevAgg && _prevAgg.points && _prevAgg.points.fields) {
+            _prevAgg.points = Object.assign({}, _prevAgg.points, { fields: _sanitizePointStore(_prevAgg.points.fields, 500) });
+          }
+          var next = L.mergeAggregate(_prevAgg, add);
           next.at = Date.now();
           next.site = site;
-          var o = {}; o[KEY] = next;
-          /**
-           * 2026-11-11 竹内さん「データたまって理解するたび反映」:
-           *   貯まった**その場で**「動きの癖」を作り直して別のキー（axlx_human_profile）に置く。
-           *   → 見えるカーソル（pointer-ui.js）がこのキーの変化を見て、**次の動きから**新しい癖で動く。
-           *     ページを開き直さなくても、操作するほど動きが人の実測に寄っていく。
-           */
+          if (next.points && next.points.fields) {
+            next.points.fields = _sanitizePointStore(next.points.fields, 999);
+          }
+          var o = {}; o[SITE_KEY] = next;
           try {
             var prof = L.profileFrom(next);
-            if (prof) o[PROFILE_KEY] = prof;
+            if (prof) o[SITE_PROFILE_KEY] = prof;
           } catch (_) {}
-          /**
-           * 2026-11-13 竹内さん「撮影したところからぼたんの押す場所の確認や移動の部分で学習した部分あるか」:
-           *   押した位置を**要素ごと**に残す（`axlx_human_points`）。
-           *   次に同じボタン・同じ欄を押す時、見えるカーソルが**その人の押した場所**を狙う。
-           *   例: rental_cost2 → { x:0.10, y:0.14, n:6 }
-           *   ⚠ 押した**回数（n）が2以上の物だけ**使う（1回だけは偶然かもしれない）。
-           */
           try {
             var pf = (next.points && next.points.fields) || null;
             if (pf && typeof pf === "object") {
-              chrome.storage.local.get([POINTS_KEY2], function (rr) {
+              chrome.storage.local.get([SITE_POINTS_KEY], function (rr) {
                 try {
-                  var cur = (rr && rr[POINTS_KEY2]) || {};
+                  var cur = _sanitizePointStore((rr && rr[SITE_POINTS_KEY]) || {}, 999);
                   var changed = false;
                   Object.keys(pf).slice(0, 60).forEach(function (k) {
+                    if (!_isCleanLearnFieldName(k)) return;
                     var v = pf[k];
                     if (!v || typeof v.x !== "number" || typeof v.y !== "number") return;
                     if (v.by === "auto") return;
                     var old = cur[k] || null;
                     var nOld = old ? Number(old.n) || 0 : 0;
-                    var nNew = Number(v.n) || 0;
+                    var nNew = Math.min(999, Number(v.n) || 0);
                     if (nNew <= nOld) return;
-                    // 回数の多い方（新しい実測）に寄せる
                     cur[k] = { x: v.x, y: v.y, n: nNew };
                     changed = true;
                   });
                   if (changed) {
-                    var oo = {}; oo[POINTS_KEY2] = cur;
+                    var oo = {}; oo[SITE_POINTS_KEY] = cur;
                     try { chrome.storage.local.set(oo); } catch (_) {}
                   }
                 } catch (_) {}
@@ -458,21 +503,26 @@
           chrome.storage.local.set(o, function () {
             _saving = false;
             rec.reset(); // 操作・動き・押した場所・スクロールをまとめて空にする
+            _sessionPoints = {};
+            _sessionAutoPoints = {};
+            _orderLive = [];
             try { void chrome.runtime.lastError; } catch (_) {}
             // 2026-11-11: 理解した内容をその場で見せる（反映されていることが分かる）
-            try { if (o[PROFILE_KEY]) paintLearned(o[PROFILE_KEY]); else paintBadge(); } catch (_) {}
+            try { if (o[SITE_PROFILE_KEY]) paintLearned(o[SITE_PROFILE_KEY]); else paintBadge(); } catch (_) {}
             /**
-             * 2026-11-11 竹内さん「今このお客さんを普通モードでやったんやけど動き理解できているかな」:
-             *   貯めた直後に**その場で**DB へ送る（別のスクリプトの変化待ちに頼らない＝確実に届く）。
-             *   送る係（human-learn-upload.js）が居れば、それに頼む。居なければ何もしない（貯まるだけ）。
+             * ★ 2026-11-27 修正: DB へはローカル累計 `next` ではなく「今回の増分 `add`」だけを送る。
+             *   累計を送ると、サーバー側で全行足し算したときに指数爆発するため。
              */
             try {
               var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
-              if (typeof U === "function") U(next);
+              if (typeof U === "function") {
+                var uploadDelta = Object.assign({}, add, { site: site, at: next.at });
+                U(uploadDelta, { site: site });
+              }
             } catch (_) {}
             console.log("[AX] 人の動きを貯めました:", "操作" + next.n + "・マウス" + (next.moves ? next.moves.n : 0)
               + "・押した所" + (next.points ? next.points.n : 0) + "・スクロール" + (next.scrolls ? next.scrolls.n : 0)
-              + (o[PROFILE_KEY] ? "／理解した動き: 速さ" + o[PROFILE_KEY].speed_px_s : "（まだ材料不足）"));
+              + (o[SITE_PROFILE_KEY] ? "／理解した動き: 速さ" + o[SITE_PROFILE_KEY].speed_px_s : "（まだ材料不足）"));
           });
         } catch (_) { _saving = false; }
       });
@@ -952,11 +1002,12 @@
           } catch (_) {}
         }, Math.max(0, Math.round(_kW)));
       }
-      if (_foldAutoPress(last, _opObj)) return;
+      if (_foldAutoPress(last, _opObj)) return last || null;
       _opsRing.push(_opObj);
       try { _opsSeen++; } catch (_) {}
       while (_opsRing.length > OPS_RING_MAX) _opsRing.shift();
-    } catch (_) {}
+      return _opObj;
+    } catch (_) { return null; }
   }
   /** 拡張が押した時にも積む（録画モードの時だけ使う・pointer-ui から呼ばれる） */
   /** 拡張からの記録は by=auto（旧: by無し → 手本と機械が区別できない） */
@@ -1199,43 +1250,34 @@
          *   → 拡張が作った要素（`#axlx-` / `[data-axlx]` / `#aixlinx-`）は飛ばす。
          */
         try {
-          var _t = e.target;
           if (_t && (_t.closest
             ? _t.closest('#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]')
             : (String(_t.id || "").indexOf("axlx") === 0 || String(_t.id || "").indexOf("aixlinx") === 0))) return;
         } catch (_) {}
-        _pushOp(e.type || "click", e.target, _by, e);
+        var _opObj = _pushOp(e.type || "click", e.target, _by, e);
         /**
          * ⚠ 2026-11-14: **押す前に画面の数を控える**（`noteOpened` はこの控えが無いと何もしない）。
-         *   呼んでいなかったので、`opens`（何が開いたか）が**1件も残らなかった**。
+         *   ★ 2026-11-27 修正:
+         *     1) keydown や change ごとに noteBeforeClick / setTimeout(noteOpened) を走らせると opens が "none" で溢れ、
+         *        本来のクリックの開いた判定を壊すため click の時だけ実行する。
+         *     2) setTimeout で `_opsRing.length - 1` を使うと、後の操作や _foldAutoPress・shift で添字がズレるため、
+         *        `_pushOp` が返した操作オブジェクト `_opObj` を直接保持して opened を書く。
          */
-        try { if (rec && rec.noteBeforeClick) rec.noteBeforeClick(e.target); } catch (_) {}
-        /**
-         * 2026-11-14 竹内さん「プルダウンのところとか、さっき改善されたかな」
-         *   → **自動モード（拡張が押す）では押した欄が1つも記録されていなかった**（実測で発覚）。
-         *
-         *   ⚠ 理由: 押した欄の名前・順番を作る `recordPoint` は `guarded`（**`isTrusted` だけ**）の中にあり、
-         *     拡張の `el.click()` は**通らない**。だから `point_fields` / `field_order` が空で、
-         *     自動モードでは「どの欄を・どの順で押したか」を学べなかった。
-         *
-         *   → **この受け口（click/change を両方拾う）でも、押した欄を積む**。
-         *     ⚠ 人の手本とは混ぜない: `by` を付けて分ける（学習は `human` を優先する）。
-         *     ⚠ 拡張の合成クリックは座標が 0,0 なので、位置は**要素の真ん中**として記録する（`syn:true`）。
-         */
+        if (e.type === "click") {
+          try {
+            if (rec && rec.noteBeforeClick) {
+              if (!(_preBeforeClick && _preBeforeClick.el === e.target && (Date.now() - _preBeforeClick.at) < 700)) {
+                rec.noteBeforeClick(e.target);
+              }
+              _preBeforeClick = null;
+            }
+          } catch (_) {}
+        }
         try {
           if ((e.type === "click" || e.type === "change") && e.target) {
             _pushPoint(e.target, _by, e);
           }
         } catch (_) {}
-        /**
-         * 2026-11-15 竹内さん「自動モードの録画で…直接入力されてしまっている部分も見つけられるようにする」:
-         *   ⚠ **打ち込んだ操作が記録に1件も載っていなかった**（実測: `kinds.key` は 36回なのに
-         *     `shot_ops` の `k:"key"` は **0件**）。
-         *   理由: ここ（記録の受け口）が `click` と `change` しか拾っておらず、
-         *     `keydown` は `human-learn.js` の**数える所**にしか行っていなかった。
-         *   → 打ち込みも積む（**欄の名前と時刻だけ・打った中身は入れない**）。
-         *     ⚠ 1文字ごとに積むと欄の名前が埋まるので、**同じ欄は1.2秒に1回**に間引く。
-         */
         try {
           if (e.type === "keydown" && e.target) {
             var _kt = e.target;
@@ -1248,41 +1290,44 @@
             }
           }
         } catch (_) {}
-        /**
-         * 2026-11-14 竹内さん「賃料の部分のプルダウンのしくみ…理解できるのかな」
-         *   → 実測: 賃料の操作 401件すべて `w:"select"` なのに、**「何が開いたか」が 0件**だった。
-         *     集計（`opens`）には入るが、**`shot_ops` には載せていなかった**。
-         *   → 押した**後に**開いた物を見て、その操作の記録に `opened` を書く。
-         *     ⚠ 見るのは**種類だけ**（options/modal/result/form/none）。中身の文字は見ない。
-         *     ⚠ `options` が出るのは**プルダウンが開いた時**＝賃料のしくみを学ぶ材料そのもの。
-         */
-        try {
-          var _openedFor = e.target;
-          var _ringAt = _opsRing.length - 1;
-          setTimeout(function () {
-            try {
-              if (!rec || !rec.noteOpened) return;
-              // 画面の数を押す前後で比べる（rec 側が控えを持っている）
-              rec.noteOpened(_openedFor);
-              var o = _opsRing[_ringAt];
-              if (o && o.opened == null) {
-                // 集計の最後の1件（今回の操作）から種類を取る
-                var det = rec.detail ? rec.detail() : null;
-                var ops2 = (det && det.opens) || [];
-                var last = ops2[ops2.length - 1];
-                if (last && last.o) o.opened = String(last.o).slice(0, 12);
-              }
-            } catch (_) {}
-          }, 560 + Math.floor(Math.random() * 240));
-        } catch (_) {}
+        if (e.type === "click") {
+          try {
+            var _openedFor = e.target;
+            var o = _opObj;
+            setTimeout(function () {
+              try {
+                if (!rec || !rec.noteOpened) return;
+                rec.noteOpened(_openedFor);
+                if (o && o.opened == null) {
+                  var det = rec.detail ? rec.detail() : null;
+                  var ops2 = (det && det.opens) || [];
+                  var last = ops2[ops2.length - 1];
+                  if (last && last.o) o.opened = String(last.o).slice(0, 12);
+                }
+              } catch (_) {}
+            }, 560 + Math.floor(Math.random() * 240));
+          } catch (_) {}
+        }
       } catch (_) {}
     };
+    var _preBeforeClick = null;
     /**
      * ★ 2026-11-16: mousedown で checkbox の「押す前」を掴む（click 時はトグル後になりやすい）。
+     * ★ 2026-11-27: 同期的クリックで小窓が開く場合もあるため mousedown 時点の画面数も先取り控える。
      */
     document.addEventListener("mousedown", function (e) {
       try {
         if (!e || !e.target) return;
+        try {
+          if (rec && rec.noteBeforeClick) {
+            var _tm = e.target;
+            var _inUi = _tm.closest && _tm.closest('#axlx-bar, #axlx-learn-badge, #aixlinx-mini-btn, #axlx-guide, [data-axlx], [id^="axlx-"], [id^="aixlinx-"], [class^="axlx-"]');
+            if (!_inUi) {
+              rec.noteBeforeClick(_tm);
+              _preBeforeClick = { el: _tm, at: Date.now() };
+            }
+          }
+        } catch (_) {}
         var c = _findCheckEl(e.target);
         // ★ 2026-11-17: 子要素クリックでも one_station / one_line の input を掴む（was欠落防止）
         if (!c && e.target.closest) {
@@ -1318,7 +1363,7 @@
     try {
       if (!el || !L || !L.fieldName) return;
       var name = L.fieldName(el);
-      if (!name) return;                      // 名前が取れない（img/body 等）は積まない
+      if (!name || name.indexOf("[object ") >= 0) return; // 名前が取れない（img/body/壊れたDOM名 等）は積まない
       var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
       if (!r || !(r.width > 0 && r.height > 0)) return;
   /**
@@ -1389,7 +1434,7 @@
         if (_tg && _cl) _sh = (_tg + "." + _cl).slice(0, 40);
       } catch (_) { _sh = ""; }
       cur[name] = {
-        n: n, x: med(xs), y: med(ys), xs: xs, ys: ys,
+        n: Math.min(999, n), x: med(xs), y: med(ys), xs: xs, ys: ys,
         wk: (L.kindOfEl ? L.kindOfEl(el) : null) || prev.wk || null,
         by: by || prev.by || null,
         bw: Math.round(r.width),
@@ -1397,41 +1442,48 @@
         shape: _sh || prev.shape || null,
       };
       cur.__last = { f: name, t: t, n: 1 };
+      // 今回保存窓だけの増分（_sessionPoints / _sessionAutoPoints）にも 1回分を積む
+      if (_isCleanLearnFieldName(name)) {
+        var sCur = _isAutoBy ? _sessionAutoPoints : _sessionPoints;
+        var sPrev = sCur[name] || { n: 0, xs: [], ys: [] };
+        var sXs = sPrev.xs.concat([Math.round(Math.max(0, Math.min(1, fx)) * 100) / 100]).slice(-20);
+        var sYs = sPrev.ys.concat([Math.round(Math.max(0, Math.min(1, fy)) * 100) / 100]).slice(-20);
+        sCur[name] = {
+          n: Math.min(200, (Number(sPrev.n) || 0) + 1),
+          x: med(sXs),
+          y: med(sYs),
+          xs: sXs,
+          ys: sYs,
+          wk: cur[name].wk,
+          by: by || cur[name].by,
+          bw: cur[name].bw,
+          bh: cur[name].bh,
+          shape: cur[name].shape,
+        };
+      }
       if (!_isAutoBy) _savePoints(cur);
     } catch (_) {}
   }
   // var _livePoints = null;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   // var _livePointsAt = 0;  ← start() の先頭へ移動（2026-11-14: 重複を消した）
-  /**
-   * 2026-11-14: **押された順**（人も拡張も・重複は畳む）。
-   *   ⚠ `_livePoints` は「欄ごとの回数」しか持たないので、**順番**はここで別に持つ。
-   *     これが `field_order` になり、「賃料 → 徒歩 → 更新日」の流れを学べる。
-   */
   // var _orderLive = [];  ← start() の先頭へ移動（2026-11-14: 重複を消した）
   function _savePoints(cur) {
     try {
       if (!cur) return;
-      var o = {}; o[POINTS_KEY2] = cur;
+      var o = {}; o[SITE_POINTS_KEY] = _sanitizePointStore(cur, 999);
       chrome.storage.local.set(o);
       _livePointsAt = Date.now();
     } catch (_) {}
   }
   try {
-    chrome.storage.local.get([POINTS_KEY2], function (r) {
+    chrome.storage.local.get([SITE_POINTS_KEY], function (r) {
       try {
-        /**
-         * ⚠ 2026-11-14 実測: **上書きしてはいけない**（`_livePoints = r[KEY]` が原因で
-         *   読み込み前のクリックが消えていた・`ops22/pf1` が15件）。
-         *   → **統合する**（回数の多い方・新しい方を残す）。既に積んだ物を消さない。
-         */
-        var stored = (r && r[POINTS_KEY2]) || {};
-        var cur = _livePoints || {};
+        var stored = _sanitizePointStore((r && r[SITE_POINTS_KEY]) || {}, 999);
+        var cur = _sanitizePointStore(_livePoints || {}, 999);
         Object.keys(stored).forEach(function (k) {
-          if (k === "__last") return;
           var a = cur[k], b = stored[k];
           if (!b) return;
           if (!a) { cur[k] = b; return; }
-          // 回数が多い方（＝実測が厚い方）を残す
           if ((Number(b.n) || 0) > (Number(a.n) || 0)) cur[k] = b;
         });
         _livePoints = cur;
@@ -1909,6 +1961,7 @@
    *   ・自動モードで動いた時だけ書く。通常・スタッフでは今まで通り `axlx_human_learn`（人の実測）
    */
   var AUTO_KEY = "axlx_auto_motion";
+  var SITE_AUTO_KEY = AUTO_KEY + _siteSuffix;
   var _autoOps = [];
   var _autoLastAt = 0;
   var _autoLastEl = null;
@@ -1982,14 +2035,14 @@
           }, { mode: "aix", site: site });
         }
       } catch (_) {}
-      chrome.storage.local.get([AUTO_KEY], function (r) {
+      chrome.storage.local.get([SITE_AUTO_KEY], function (r) {
         try {
-          var prev = r && r[AUTO_KEY];
+          var prev = r && r[SITE_AUTO_KEY];
           var next = L.mergeAggregate(prev, adds);
           next.at = Date.now();
           next.site = site;
           next.source = "extension_auto";   // ← 人の実測と区別する印
-          var o = {}; o[AUTO_KEY] = next;
+          var o = {}; o[SITE_AUTO_KEY] = next;
           chrome.storage.local.set(o, function () {
             _autoOps = [];
             _autoSaving = false;
@@ -2189,10 +2242,10 @@
   window.__axlxLearnNow = function (cb) {
     var out = { この画面: window.__axlxHumanLearnReport() };
     try {
-      chrome.storage.local.get([KEY, PROFILE_KEY, "axlx_human_learn_uploaded_at"], function (r) {
-        out.貯まった合計 = r && r[KEY] ? { 操作: r[KEY].n, マウス: r[KEY].moves && r[KEY].moves.n, 押した所: r[KEY].points && r[KEY].points.n, スクロール: r[KEY].scrolls && r[KEY].scrolls.n } : null;
-        out.理解した動き = (r && r[PROFILE_KEY]) || null;
-        out.最後に送った時刻 = r && r.axlx_human_learn_uploaded_at ? new Date(r.axlx_human_learn_uploaded_at).toLocaleString("ja-JP") : "まだ";
+      chrome.storage.local.get([SITE_KEY, SITE_PROFILE_KEY, SITE_SENT_KEY], function (r) {
+        out.貯まった合計 = r && r[SITE_KEY] ? { 操作: r[SITE_KEY].n, マウス: r[SITE_KEY].moves && r[SITE_KEY].moves.n, 押した所: r[SITE_KEY].points && r[SITE_KEY].points.n, スクロール: r[SITE_KEY].scrolls && r[SITE_KEY].scrolls.n } : null;
+        out.理解した動き = (r && r[SITE_PROFILE_KEY]) || null;
+        out.最後に送った時刻 = r && r[SITE_SENT_KEY] ? new Date(r[SITE_SENT_KEY]).toLocaleString("ja-JP") : "まだ";
         console.log("[AX] 学習の状態:", out);
         if (typeof cb === "function") cb(out);
       });
@@ -2202,12 +2255,12 @@
   /** いま貯まっている物を、その場で DB へ送る（確かめたい時） */
   window.__axlxLearnSendNow = function () {
     try {
-      chrome.storage.local.get([KEY], function (r) {
-        var agg = r && r[KEY];
+      chrome.storage.local.get([SITE_KEY], function (r) {
+        var agg = r && r[SITE_KEY];
         if (!agg || !agg.n) { console.warn("[AX] 送る物がありません（まだ貯まっていない）"); return; }
         var U = (typeof self !== "undefined" ? self : window).__axlxHumanMotionUploadNow;
         if (typeof U !== "function") { console.warn("[AX] 送る係（human-learn-upload.js）が居ません"); return; }
-        U(agg);
+        U(agg, { site: site });
         console.log("[AX] DB へ送りました:", agg.n + "回分");
       });
     } catch (_) {}

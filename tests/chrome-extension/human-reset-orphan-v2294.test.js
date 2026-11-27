@@ -104,7 +104,9 @@ ok("古い中身: 読み直しの案内を出す", /ページを読み直す/.te
 ok("古い中身は枠を作り直さない", /function ensureBar\(\) \{\n\s*if \(_orphaned\) return;/.test(bd));
 const inst = fnSrc(bg, "async function _reloadOrphanTabsOnInstall(details) {", "");
 ok("読み直し・入れ直しの時だけ（Chrome の更新では触らない）", /if \(reason !== "update" && reason !== "install"\) return;/.test(inst));
-ok("答えるタブは触らない・答えないタブだけ読み直す", /if \(!p \|\| p\.pong \|\| p\.gone\) continue;/.test(inst) && /chrome\.tabs\.reload\(t\.id\)/.test(inst));
+ok("答える最新版タブは触らない・答えないタブ／旧版非入力中タブだけ読み直す",
+  /if \(!p \|\| p\.pong \|\| p\.gone\)\s*\{[\s\S]{0,360}p\.extVer !== ver && !p\.fillRunning[\s\S]{0,160}continue;[\s\S]{0,40}\}/.test(inst)
+  && /chrome\.tabs\.reload\(t\.id\)/.test(inst));
 ok("リアプロは main.php のタブだけ・ITANDI も", /realnetpro\.com\/main\.php\*/.test(inst) && /itandibb\.com\/\*/.test(inst));
 ok("読み直しに登録", /chrome\.runtime\.onInstalled\.addListener\(_reloadOrphanTabsOnInstall\);/.test(bg));
 

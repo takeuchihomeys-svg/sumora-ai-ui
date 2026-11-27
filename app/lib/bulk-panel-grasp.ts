@@ -7,6 +7,63 @@
  * ★ 2.8.228: task_now（間取外:2LDK 等）があれば now に優先
  */
 
+import { panelPhaseWords } from "./loop-flow-map";
+
+/**
+ * ★ 2.8.319 竹内さん「拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる（確認できるから）」:
+ *   パネルの「いま／つぎ」に出す言葉は、手順書（action-playbook.ts の手）と同じ言葉に揃える。
+ *   手順書の手の文にも同じ言葉を入れてある（試験 bulk-panel-playbook-sync が両方に在るか見張る）。
+ *   JS の写し: chrome-extension/bulk-panel-grasp.js の PANEL_PHASE_WORDS（同じ言葉・試験で一致を見る）。
+ *
+ * ★ 2.8.323 竹内さん「改善したらパネルも改善される仕組みちゃんとつくる／パネルに記載されている文字ちゃんと改善したながれにする」:
+ *   この言葉は手で別に持たない。**流れの地図（app/lib/loop-flow-map.ts の各手の panel）が正本**。
+ *   言葉を直す・手を足す時は地図を直し、`npx tsx scripts/gen-panel-words.ts` で拡張の写しを作り直す。
+ *   試験 panel-from-flow-map.test.ts が「地図とパネルの食い違い・写しの古さ・手で書いた古い言葉」を止める。
+ */
+export const PANEL_PHASE_WORDS = panelPhaseWords();
+
+/**
+ * ★ 2.8.329 実測 #1677: 枠に内部の段の名前（handoff）がそのまま出た。英字だけの段名は日本語にするか出さない。
+ */
+const RAW_PHASE_JA: Record<string, string> = {
+  handoff: "客完了→次のお客さんへ",
+  ready_next: "客完了→次のお客さんへ",
+  list_done: "物件取得完了",
+  clear: PANEL_PHASE_WORDS.reset.now,
+  next_clear: PANEL_PHASE_WORDS.reset.now,
+  fill: PANEL_PHASE_WORDS.fill.now,
+  search: PANEL_PHASE_WORDS.search.now,
+  sort: PANEL_PHASE_WORDS.sort.now,
+  list: PANEL_PHASE_WORDS.list.now,
+};
+/** 古い内部の言葉（page-script／bulk-dl が出す）を、手順書と同じ言葉に直して見せる */
+function playbookAction(a: string): string {
+  const t = String(a || "");
+  if (/^[a-z][a-z_]*$/.test(t)) return RAW_PHASE_JA[t] || "";
+  if (/外している最中|外し中/.test(t)) return PANEL_PHASE_WORDS.reset.now;
+  if (/新しい条件を入れている最中/.test(t)) return PANEL_PHASE_WORDS.fill.now;
+  return t;
+}
+/**
+ * ★ 2.8.329 竹内さん「表記にずれのない内容にする」: リセットの「つぎ」は誰の条件を読み直すかを名前で言う。
+ *   入れる前のリセット（pre_fill）＝いまの客、送付のあと（post_send・位置が分からない時も）＝次の客。
+ *   地図の言葉の {after} をその名前に置き換える。
+ */
+export function resetAfterName(cur: string, nxt: string, resetPos: string | null | undefined): string {
+  if (resetPos === "pre_fill") return cur || "このお客さん";
+  return nxt || "次のお客さん";
+}
+export function fillAfter(text: string, afterName: string): string {
+  return String(text || "").split("{after}").join(afterName || "次のお客さん");
+}
+function playbookMove(m: string): string {
+  const t = String(m || "");
+  if (/次ページ|送付済み|客完了|リセット|API/.test(t)) return t;
+  if (/外す|外して|物件取得完了/.test(t)) return PANEL_PHASE_WORDS.done.next;
+  if (/新しいお客さんの条件|条件を1つ/.test(t)) return PANEL_PHASE_WORDS.reset.next;
+  return t;
+}
+
 export type BulkPanelGraspInput = {
   total: number;
   /** 1始まり。0=まだ誰も始めていない */
@@ -20,6 +77,8 @@ export type BulkPanelGraspInput = {
   currentAction?: string | null;
   /** ★ 2.8.228: いまの1タスク（間取外:2LDK／入れる:賃料 等） */
   taskNow?: string | null;
+  /** ★ 2.8.329: リセットの位置（pre_fill＝入れる前・post_send＝送付のあと） */
+  resetPos?: string | null;
 };
 
 export type BulkPanelGraspLines = {
@@ -37,11 +96,13 @@ function nm(s: string | null | undefined): string {
 
 function actionFromMove(move: string): string | null {
   const m = String(move || "");
-  if (/外す/.test(m)) return "外している最中";
-  if (/入れ|条件を1つ/.test(m)) return "新しい条件を入れている最中";
-  if (/並べ替え/.test(m)) return "並べ替え最中";
-  if (/検索を押/.test(m)) return "検索を押す最中";
-  if (/物件|取得/.test(m)) return "物件取得最中";
+  if (/リセット/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+  if (/次ページ|送付済み/.test(m)) return PANEL_PHASE_WORDS.all_sent.now;
+  if (/外す/.test(m)) return PANEL_PHASE_WORDS.reset.now;
+  if (/入れ|条件を1つ/.test(m)) return PANEL_PHASE_WORDS.fill.now;
+  if (/並べ替え/.test(m)) return PANEL_PHASE_WORDS.sort.now;
+  if (/検索を押/.test(m)) return PANEL_PHASE_WORDS.search.now;
+  if (/物件|取得/.test(m)) return PANEL_PHASE_WORDS.list.now;
   return null;
 }
 
@@ -53,13 +114,13 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
   const cur = nm(g.currentName);
   const nxt = nm(g.nextName);
   const graspOk = !!(cur || index === 0) && total > 0;
-  const move = String(g.nextMove || "").trim().slice(0, 28);
-  const taskNow = String(g.taskNow || "").trim().slice(0, 24);
+  const move = playbookMove(String(g.nextMove || "").trim().slice(0, 40)).slice(0, 40);
+  const taskNow = playbookAction(String(g.taskNow || "").trim().slice(0, 28)).slice(0, 28);
   const act =
     taskNow ||
-    String(g.currentAction || "").trim().slice(0, 24) ||
+    playbookAction(String(g.currentAction || "").trim().slice(0, 28)).slice(0, 28) ||
     actionFromMove(move) ||
-    (g.waitingFor ? String(g.waitingFor).slice(0, 24) : "");
+    (g.waitingFor ? String(g.waitingFor).slice(0, 28) : "");
 
   let now = "";
   if (index <= 0) {
@@ -72,17 +133,24 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
     now = "一括 " + index + "/" + total + "（客名未把握）";
   }
 
+  const resetting = /外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act) || /リセットを押/.test(act);
+  const afterName = resetAfterName(cur, nxt, g.resetPos);
   let next = "";
-  if (nxt) next = "次は " + nxt;
-  else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
-  else if (index <= 0) next = nxt ? "次は " + nxt : "最初の客へ";
-  else next = "次の客を把握中…";
-  if (move) {
-    // いまの行動が外すなら、次の動きは「新しい条件を入れる」を優先表示
-    if (/外して/.test(act) || /外す/.test(act) || /外:/.test(act) || /間取外/.test(act)) {
-      next += (next ? "／" : "") + "次の動き:新しいお客さんの条件を入れる";
-    } else {
-      next += (next ? "／" : "") + "次の動き:" + move;
+  if (resetting && g.resetPos === "pre_fill") {
+    // 入れる前のリセット: 次に入れるのはいまの客。列の次の客は「その次」として言う（「次は 次の客」と言わない）
+    next = "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName) + (nxt ? "／その次の客は " + nxt : "");
+  } else {
+    if (nxt) next = "次は " + nxt;
+    else if (index >= total && index > 0) next = "一括の最後（次の客なし）";
+    else if (index <= 0) next = nxt ? "次は " + nxt : "最初の客へ";
+    else next = "次の客を把握中…";
+    if (move || resetting) {
+      // いまの行動が外す・リセットなら、次の動きは「（誰の）条件を読み直して入れる」を優先表示
+      if (resetting) {
+        next += (next ? "／" : "") + "次の動き:" + fillAfter(PANEL_PHASE_WORDS.reset.next, afterName);
+      } else {
+        next += (next ? "／" : "") + "次の動き:" + fillAfter(move, afterName);
+      }
     }
   }
 
@@ -91,7 +159,7 @@ export function formatBulkPanelGrasp(g: BulkPanelGraspInput | null | undefined):
     (cur ? "／いま" + cur.replace(/さん$/, "") : "") +
     (act ? "／行" + act.slice(0, 10) : "") +
     (nxt ? "／次" + nxt.replace(/さん$/, "") : index >= total && index > 0 ? "／次なし" : "") +
-    (move ? "／動" + move.slice(0, 12) : "");
+    (move ? "／動" + fillAfter(move, afterName).slice(0, 12) : "");
 
   return { now, next, grasp, graspOk };
 }

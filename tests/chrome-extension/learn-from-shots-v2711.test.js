@@ -26,17 +26,17 @@ const L = require(path.join(EXT, "human-learn.js"));
 
 console.log("■ ① 写真と「押した操作」を結びつける（これが無いと学べない）");
 {
-  ok("操作を小さな輪に残す（_pushOp）", /function _pushOp\(kind, el, by\)/.test(rec));
+  ok("操作を小さな輪に残す（_pushOp）", /function _pushOp\(kind, el, by(, ev)?\)/.test(rec));
   ok("  人が押した時に記録する（人か機械かを付ける）",
-    /_pushOp\(e\.type \|\| "click", e\.target, _by\)/.test(rec) && /isTrusted === true\) \? "human" : "auto"/.test(rec));
+    /_pushOp\(e\.type \|\| "click", e\.target, _by(, e)?\)/.test(rec) && /isTrusted === true\) \? "human" : "auto"/.test(rec));
   // 2026-11-13: 地域（6段）・駅（5段）も記録するようになったので 40 → 60 に上げた
   ok("  上限60件（古い物から捨てる）", /OPS_RING_MAX = 60/.test(rec) && /_opsRing\.shift\(\)/.test(rec));
   ok("写真と一緒に送る（ops）", /ops: _recentOps\(\)/.test(rec));
   ok("  入れるのは 時刻・種類・欄の名前 だけ（中身は入れない）", /\{ t: t, k: String\(kind \|\| "\?"\)\.slice\(0, 10\), f: nmStr, w: kd, g: gap/.test(rec));
   // 2026-11-13: 交互クリックを畳むために DOM 要素を一時的に持つが、**送る時は外す**
   // 2026-11-14: `opened`（押したら何が開いたか・種類だけ）を足した（v2.7.67・賃料プルダウンのしくみ）
-  ok("  送る時は DOM 要素を外す（中身ではないが重い）", /return \{[\s\S]{0,400}by: o\.by \|\| null/.test(rec) && !/return \{[\s\S]{0,400}\bel: o\.el/.test(rec));
-  ok("background が ops を受け取って送る", /ops: Array\.isArray\(msg\.ops\) \? msg\.ops : null/.test(bg));
+  ok("  送る時は DOM 要素を外す（中身ではないが重い）", (function () { var m = /var row = \{([\s\S]{0,400}?)\};/.exec(rec.slice(rec.indexOf("function _recentOps()"))); return !!m && /by: o\.by \|\| null/.test(m[1]) && !/\bel: o\.el/.test(m[1]); })());
+  ok("background が ops を受け取って送る", /var raw = Array\.isArray\(msg\.ops\) \? msg\.ops : null;/.test(bg) && /ops: \(function \(\) \{\s*var raw = Array\.isArray\(msg\.ops\)/.test(bg));
   ok("  送信の中身に shot_ops を足した", /shot_ops: Array\.isArray\(job\.ops\)/.test(bg));
   ok("サーバーが shot_ops を整えて残す", /shot_ops: \(\(\) => \{/.test(api));
   ok("  欄の名前は30字・操作は10字まで", /r\.f\.slice\(0, 30\)/.test(api) && /r\.k\.slice\(0, 10\)/.test(api));

@@ -88,8 +88,8 @@ ok("bulk-dl: 行の口（AxlxRealproRows）", /AxlxRealproRows\s*=/.test(read("b
 // ── ④ 2026-10-01 竹内「押したら勝手に自動検索始まって自動で物件ダウンロード始まってしまったから防ぐ」──
 const bd = read("bulk-dl.js");
 ok("bulk-dl: 案内モードの間は自動の押下を始めない（旧の一括は消した）",
-  /function _maybeAutoPressOnLoad\(\) \{[\s\S]{0,300}_guideBlocksAuto\("autoOnLoad"\)/.test(bd)
-  && /function autoPressPdfs\(\) \{[\s\S]{0,1200}_guideBlocksAuto\("autoPressPdfs"\)/.test(bd));
+  /function _maybeAutoPressOnLoad\(opt\) \{[\s\S]*?\n  \}\n/.test(bd) && (bd.slice(bd.indexOf("function _maybeAutoPressOnLoad("), bd.indexOf("\n  function ", bd.indexOf("function _maybeAutoPressOnLoad(") + 10)).includes('_guideBlocksAuto("autoOnLoad")'))
+  && (bd.slice(bd.indexOf("function autoPressPdfs("), bd.indexOf("\n  function ", bd.indexOf("function autoPressPdfs(") + 10)).includes('_guideBlocksAuto("autoPressPdfs")')));
 ok("bulk-dl: 読めない時も止める（明示の OFF＝false の時だけ動く・自動モードを選んだ時だけ開く）", /_guideOff = !_GUIDE_ONLY \|\| _autoModeOn/.test(bd) && /if \(_guideOff\) return false;/.test(bd) && /if \(_autoModeOn\) return false;/.test(bd));
 const pp = read("popup.js");
 ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を置かない", /_gm\.guideMode !== false \|\| \(self\.AxlxModeCore && self\.AxlxModeCore\.GUIDE_ONLY\)\) \{ try \{ chrome\.storage\.session\.remove\("axlx_pending_auto_send"\)/.test(pp));
@@ -135,7 +135,8 @@ ok("popup: 案内モードの間は再開の印（axlx_pending_auto_send）を�
   ok("送付済みはお客様に届けた部屋だけ（customerRooms・★物件出し★への共有は使わない）", /customerIndex = Array\.isArray\(resp\.customerRooms\)/.test(rg) && /SK\.isSentRoom\(customerIndex, r\.name, r\.room\)/.test(rg));
   ok("送付済みの印刷用PDF は押すと確かめる（固く止めない）", /送付済みです。それでもダウンロードしますか？/.test(rg) && /document\.addEventListener\("click", function \(e\) \{\s*\r?\n\s*var t = e\.target && e\.target\.closest \? e\.target\.closest\("\.axlx-pdf-sent"\)/.test(rg));
   ok("光らせるのは「通す」（ブレインの下見）か、下見が無い時は ◎/○", /data-axlx-verdict/.test(rg) && /\^\[◎○\]/.test(rg));
-  ok("案内を消すと印も消す", /if \(!guideOn\) clearPdfMarks\(\)/.test(rg) && /clearHighlight\(\); clearPdfMarks\(\); renderPanel\(\);/.test(rg));
+  // 2.8.313 退役（「自動（guideOn=false）になった時の clearPdfMarks」の分だけ）: 2026-11-16 竹内さん「まだ送付済みなのが送付済みと表示されていない」で、自動の間は送付済み印を消さず光（.axlx-pdf-go）だけ消す形に置き換えた（realpro-guide.js applyMode のコメント）。案内を終える時（endGuide）の消し方と、自動→案内に戻った時の消し方は今も見る
+  ok("案内を消すと印も消す（endGuide・自動→案内に戻った時）", /clearHighlight\(\); clearPdfMarks\(\); renderPanel\(\);/.test(rg) && /else if \(!_wasGuide && guideOn\) \{[^}]*clearPdfMarks\(\);/.test(rg) && /querySelectorAll\("\.axlx-pdf-go"\)/.test(rg));
   ok("押さない（.click( が無い）", !/\.click\s*\(/.test(rg.replace(/\/\/.*$/gm, "")));
   const bd = read("bulk-dl.js");
   ok("bulk-dl は下見の判定を印刷用PDF に印として残す・行の口に btn", /setAttribute\("data-axlx-verdict"/.test(bd) && /btn: t\.btn \|\| null/.test(bd));

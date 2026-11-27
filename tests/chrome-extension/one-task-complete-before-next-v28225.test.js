@@ -16,8 +16,14 @@ function ok(name, c, d) {
 
 console.log("\n■ 版");
 ok("manifest ≥2.8.225", mf.version >= "2.8.225", mf.version);
-ok("page ≥2.8.225", /_AXLX_PAGE_VER = "2\.8\.2(2[5-9]|[3-9]\d)"/.test(ps));
-ok("rules ≥2.8.225", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.2(2[5-9]|[3-9]\d)"/.test(rules));
+// 版は 2.8.2xx 固定でなく「以上」で比べる（数値で比較・2.8.3xx 以降でも通る）
+const verGe = (v, want) => {
+  const a = String(v || "").split(".").map(Number), b = String(want).split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); }
+  return true;
+};
+ok("page ≥2.8.225", verGe((ps.match(/_AXLX_PAGE_VER = "([\d.]+)"/) || [])[1], "2.8.225"));
+ok("rules ≥2.8.225", verGe((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([\d.]+)"/) || [])[1], "2.8.225"));
 
 console.log("\n■ 関所（完了してから次へ）");
 ok("印だけ補完を廃止", !/関所で補完[^」]/.test(ps) && !/_beforeOk\s*=\s*true;\s*\/\*\s*関所で補完/.test(ps));
@@ -36,7 +42,10 @@ ok("clear_then_fill_gate 決まり", /id: "clear_then_fill_gate"/.test(rules));
 ok("flow_series_order_gate 決まり", /id: "flow_series_order_gate"/.test(rules));
 ok("one_task_complete_before_next 決まり", /id: "one_task_complete_before_next"/.test(rules));
 ok("RULES_DONE に載る", /"one_task_complete_before_next"/.test(ps));
-ok("KEEP/RULE に one_task_", /KEEP_STEP[\s\S]{0,900}one_task_/.test(sa) && /RULE_STEP[\s\S]{0,900}one_task_/.test(sa));
+// 窓（{0,900}）は KEEP_STEP の行が長くなって届かなくなった。定義の1行の中に one_task_ があるかを見る
+const keepLine = (sa.match(/var KEEP_STEP = .*/) || [""])[0];
+const ruleLine = (sa.match(/var RULE_STEP = .*/) || [""])[0];
+ok("KEEP/RULE に one_task_", /\bone_task_/.test(keepLine) && /\bone_task_/.test(ruleLine));
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);

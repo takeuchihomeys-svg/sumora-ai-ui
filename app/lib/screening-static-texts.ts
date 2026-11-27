@@ -6,8 +6,11 @@
 import { NOW_VS_LATER_FIELD } from "./brain-now-later";
 import { ASK_PARTS_FIELD } from "./ask-parts";
 import { TURN_READ_BRAIN_FIELD } from "./turn-read";
+import { CUSTOMER_MEMO_HEAD } from "./customer-memo";
+import { ASKS_FACTS_HEAD } from "./compose-asks-facts";
 
-export const SCREENING_STATIC_TEXTS: readonly string[] = [NOW_VS_LATER_FIELD, ASK_PARTS_FIELD, TURN_READ_BRAIN_FIELD].filter((s) => typeof s === "string" && s.length >= 20);
+// 2026-11-27 作業員L（今夜の煙の1問 q472・統括役の急ぎ）: お客様のメモの見出し・書き手の使う事実の見出し（どちらも「出所つき」）を足した
+export const SCREENING_STATIC_TEXTS: readonly string[] = [NOW_VS_LATER_FIELD, ASK_PARTS_FIELD, TURN_READ_BRAIN_FIELD, CUSTOMER_MEMO_HEAD, ASKS_FACTS_HEAD].filter((s) => typeof s === "string" && s.length >= 20);
 
 /** 網にかける前に、決まりの文をそのまま取り除く（一字でも違えば残る＝お客様の文は消えない） */
 export function stripScreeningStaticTexts(text: string): string {

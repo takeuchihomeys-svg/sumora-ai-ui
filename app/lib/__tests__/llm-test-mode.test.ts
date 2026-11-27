@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import {
   isTestModeAllowed, readTestMode, testModeBlockedReason, isBrainCall, isTestModeTarget, usageEnvLabel,
-  TEST_MODE_BRAIN_SYSTEM_MARKERS,
+  TEST_MODE_BRAIN_SYSTEM_MARKERS, examIntakeToOpenAI,
 } from "../llm-test-mode";
 import { buildRuleCheckPrompt, ISSUE_SCHEMA } from "../final-check";
 import { systemFullKey, parseAnthropicRequest } from "../llm-usage-recorder";
@@ -163,6 +163,16 @@ console.log("── 記録の sys_key_full は Anthropic 宛ての行と同じ�
   t("system が無ければ null", systemFullKey(undefined) === null);
   const provider = readFileSync("app/lib/llm-alt-provider.ts", "utf8");
   t("llm-alt-provider は sysKeyFull に全文（sysHead）を渡さない", !/sysKeyFull: sysHead/.test(provider) && /systemFullKey\(body\.system\)/.test(provider));
+}
+
+// 2026-11-27 入口の読みだけ OpenAI（竹内さんの決め 11/25・11/27）: 試験（deepseek-all）・名札 conductor_intake・LLM_TEST_ALLOW_INTAKE_OPENAI=on の3つが揃った時だけ
+{
+  const on = { LLM_TEST_MODE: "deepseek-all", LLM_TEST_ALLOW_INTAKE_OPENAI: "on" };
+  t("入口の読み: 3つ揃えば OpenAI", examIntakeToOpenAI(on, "conductor_intake") === true);
+  t("入口の読み: 他の名札は今まで通り（止める）", examIntakeToOpenAI(on, "brain_full") === false && examIntakeToOpenAI(on, null) === false);
+  t("入口の読み: スイッチが無ければ今まで通り", examIntakeToOpenAI({ LLM_TEST_MODE: "deepseek-all" }, "conductor_intake") === false);
+  t("入口の読み: 試験でなければ何もしない", examIntakeToOpenAI({ LLM_TEST_ALLOW_INTAKE_OPENAI: "on" }, "conductor_intake") === false);
+  t("入口の読み: 本番（Vercel）では必ず何もしない", examIntakeToOpenAI({ ...on, VERCEL: "1" }, "conductor_intake") === false && examIntakeToOpenAI({ ...on, NODE_ENV: "production" }, "conductor_intake") === false);
 }
 
 console.log(`\n${pass} passed / ${fail} failed`);

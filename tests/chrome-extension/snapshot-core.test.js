@@ -158,7 +158,8 @@ console.log("\n■ 配線（background・score-overlay・popup・manifest）");
   ok("background: 見張りは pending の取りに行き（_pollAndRunBatch）を呼ばない", tick.length > 0 && !/_pollAndRunBatch/.test(tick));
   // 2026-09-30 v2.5.42: ITANDI の条件の入れ直し（_itandiGuardRetry）も同じ1回の検索の見張りの中（4つ目の race）
   ok("background: 1回の検索の見張りを入力の段と送信の段の両方に（＋ITANDI の入れ直し）", (bg.match(/_passGuard\.race\(/g) || []).length === 4 && /_passGuard\.race\(_batchAutofill\([^)]*\), PASS_AUTOFILL_PHASE_MS\)/.test(bg) && /_passGuard\.race\(_itandiGuardRetry\(/.test(bg));
-  ok("background: 見張りの時間切れは catch で done・点検に pass_deadline", /_passGuard\.done\(\);\n(?:\s+_itandiGuardCtx = null;[^\n]*\n)?\s+_passFailed\+\+;/.test(bg) && /error_kind: "pass_deadline"/.test(bg));
+  // 2.8.313: catch の中に _releasePipelineLock の行などが増えたので「行の並びの固定」をやめ、同じ catch の中で done → _passFailed++ の順を見る形に
+  ok("background: 見張りの時間切れは catch で done・点検に pass_deadline", /\} catch \(e\) \{\s*_passGuard\.done\(\);(?:(?!\} catch \(e\))[\s\S])*?_passFailed\+\+;/.test(bg) && /error_kind: "pass_deadline"/.test(bg));
   ok("background: pending に版と PC を渡す", /"x-ext-version": _extVersion\(\)/.test(bg) && /"x-ext-install":/.test(bg));
   ok("background: 見送りの文に版を書く", /自動便（AIX連動）は実行しない（拡張 v" \+ \(_extVersion\(\)/.test(bg));
   ok("background: 待ちの時間切れで撮る（fill-done・送信の終わり）", /_snapOnEvent\("fill_timeout"/.test(bg) && /_snapOnEvent\("waiter_timeout"/.test(bg));
@@ -174,8 +175,8 @@ console.log("\n■ 配線（background・score-overlay・popup・manifest）");
   const mf = JSON.parse(read("manifest.json"));
   ok("manifest の版 2.7.22 以上", _verGte(mf.version, "2.7.22"));
   eq("manifest: optional_host_permissions に <all_urls>（最初から持たせない）", [mf.optional_host_permissions, (mf.host_permissions || []).includes("<all_urls>")], [["<all_urls>"], false]);
-  ok("manifest: 3サイトの content script（document_start）に snapshot-core.js", mf.content_scripts.some((c) => c.run_at === "document_start" && c.js.includes("snapshot-core.js") && c.matches.some((m) => /itandibb/.test(m)) && c.matches.some((m) => /reins/.test(m)) && c.matches.some((m) => /realnetpro/.test(m))));
-  ok("manifest: tabs の権限（captureVisibleTab の窓・タブを読む）", mf.permissions.includes("tabs"));
+  // 2.8.313 退役（レインズ分のみ）: レインズは拡張から外した（commit e999b0f33・memory/dept_search_tool.md「レインズを拡張から外す」・manifest に system.reins.jp が無い）。残る2サイト（リアプロ・ITANDI）は従来通り見る
+  ok("manifest: 2サイト（リアプロ・ITANDI）の content script（document_start）に snapshot-core.js", mf.content_scripts.some((c) => c.run_at === "document_start" && c.js.includes("snapshot-core.js") && c.matches.some((m) => /itandibb/.test(m)) && c.matches.some((m) => /realnetpro/.test(m))));  ok("manifest: tabs の権限（captureVisibleTab の窓・タブを読む）", mf.permissions.includes("tabs"));
   ok("拡張の中に「_」で始まるファイルを置いていない", !fs.readdirSync(EXT).some((f) => f.startsWith("_")));
 }
 

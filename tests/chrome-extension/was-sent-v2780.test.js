@@ -34,16 +34,18 @@ t("label の中の input を探す", /querySelector\('input\[type="checkbox"\], 
 const sendBlock = (() => {
   const i = rec.indexOf("function _recentOps");
   if (i < 0) return "";
-  const j = rec.indexOf("}", rec.indexOf("return {", i));
-  return rec.slice(i, Math.min(rec.length, i + 3000));
+  // 2.8.313: 長い説明コメントが増えて固定の長さ（3000字）では届かない。次の関数（_recentOpsWithDiag）の手前までを見る
+  const j = rec.indexOf("function _recentOpsWithDiag", i);
+  return rec.slice(i, j > i ? j : Math.min(rec.length, i + 9000));
 })();
-t("送る時に was を入れる", /was: o\.was/.test(sendBlock), sendBlock.slice(0, 200));
-t("送る時に now を入れる", /now: o\.now/.test(sendBlock));
+// 2.8.313: 送り方は `was: o.was`（オブジェクトの中）から明示代入 `row.was = o.was`（2026-11-16 DB実測で was/now/cs キーが欠落→object spread に頼らず明示代入）に変わった。was を送る事は同じ
+t("送る時に was を入れる", /row\.was = o\.was/.test(sendBlock), sendBlock.slice(0, 200));
+t("送る時に now を入れる", /row\.now = o\.now/.test(sendBlock));
 t("真偽だけ送る（typeof で確かめる）", /typeof o\.was === "boolean"/.test(sendBlock));
 
 // ── ③ 二重に見落とさない（積む所と送る所の両方）────────────
 t("積む所に was がある", (rec.match(/_opObj\.was/g) || []).length >= 1);
-t("送る所にも was がある", (rec.match(/was: o\.was/g) || []).length >= 1);
+t("送る所にも was がある", (rec.match(/row\.was = o\.was/g) || []).length >= 1);
 
 // ── ④ サーバーが受け取る ────────────
 const route = fs.readFileSync(path.join(ROOT, "app/api/human-motion/route.ts"), "utf8");

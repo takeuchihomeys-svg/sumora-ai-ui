@@ -34,8 +34,10 @@ function extractFn(name) {
 }
 
 console.log("\n■ 版");
-ok("manifest≥2.8.220", /^2\.8\.(22\d|2[3-9]\d|[3-9]\d{2})$/.test(mf.version) || mf.version >= "2.8.220", mf.version);
-ok("page-script≥2.8.220", /_AXLX_PAGE_VER = "2\.8\.22\d"/.test(ps));
+// 2.8.313: 版の固定が 2.8.22x だけを通す書き方で、以後の版で赤になっていた → 数の大小で比べる
+const _ge = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+ok("manifest≥2.8.220", _ge(mf.version, "2.8.220"), mf.version);
+ok("page-script≥2.8.220", _ge((ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.220"));
 
 console.log("\n■ _planLeftover 同種でも外す");
 const sandbox0 = {};

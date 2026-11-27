@@ -51,7 +51,7 @@ console.log("\n■ ② start() の中で操作を拾っている（_cap）");
   ok("start() の範囲が分かる", iStart > 0 && iEnd > iStart);
   ok("  _cap は start() の中", iCap > iStart && iCap < iEnd, { iStart, iCap, iEnd });
   ok("  _cap は人も拡張も拾う（isTrusted で弾かない）", !/if \(!e \|\| !e\.isTrusted\) return;/.test(code));
-  ok("  _pushOp を呼ぶ", /_pushOp\(e\.type \|\| "click", e\.target, _by\)/.test(code));
+  ok("  _pushOp を呼ぶ", /_pushOp\(e\.type \|\| "click", e\.target, _by(, e)?\)/.test(code));
 }
 
 console.log("\n■ ③ 写真の見張りも start() の中（同じ関数から始まる）");

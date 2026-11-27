@@ -55,7 +55,8 @@ console.log("■ ② 区を押し直して外さない（トグル）");
 console.log("■ ③ 学習の材料を3000行で打ち切らない");
 {
   const route = fs.readFileSync(path.join(ROOT, "app", "api", "human-learn-profile", "route.ts"), "utf8");
-  t("上限が6000になった", /MAX_ROWS = 6000/.test(route));
+    // 2.8.313: 上限は 6000 → 10_000 に増えた（さらに上限の外の写真・通常録画も足す）。守るのは「3000で打ち切らない」＝上限が 6000 以上である事。
+    t("上限が6000以上（3000で打ち切らない）", (() => { const m = route.match(/MAX_ROWS = ([\d_]+)/); return !!m && Number(m[1].replace(/_/g, "")) >= 6000; })());
   t("3000の直書きが無い", !/i < 3000; i \+= 1000/.test(route));
   t("新しい順に読む（打ち切られても古い方が落ちる）", /order\("created_at", \{ ascending: false \}\)/.test(route));
 }

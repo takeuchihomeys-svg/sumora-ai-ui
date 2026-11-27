@@ -3,7 +3,7 @@
  *
  *   ・切り出して動かす本物: fill-done／送付完了の待ち（_createFillDoneWaiter・_createBatchCustomerDoneWaiter・_releasePipelineLock…）、
  *     一括のループと見回り（_manualBulkRun・_bulkKick・20秒の見回り・起動時の再開・axlx-bulk-status/kick の受け手）、
- *     送付後の外しと送付完了待ち（_postSendClearRealpro・_scrapeAndSendRealpro）、送付完了の合図の受け手（axlx-batch-customer-done）
+ *     送付後のリセットと送付完了待ち（_postSendClearOrReset・_resetWithInsurance・_scrapeAndSendRealpro）、送付完了の合図の受け手（axlx-batch-customer-done）
  *   ・偽物: chrome.*（storage は local/session を裏の再起動の後も残す）、時計（早送り）、画面（入力・送付の合図をシナリオ通りに返す）、
  *     点検の記録の送り先（DB の行に段が入るかを search-audit-server の recordProgress と同じ決まりで真似る）
  *   ・切り出した範囲で定義の無い `_名前` は空の関数で埋め、使った名前を env.autoStubs に残す（何を偽物にしたかを見える形に）
@@ -31,7 +31,7 @@ function sliceBetween(src, startMark, endMark, label) {
 function extractRegions(src) {
   var waiters = sliceBetween(src, "var _fillDoneWaiters = [];", "// ── 2026-09-29 v2.5.40 一括の見張り", "fill-done／送付完了の待ち");
   var loop = sliceBetween(src, "var _batchLoopAlive = false;", "\nvar _batchWatch = null;", "一括のループと見回り");
-  var scrape = sliceBetween(src, "async function _postSendClearRealpro(", "\nfunction _compactFill(", "送付後の外しと送付完了待ち");
+  var scrape = sliceBetween(src, "var RESET_PRESS_TIMEOUT_MS = 130000;", "\nfunction _compactFill(", "送付後のリセットと送付完了待ち（2.8.328: 従来の1つずつ外しは無い）");
   var lStart = src.indexOf("chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {\n  // 2026-09-30 v2.5.43");
   if (lStart < 0) throw new Error("bulk-sim: 送付完了の受け手が見つからない");
   var lEnd = src.indexOf("\n});\n", lStart);
@@ -39,7 +39,9 @@ function extractRegions(src) {
   var auditStep = sliceBetween(src, "function _auditStep(runId, k, d) {", "\n/** 次の回が始まったら", "点検の段を足す");
   // 2.8.278 結果の見出しが希望と違った時の入れ直し（1客1回）
   var redo = sliceBetween(src, "async function _resultMismatchRedo(", "\n// ── 2026-09-30 v2.5.43 リアプロと ITANDI を同時に動かす", "結果の入れ直し");
-  return { waiters: waiters, loop: loop, scrape: scrape, doneListener: doneListener, auditStep: auditStep, redo: redo };
+  // 2.8.328 リセットで押すタブの選び方（入力と同じ・送付後／保険／入力前で1か所）
+  var pickTab = sliceBetween(src, "function _pickRealproResetTab(", "\n}\n", "リセットで押すタブの選び方") + "\n}\n";
+  return { waiters: waiters, loop: loop, scrape: scrape, doneListener: doneListener, auditStep: auditStep, redo: redo, pickTab: pickTab };
 }
 
 function declaredNames(code) {
@@ -262,17 +264,9 @@ function createSwEnv(world, owner, regions, postAudit, note) {
     scripting: {
       executeScript: function (o) {
         var f = String(o && o.func);
-        if (f.indexOf("__axlxPostSendClearP") >= 0) {
-          world.postSendClearCalls++;
-          var mode = (world.currentPage && world.currentPage.postSendClear) || "ok";
-          note("post_send_clear_exec", mode);
-          if (mode === "hang") return new Promise(function () {});
-          return new Promise(function (resolve) {
-            clock.add("page", function () { resolve([{ result: { ok: true, left: 0 } }]); }, mode === "slow" ? 90000 : 4000, false);
-          });
-        }
         if (f.indexOf("__axlxResetPressP") >= 0) {
           world.resetPressCalls++;
+          world.resetPressAt = clock.now();
           var rmode = (world.currentPage && world.currentPage.reset) || "ok";
           note("reset_press_exec", rmode);
           if (rmode === "nobutton") return Promise.resolve([{ result: { ok: false, why: "no_reset_button" } }]);
@@ -280,6 +274,16 @@ function createSwEnv(world, owner, regions, postAudit, note) {
           return new Promise(function (resolve) {
             clock.add("page", function () { resolve([{ result: { ok: true, pressed: true, closed: 1, before: "wards=3" } }]); }, 1500, false);
           });
+        }
+        // 2.8.329 押した後の遅れの確かめ（sessionStorage の押した印と、いまのページの起動時刻を直接読む）。
+        //   hang＝押してページが読み直され返事ごと消えた: 印は押した直後・ページの起動はその後
+        if (f.indexOf("axlx_reset_fired") >= 0 && f.indexOf("timeOrigin") >= 0) {
+          world.resetLateProbeCalls = (world.resetLateProbeCalls || 0) + 1;
+          var lmode = (world.currentPage && world.currentPage.reset) || "ok";
+          var pAt = Number(world.resetPressAt || 0);
+          note("reset_late_probe_exec", lmode);
+          if (lmode === "hang" && pAt) return Promise.resolve([{ result: { fired: { at: pAt + 500 }, origin: pAt + 2000, ready: "complete" } }]);
+          return Promise.resolve([{ result: { fired: null, origin: clock.now(), ready: "complete" } }]);
         }
         if (f.indexOf("__axlxResetVerifyP") >= 0) {
           world.resetVerifyCalls++;
@@ -372,7 +376,18 @@ function createSwEnv(world, owner, regions, postAudit, note) {
       return Promise.resolve({});
     },
   };
-  sandbox.globalThis = sandbox;
+  // 2.8.308 止められた裏（env.dead）の古いループは、本物の Chrome では JS ごと消える。模擬では約束（Promise）が生き残って
+  //   共有の保存先へ古い位置を書き戻す・二重に入力する、という「模擬だけの」誤りが出ていたので、外への作用を止める
+  //   （scenario.zombies: true で従来どおり生かす）
+  if (!(scenario && scenario.zombies)) {
+    var never = function () { return new Promise(function () {}); };
+    var guardFn = function (fn) { return function () { return env.dead ? never() : fn.apply(this, arguments); }; };
+    var guardArea = function (area) { return { data: area.data, get: guardFn(area.get), set: guardFn(area.set), remove: guardFn(area.remove) }; };
+    chrome.storage = { local: guardArea(world.local), session: guardArea(world.session) };
+    Object.keys(chrome.tabs).forEach(function (k) { chrome.tabs[k] = guardFn(chrome.tabs[k]); });
+    chrome.scripting.executeScript = guardFn(chrome.scripting.executeScript);
+    ["fetch", "_publishBulkGrasp", "_batchAutofill", "_auditBegin"].forEach(function (k) { if (typeof sandbox[k] === "function") sandbox[k] = guardFn(sandbox[k]); });
+  }  sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(matchSrc, sandbox, { filename: "fill-done-match.js" });
   // fill-done-match.js は self に載せる
@@ -382,7 +397,7 @@ function createSwEnv(world, owner, regions, postAudit, note) {
   tracker = SA.createTracker({ post: postAudit, now: function () { return clock.now(); }, extVersion: "sim" });
   sandbox._auditTracker = tracker;
 
-  var code = [regions.auditStep, regions.waiters, regions.loop, regions.scrape, regions.redo, regions.doneListener].join("\n;\n");
+  var code = [regions.auditStep, regions.pickTab, regions.waiters, regions.loop, regions.scrape, regions.redo, regions.doneListener].join("\n;\n");
   var declared = declaredNames(code);
   var stored = {};
   var auto = new Proxy({}, {

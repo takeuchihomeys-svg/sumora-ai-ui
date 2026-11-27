@@ -18,11 +18,13 @@ import { selectDroppingMissing } from "@/app/lib/supabase-safe-select";
 import { readRowsKeepingLearned, KEEP_OUTSIDE_CAP_OR } from "@/app/lib/learn-rows-keep";
 import { LEARN_PERIODS, sinceIso } from "@/app/lib/learn-periods";
 import { countLearnedSolid } from "@/app/lib/learn-bundle-preserve";
-import { learnProfileGuardOn, shouldTouchRead, coalesce, cacheHeaders, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
+import { learnProfileGuardOn, shouldTouchRead, shouldPreserveLongCronBundle, coalesce, cacheHeaders, bundleVersionParam, LEARN_BUILD_MIN_GAP_MS, holdDaytimeRebuild, buildInAfter, buildLeaseKey, laneNextWait } from "@/app/lib/human-learn-profile-guard";
+import { isAutoMode } from "@/app/lib/press-by";
 import { jstHourNow } from "@/app/lib/batch-daytime-guard";
 import { carryLearnedShots } from "@/app/lib/learn-shots-carry";
 import { PLAYBOOK_BUILD_V } from "@/app/lib/action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion } from "@/app/lib/auto-procedure-rules";
+import { rulesReviewedUpToFor, rulesVersionFor } from "@/app/lib/auto-itandi-rules";
+import { servedPlaybookRulesV } from "@/app/lib/playbook-served";
 
 export const dynamic = "force-dynamic";
 /**
@@ -497,6 +499,41 @@ async function buildNow(scope: string, note?: (why: string) => void) {
       console.warn("[human-learn-profile] 土台点検を読めません:", e instanceof Error ? e.message : String(e));
     }
   }
+  /**
+   * ★ 2026-11-27 統括と手順書の矛盾ゼロ化:
+   *   buildHumanLearnBundle（内部の superviseLearn）に旧来の station 手順（transportation_id → required_time）を渡したあと
+   *   下の inheritLinkFoundations が station.steps を駅遷移付きへ差し替えると、
+   *   supervisor / supervisor_by_site.realpro の「場面: 沿線・駅絞り込み」だけが古い手順のまま残る矛盾が起きていた（id=2829）。
+   *   → リアプロ系で駅遷移ステップが欠けている時は、buildHumanLearnBundle の前に直前束から補完しておく。
+   */
+  if (scope !== "itandi" && scope !== "reins" && Array.isArray(sceneFlows) && sceneFlows.length) {
+    const _hasStTransit = (steps: string[]) => (steps || []).some((s) => /駅の設定へ進む|沿線の設定へ戻る|one_station|one_line|route_id/.test(String(s)));
+    const _curSt = sceneFlows.find((f) => f && f.scene === "station");
+    if (_curSt && !_hasStTransit(_curSt.steps || [])) {
+      try {
+        const scopes = scope === "all" ? ["all", "realpro"] : [scope, "all"];
+        for (const scPre of scopes) {
+          const { data: preRows } = await supabase
+            .from("human_learn_profile")
+            .select("sf:bundle->scene_flows")
+            .eq("scope", scPre)
+            .order("created_at", { ascending: false })
+            .limit(8);
+          let foundSteps: string[] | null = null;
+          for (const pr of (preRows || []) as Array<{ sf?: Array<{ scene?: string; steps?: string[] }> | null }>) {
+            const stPre = Array.isArray(pr?.sf)
+              ? pr.sf.find((x) => x && x.scene === "station" && _hasStTransit(Array.isArray(x.steps) ? x.steps : []))
+              : null;
+            if (stPre?.steps?.length) { foundSteps = stPre.steps; break; }
+          }
+          if (foundSteps) {
+            _curSt.steps = foundSteps;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  }
   const bundle = compactBundle(buildHumanLearnBundle(rows as never, Date.now(), auditsSummary, commandsSummary, {
     scene_flows: sceneFlows,
     scene_missing: sceneMissing,
@@ -505,7 +542,8 @@ async function buildNow(scope: string, note?: (why: string) => void) {
     improvements,
     bundle_reflect: reflectHint,
     foundation_audit: foundationAudit,
-  }, prevAdvice));
+    site: scope === "realpro" || scope === "itandi" ? scope : null,
+  }, prevAdvice), { site: scope === "realpro" || scope === "itandi" ? scope : null });
   if (!bundle.source.rows) { try { note?.("empty_bundle"); } catch (_) {} return null; }
   /**
    * 2026-11-14 竹内さん「所在地での検索の動かし方や、物件の取得、次のページへの移動の仕方で
@@ -634,7 +672,7 @@ async function buildNow(scope: string, note?: (why: string) => void) {
   } catch { /* 位置を継げなくても束は残す */ }
   try {
     const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-    const prep = prepareBundleForWrite(bundle as unknown as Record<string, unknown>);
+    const prep = prepareBundleForWrite(bundle as unknown as Record<string, unknown>, scope); // 2026-11-26: サイトを渡す（itandi にリアプロの手を載せない）
     if (!prep.playbook_ok) console.warn("[human-learn-profile] 手順書を作れません（束は書く）");
   } catch (e) {
     console.warn("[human-learn-profile] 書く前の整えに失敗:", e instanceof Error ? e.message : String(e));
@@ -720,6 +758,27 @@ export async function GET(req: NextRequest) {
     }
     g.__axlxBundleRefreshing = true;
     try {
+      // ★ 2026-11-27: ?refresh=1&scope=realpro|itandi の時は、そのサイトだけの束を buildAndSaveBundle で作り直す（all 固定を解消）
+      if (scope === "realpro" || scope === "itandi") {
+        let buildWhy: string | null = null;
+        const built = await buildNow(scope, (w) => { buildWhy = w; });
+        if (!built) {
+          return NextResponse.json({ ok: true, refreshed: false, scope, why: buildWhy || "no_rows_for_site" }, { headers: CORS });
+        }
+        g.__axlxBundleRefreshAt = Date.now();
+        const bRec = built as unknown as Record<string, unknown>;
+        const bPb = (bRec.playbook && typeof bRec.playbook === "object") ? (bRec.playbook as { rules_v?: unknown; build_v?: unknown }) : null;
+        return NextResponse.json({
+          ok: true,
+          refreshed: bRec.saved_to_db === true,
+          wipe_blocked: bRec.wipe_blocked === true,
+          scope,
+          rows: built.source?.rows ?? 0,
+          shots: built.shots ?? null,
+          playbook: bRec.playbook ?? null,
+          bundle_v: bundleVersionParam({ generated_at: built.generated_at, playbook_rules_v: bPb?.rules_v, playbook_build_v: bPb?.build_v }),
+        }, { headers: { ...CORS, ...cacheHeaders("none") } });
+      }
       const mod = await import("@/app/lib/human-learn-brain");
       const buildHumanLearnBundle = mod.buildHumanLearnBundle;
       const compactBundle = mod.compactBundle;
@@ -758,7 +817,7 @@ export async function GET(req: NextRequest) {
       }
       // ★ 2026-11-20: refresh=1 も名前の除去と手順書を通す（ここだけ通していなかった＝古い手順書の写しが残る）
       const { prepareBundleForWrite } = await import("@/app/lib/bundle-write-prepare");
-      prepareBundleForWrite(b);
+      prepareBundleForWrite(b, "all");
       const ins = await supabase.from("human_learn_profile").insert({
         scope: "all", source_rows: rows.length, bundle: b,
       });
@@ -772,10 +831,12 @@ export async function GET(req: NextRequest) {
         const ids = ((old.data ?? []) as Array<{ id: unknown }>).slice(20).map((x) => x.id);
         if (ids.length) await supabase.from("human_learn_profile").delete().in("id", ids);
       } catch (_) {}
+      const allPb = (b.playbook && typeof b.playbook === "object") ? (b.playbook as { rules_v?: unknown; build_v?: unknown }) : null;
       return NextResponse.json({
         ok: true, refreshed: true, rows: rows.length, preserved: pr.preserved, solid: pr.solid,
         shots: (b as { shots?: unknown }).shots ?? null,
-      }, { headers: CORS });
+        bundle_v: bundleVersionParam({ generated_at: b.generated_at, playbook_rules_v: allPb?.rules_v, playbook_build_v: allPb?.build_v }),
+      }, { headers: { ...CORS, ...cacheHeaders("none") } });
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) }, { status: 500, headers: CORS });
     } finally {
@@ -817,7 +878,7 @@ export async function GET(req: NextRequest) {
   const lightReq = (req.nextUrl.searchParams.get("touch") === "0" || req.nextUrl.searchParams.get("mark_read") === "1") && req.nextUrl.searchParams.get("fresh") !== "1";
   // 選ぶ列は場合で変わる＝文字列の型にして読む（PostgREST の型の読み取りは固定の文字列だけ）
   const rowCols: string = guard && lightReq
-    ? "id, created_at, scope, source_rows, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
+    ? "id, created_at, scope, source_rows, source_from, source_to, read_count, read_at, generated_at:bundle->>generated_at, screen_solid:bundle->>screen_solid, playbook_rules_v:bundle->playbook->>rules_v, playbook_build_v:bundle->playbook->>build_v, playbook_rules_up_to:bundle->playbook->>rules_up_to"
     : `id, created_at, scope, source_rows, source_from, source_to, ext_version, bundle, lines, read_count${guard ? ", read_at" : ""}`;
   // 型は明示する（PostgREST の組み立ての型をそのまま重ねて推し量らせると型の確かめが重くなる・11/15 の組み立てのメモリ切れ）
   type RowRes = { data: unknown[] | null; error: { message: string } | null };
@@ -845,12 +906,14 @@ export async function GET(req: NextRequest) {
    *   **その場で記録から作る**（cron を待たない）。作った物は DB に残すので次からは速い。
    *   ⚠ 重くしない: 直近3日・最大3000行まで。作れなければ今まで通り（空を返す）。
    */
-  const stale = !row || (Date.now() - Date.parse(String(row.created_at ?? 0)) > LEARN_PERIODS.bundleFreshMs);
-  /**
-   * 2026-11-13: `?fresh=1` で**必ず作り直す**（30分待たずに確かめたい時）。
-   *   竹内さん「学習できていない部分も学習できるようになっているのか」→ 待たずに確かめたい。
-   */
   const forceFresh = req.nextUrl.searchParams.get("fresh") === "1";
+  const preserveLongCron = !!row && shouldPreserveLongCronBundle({
+    createdAt: row.created_at as string | null | undefined,
+    sourceFrom: row.source_from as string | null | undefined,
+    sourceTo: row.source_to as string | null | undefined,
+    forceFresh,
+  });
+  const stale = !row || (!preserveLongCron && (Date.now() - Date.parse(String(row.created_at ?? 0)) > LEARN_PERIODS.bundleFreshMs));
   /**
    * ★ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが根本）**:
    *
@@ -939,17 +1002,15 @@ export async function GET(req: NextRequest) {
       const bundleAt = String(row.created_at || "");
       if (bundleAt && solidLight >= 30) {
         // ★ 2026-11-20: 新しい順 40 件だけ見ていた → 通常の検索が40件を超えると自動の記録が見えず、needs_auto が永久に残っていた。
-        //   → 自動（aix／auto）の記録だけを DB で絞って見る（1件あれば十分・軽い）
+        // ★ 2026-11-27: brain_staff / ai も isAutoMode で自動として扱い、needs_auto が消えない穴を塞ぐ。
         const { data: autoAfter } = await supabase
           .from("search_audits")
           .select("created_at, mode")
           .gte("created_at", bundleAt)
-          .or("mode.ilike.*aix*,mode.ilike.*auto*")
+          .or("mode.ilike.*aix*,mode.ilike.*auto*,mode.ilike.*brain*,mode.eq.ai")
           .order("created_at", { ascending: false })
           .limit(5);
-        const hit = (autoAfter || []).some((a) =>
-          /aix|auto|brain_aix/i.test(String(a.mode || "")),
-        );
+        const hit = (autoAfter || []).some((a) => isAutoMode(a.mode));
         needsAuto = !hit;
       }
     } catch { /* 監査が読めなくても solid は返す */ }
@@ -957,25 +1018,41 @@ export async function GET(req: NextRequest) {
     let playbookRulesV: string | null = null;
     let playbookRulesUpTo: string | null = null;
     try {
-      if (guard && lightReq && row.playbook_rules_v != null) playbookRulesV = String(row.playbook_rules_v);
+      let dbPb: { rules_v?: unknown; build_v?: unknown } | null = null;
+      if (guard && lightReq) dbPb = { rules_v: row.playbook_rules_v, build_v: row.playbook_build_v };
       else if (row.bundle && typeof row.bundle === "object") {
-        const pb = (row.bundle as { playbook?: { rules_v?: string } }).playbook;
-        if (pb && pb.rules_v) playbookRulesV = String(pb.rules_v);
+        dbPb = (row.bundle as { playbook?: { rules_v?: unknown; build_v?: unknown } }).playbook ?? null;
       }
-      if (guard && lightReq) {
+      /**
+       * ★ 2026-11-26 手順書が古いまま残る原因（2.8.310）:
+       *   ここは DB に書かれた版を返していたので、コードの決まりを直しても拡張は「版が同じ」と見て取りに行かなかった。
+       *   渡す時に作り直す束（refreshPlaybookIfStale）と同じ条件で、**渡す時の版**を返す（DB は書かない）。
+       */
+      // 2026-11-27: 決まりの版は scope（サイト）ごと。ITANDI の手順書はリアプロの版と比べない
+      playbookRulesV = servedPlaybookRulesV(dbPb, { rules_v: rulesVersionFor(scope), build_v: PLAYBOOK_BUILD_V }).rules_v;
+      const _servedStale = !dbPb || !dbPb.rules_v || (Number(dbPb.build_v) || 0) < PLAYBOOK_BUILD_V || String(dbPb.rules_v) !== rulesVersionFor(scope);
+      if (_servedStale) {
+        playbookRulesUpTo = rulesReviewedUpToFor(scope);
+      } else if (guard && lightReq) {
         if (row.playbook_rules_up_to != null) playbookRulesUpTo = String(row.playbook_rules_up_to);
       } else if (row.bundle && typeof row.bundle === "object") {
         const pb2 = (row.bundle as { playbook?: { rules_up_to?: string } }).playbook;
         if (pb2 && pb2.rules_up_to) playbookRulesUpTo = String(pb2.rules_up_to);
       }
     } catch { playbookRulesV = null; }
+    const lightGeneratedAt = guard && lightReq
+      ? (row.generated_at ?? row.created_at)
+      : (row.bundle && typeof row.bundle === "object")
+        ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
+        : row.created_at;
+    const lightBundleV = bundleVersionParam({
+      generated_at: lightGeneratedAt,
+      playbook_rules_v: playbookRulesV,
+      playbook_build_v: PLAYBOOK_BUILD_V,
+    });
     return NextResponse.json({
       ok: true, empty: false, scope, light: true,
-      generated_at: guard && lightReq
-        ? (row.generated_at ?? row.created_at)
-        : (row.bundle && typeof row.bundle === "object")
-          ? ((row.bundle as Record<string, unknown>).generated_at ?? row.created_at)
-          : row.created_at,
+      generated_at: lightGeneratedAt,
       source_rows: row.source_rows,
       read_count: row.read_count ?? 0,
       screen_solid: solidLight,
@@ -985,9 +1062,10 @@ export async function GET(req: NextRequest) {
       // ★ 2.8.297: 手順書を作った版と、いま動いている本番コードの版。拡張・check-playbook-sync が「本番のコードが古い」を見つける
       //   （本番が古いと、作り直しのたびに古い手順書へ戻る＝2026-11-25 22:00 の実測）。無い（古い本番）なら拡張は「本番が古い」と読む
       playbook_rules_up_to: playbookRulesUpTo,
-      server_rules_v: autoRulesVersion(),
-      server_rules_up_to: AUTO_RULES_REVIEWED_UP_TO,
+      server_rules_v: rulesVersionFor(scope),
+      server_rules_up_to: rulesReviewedUpToFor(scope),
       server_build_v: PLAYBOOK_BUILD_V,
+      bundle_v: lightBundleV,
     }, { headers: guard ? { ...CORS, ...cacheHeaders("light") } : CORS });
   }
   let why: string | null = null;
@@ -1058,6 +1136,7 @@ export async function GET(req: NextRequest) {
             }
           } catch { /* 印は残らなくても束は返す */ }
         }
+        const freshPb = ((fresh as unknown as { playbook?: { rules_v?: unknown; build_v?: unknown } }).playbook) || null;
         return NextResponse.json({
           ok: true, empty: false, scope, generated_now: true,
           generated_at: fresh.generated_at,
@@ -1067,6 +1146,7 @@ export async function GET(req: NextRequest) {
           ext_version: null,
           lines: fresh.lines,
           bundle: fresh,
+          bundle_v: bundleVersionParam({ generated_at: fresh.generated_at, playbook_rules_v: freshPb?.rules_v, playbook_build_v: freshPb?.build_v }),
           read_count: readCount,
           read_at: readAt,
           /**
@@ -1078,7 +1158,7 @@ export async function GET(req: NextRequest) {
           /** DB に無くて外した列（空なら全部読めた） */
           why: why ?? null,
           dropped_cols: (fresh as unknown as Record<string, unknown>).dropped_cols ?? null,
-        }, { headers: CORS });
+        }, { headers: { ...CORS, ...cacheHeaders("none") } });
       }
     } catch (e) {
       console.warn("[human-learn-profile] その場で作れませんでした:", e instanceof Error ? e.message : String(e));
@@ -1135,18 +1215,31 @@ export async function GET(req: NextRequest) {
   let playbookRefreshed: string | null = null;
   try {
     const { refreshPlaybookIfStale } = await import("@/app/lib/action-playbook");
-    const rf = refreshPlaybookIfStale(row.bundle as Record<string, unknown> | null);
+    const rf = refreshPlaybookIfStale(row.bundle as Record<string, unknown> | null, String(row.scope ?? ""));
     if (rf.refreshed) { servedBundle = rf.bundle; playbookRefreshed = rf.why; }
   } catch (e) {
     console.warn("[human-learn-profile] 手順書の作り直し（渡す時）に失敗:", e instanceof Error ? e.message : String(e));
   }
+
+  const servedBundleObj = (servedBundle && typeof servedBundle === "object") ? (servedBundle as Record<string, unknown>) : null;
+  const servedGeneratedAt = servedBundleObj?.generated_at ?? row.created_at;
+  const servedPb = (servedBundleObj?.playbook && typeof servedBundleObj.playbook === "object")
+    ? (servedBundleObj.playbook as { rules_v?: unknown; build_v?: unknown })
+    : null;
+  const actualBundleV = bundleVersionParam({
+    generated_at: servedGeneratedAt,
+    playbook_rules_v: servedPb?.rules_v,
+    playbook_build_v: servedPb?.build_v,
+  });
+  const reqV = req.nextUrl.searchParams.get("v") || "";
+  const bypassBundleCache = forceFresh || !!playbookRefreshed || (!!reqV && reqV !== actualBundleV);
 
   return NextResponse.json(
     {
       ok: true,
       empty: false,
       scope: row.scope,
-      generated_at: (row.bundle as Record<string, unknown> | null)?.generated_at ?? row.created_at,
+      generated_at: servedGeneratedAt,
       source_rows: row.source_rows,
       source_from: row.source_from,
       source_to: row.source_to,
@@ -1154,9 +1247,10 @@ export async function GET(req: NextRequest) {
       lines: row.lines ?? [],
       bundle: servedBundle,
       playbook_refreshed: playbookRefreshed,
+      bundle_v: actualBundleV,
       read_count: servedReadCount,
       read_at: servedReadAt,
     },
-    { headers: guard ? { ...CORS, ...cacheHeaders("bundle") } : CORS },
+    { headers: guard ? { ...CORS, ...(bypassBundleCache ? cacheHeaders("none") : cacheHeaders("bundle")) } : CORS },
   );
 }

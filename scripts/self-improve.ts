@@ -405,13 +405,15 @@ async function main() {
   if (wl) {
     growthRows.push({ metric: "growth:writer_link:brief_used", value: wl.briefRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: "統括の指示書の欄が下書きに入った割合（直近24時間）" });
     growthRows.push({ metric: "growth:writer_link:delivered", value: wl.deliverRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: "決めた事の欄が書き手の注記に届いた割合（直近24時間）" });
+    if (wl.notBuilt?.length) lines.push(`- 書き手への届きで作っていない欄（配線が無い・スイッチ off＝数えない）: ${wl.notBuilt.join("・")}（作業員L・台帳 #466）`);
     growthRows.push({ metric: "growth:writer_link:in_draft", value: wl.inDraftRate, n: wl.n, key: "writer_link", higherIsBetter: true, label: `決めた事の欄が下書きに入った割合（直近24時間・AIX の2通目に配線のある欄 ${wl.aix2Wired}）` });
   }
   const ptrs = await pointersOfItems(sb, [469, 466]).catch(() => ({} as Record<number, number[]>));
   const growthFix: string[] = [];
   if (doMetrics) lines.push("### 伸びしろ（毎朝追う・下がった／上がらない日は直しの候補へ）");
   for (const r of growthRows) {
-    const d = needsFix(r.value, prev2(r.metric, prevDay), prev2(r.metric, prevWeek), r.n, 3, r.higherIsBetter);
+    // 2026-11-26 作業員L（#466）: 書き手への届きは番が少ない（1日 5〜8番）ので、⚠ は 10番以上の日だけ
+    const d = needsFix(r.value, prev2(r.metric, prevDay), prev2(r.metric, prevWeek), r.n, r.key === "writer_link" ? 10 : 3, r.higherIsBetter);
     lines.push(`- ${r.label}: ${r.value ?? "—"}%（${r.n ?? "—"}番）｜前の日 ${prev2(r.metric, prevDay) ?? "—"}・前の週 ${prev2(r.metric, prevWeek) ?? "—"}${d ? (d === "down" ? "｜⚠ 下がった" : "｜上がっていない") : ""}`);
     if (d) { const o = GROWTH_OWNERS[r.key]; growthFix.push(`${r.label} が${d === "down" ? "前の日より下がった" : "前の週から上がっていない"}（${r.value}%）→ ${o.owner}・台帳 #${o.item}・指摘 ${(ptrs[o.item] ?? []).map((x) => "P" + x).join(" ") || "（つないだ指摘なし）"}`); }
   }
@@ -682,6 +684,8 @@ async function main() {
       const v = (k: string) => (ev.get(k)?.value == null ? null : Number(ev.get(k)!.value));
       const wn = ev.get("worse_night");
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
+      // 2026-11-27 作業員L（#803・統括役の決め）: 晩の空き枠（上限 $10 の内）と流れ残った組（朝に列に残った試験の組）
+      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); lines.push(nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }).line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
     }
   }
   // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
@@ -705,6 +709,8 @@ async function main() {
     }
   }
 
+  // 2026-11-26 作業員L（台帳 #505・土台の帳面）: 入口の読みが間に合った割合を毎日の数に（core:intake_reach:in_time・入口を呼ぶ番が分母）
+  const intakeReachRows: Array<{ metric: string; value: number | null; n: number }> = [];
   // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY・統括役の物差し）: 統括の入口が選んだ「まず見る」の行が ①材料の先頭に来た割合 ②その行をブレインが使った割合（前の24時間・digest.mpr・日付で絞った軽い読み）。
   //   あわせて入口の読みが判断に間に合った割合（digest.ci のある番）。mpr の無い日（off）は間に合った割合だけ
   if (!only || doCandidates) {
@@ -723,9 +729,14 @@ async function main() {
           if (((lm ?? [])[0] as { sender?: string } | undefined)?.sender !== "customer") continue;
           elig++; if (typeof r.digest?.ci === "string") eligCi++;
         }
+        intakeReachRows.push({ metric: "core:intake_reach:in_time", value: elig ? Math.round((eligCi / elig) * 1000) / 10 : null, n: elig });
+        // 2026-11-26 作業員L（#795 ②）: 決め手の残りが読めた割合は「決めに行く場面の状態」だけで数える（記録・既定 on・mindset:decide_gap_readable）
+        { const { readChainCounts } = await import("./audit-customer-read-chain"); const rc = readChainCounts(ds); intakeReachRows.push({ metric: "mindset:decide_gap_readable", value: rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 1000) / 10 : null, n: rc.decideN }); lines.push(`- 決め手の残りが読めた（決めに行く場面の状態だけ・前の24時間）: ${rc.decideN ? Math.round((rc.decideBlocker / rc.decideN) * 100) : "—"}%（${rc.decideBlocker}/${rc.decideN}）`); }
         const ci = ds.filter((d) => typeof d.ci === "string").length;
         const m = materialPriorityMeasures(ds);
         lines.push(`- 統括の入口→ブレイン（前の24時間・判断 ${ds.length}番・入口を呼ぶ番 ${elig}）: 入口の読みが間に合った ${elig ? Math.round((eligCi / elig) * 100) : "—"}%（${eligCi}/${elig}・全部の判断では ${ci}）${m.picked ? `｜まず見る: 選んだ番 ${m.picked}（入口の答えあり ${m.ready}）・①先頭に来た ${m.headShare ?? "—"}%・②使った ${m.usedOf ? `${Math.round((m.used / m.usedOf) * 100)}%（${m.used}/${m.usedOf}）` : "—"}` : "｜まず見る: off"}`, "");
+        // 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」）: MATERIAL_PRIORITY の shadow の当たり（入口が選んだ3つ × 竹内さん本人の一手 × USED_MARKERS・記録は晩の費用0の仕事 mp:shadow_hit）
+        try { const { measurePriorityHits } = await import("./audit-material-priority-hit"); const ph = await measurePriorityHits(sb, new Date(now - 86_400_000).toISOString(), new Date(now).toISOString()); lines.push(`- MATERIAL_PRIORITY の shadow の当たり（mpr のある判断 ${ph.withMpr}・竹内さん本人の番 ${ph.turns}）: 当たり ${ph.hit}・外れ ${ph.miss}・決められない ${ph.undecided}${ph.rate != null ? `（${ph.rate}%）` : ""}${Object.keys(ph.byKey).length ? `・目印ごと ${Object.entries(ph.byKey).map(([k, v]) => `${k} ${v.hit}/${v.of}`).join("・")}` : ""}`); } catch (e) { console.warn("[self-improve] shadow の当たりを数えられない:", e instanceof Error ? e.message : String(e)); }
       }
     } catch (e) { console.warn("[self-improve] 入口→ブレインの行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
@@ -745,6 +756,14 @@ async function main() {
       }
       lines.push(`- 昼の試験（${d0} の 8〜22時・DeepSeek）: ${n ? `⚠ $${usd.toFixed(2)}（${n}回）＝晩の上限の外で流れた（EXAM_DAY_HOLD）` : "0"}`, "");
     } catch (e) { console.warn("[self-improve] 昼の試験の行を作れない:", e instanceof Error ? e.message : String(e)); }
+    // 2026-11-26 作業員L（台帳 #799 ①）: 晩の煙の1問（係の印 conductor-marks/night-smoke-last.json・止めた晩は ⚠）
+    try {
+      const { smokeMorningLine, SMOKE_MARK_FILE } = await import("./lib/exam-night-smoke");
+      const { examCacheRoot } = await import("./lib/llm-cassette");
+      const { existsSync: ex, readFileSync: rf } = await import("node:fs");
+      const p = `${examCacheRoot()}/conductor-marks/${SMOKE_MARK_FILE}`;
+      lines.push(smokeMorningLine(ex(p) ? JSON.parse(rf(p, "utf8")) : null, now), "");
+    } catch (e) { console.warn("[self-improve] 晩の煙の1問の行を作れない:", e instanceof Error ? e.message : String(e)); }
   }
 
   // 2026-11-24 作業員L（台帳 #670・竹内さん 11/24: Claude の月の特典 $200・OpenAI $100）: 今月の API の使用額と月末の見込み（llm_usage_logs×llm-price・月初から・朝の夜の窓で読む）
@@ -850,6 +869,7 @@ async function main() {
       { day, metric: "reply_match", scope: "takeuchi", value: mTk.match, n: mTk.n }, { day, metric: "reply_match", scope: "all", value: mAll.match, n: mAll.n },
       { day, metric: "aix_first_match", scope: "takeuchi", value: mMain.firstTk.rate, n: mMain.firstTk.n }, { day, metric: "aix_first_match", scope: "all", value: mMain.firstAll.rate, n: mMain.firstAll.n },
       ...spendRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
+      ...intakeReachRows.map((r) => ({ day: jstDay(now), metric: r.metric, scope: "all", value: r.value, n: r.n })),
       { day, metric: "exam_cost_usd", scope: "all", value: cost, n: runs.length }, { day, metric: "exam_worse_runs", scope: "all", value: worse.length, n: runs.length },
       ...outs.map((o) => ({ day, metric: `check_gaps:${o.kind}`, scope: "all", value: o.gaps.length, n: null })),
       // 2026-11-23 作業員N2（統括役の頼み）: 穴のまとまりの数（上）は残し、まとまりが表す行の数を並べる（not_subdivided の 8 は地図の7行＋設計知見 89行＋欄4つ）

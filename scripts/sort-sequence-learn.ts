@@ -70,7 +70,7 @@ async function patchBundle(mutator: (b: Record<string, unknown>) => void): Promi
   const clone = JSON.parse(JSON.stringify(data.bundle)) as Record<string, unknown>;
   mutator(clone);
   try {
-    prepareBundleForWrite(clone);
+    prepareBundleForWrite(clone, "realpro");
   } catch {
     /* playbook 失敗でも points は書く */
   }

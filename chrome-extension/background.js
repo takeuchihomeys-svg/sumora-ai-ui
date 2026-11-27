@@ -79,6 +79,57 @@ var _extLogSavedAt = 0;
 // 待ち時間のばらつき（human-wait.js）。settle＝ページが落ち着くのを待つ固定の秒数（元より短くしない）／
 //   poll＝条件を見る間隔（平均は元と同じ・回数で打ち切る待ちの長さは変えない）。読めない時は元の値。
 function _settleMs(ms) { var H = self.AxlxHumanWait; return H ? H.settleDelay(ms) : ms; }
+/** ★ 2.8.325: 枠の「待ち」行へ（id と秒数だけ送る。言葉は bulk-dl.js の WAIT_WORDS＝地図が正本）。残りは枠が数える */
+/**
+ * ★ 2.8.329 枠の待ち・押した行・リセットの位置は1回きりの知らせで、リセットの読み直しで枠ごと消えていた
+ *   （#1677: 保険の86秒待ちの間、枠に残りの秒も押した結果も出ていなかった）。
+ *   → 知らせと同時に session（axlx_box_live）にも書き、読み直した枠（bulk-dl.js）が起動時に戻す。
+ */
+var _boxLiveChain = Promise.resolve();
+function _boxLiveSave(part, value) {
+  // 続けて呼ばれても上書きし合わないよう1つずつ（読む→足す→書く）
+  _boxLiveChain = _boxLiveChain.then(function () {
+    return chrome.storage.session.get("axlx_box_live").then(function (st) {
+      var cur = (st && st.axlx_box_live) || {};
+      cur[part] = value;
+      return chrome.storage.session.set({ axlx_box_live: cur });
+    });
+  }).catch(function () {});
+}
+/** リセットがどの位置か（送付のあと＝次の客の条件へ／入れる前＝いまの客の条件へ）を枠へ */
+function _bulkResetPosShow(phase) {
+  var kind = phase === "pre_fill_reset" ? "pre_fill" : "post_send";
+  var v = { kind: kind, at: Date.now() };
+  _boxLiveSave("resetPos", v);
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-reset-pos", kind: kind }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
+function _bulkWaitShow(id, ms) {
+  _boxLiveSave("wait", { id: String(id || ""), until: Date.now() + Math.round(Number(ms) || 0) });
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-wait", id: String(id || ""), ms: Math.round(Number(ms) || 0) }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
+/** ★ 2.8.326: 押した結果を枠の「押した」行へ（押した・押せず・遅れて押せた・空の確認）。言葉は bulk-dl.js の _setPressNote が作る */
+function _bulkPressShow(what, result, detail) {
+  _boxLiveSave("press", { what: String(what || ""), result: String(result || ""), detail: String(detail || ""), at: Date.now() });
+  try {
+    chrome.tabs.query({ url: ["https://www.realnetpro.com/*", "https://itandibb.com/*"] }).then(function (tabs) {
+      for (var i = 0; i < tabs.length; i++) {
+        try { chrome.tabs.sendMessage(tabs[i].id, { type: "axlx-bulk-press", what: String(what || ""), result: String(result || ""), detail: String(detail || "") }).catch(function () {}); } catch (_) {}
+      }
+    }).catch(function () {});
+  } catch (_) {}
+}
 function _pollMs(ms) { var H = self.AxlxHumanWait; return H ? H.pollDelay(ms) : ms; }
 
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
@@ -1882,7 +1933,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           console.log("[webapp-search] itandiタブ:", _itandiTab.url);
           // itandi-content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
-          try { await chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid), customerName: _custName }); } catch(_) {}
+          try { await _withTimeout(chrome.tabs.sendMessage(_itandiTab.id, { type: "axlx-set-fill-customer", customerId: String(_cid), customerName: _custName }), 4000, "set_fill_customer"); } catch(_) {}
 
           // underbar.js → popup.js 経由でリアプロと同じ仕組みで自動入力
           var _directOk = await new Promise(function(resolve) {
@@ -2769,6 +2820,21 @@ var _LEARN_CHECK_AUTO_MS = 60 * 1000;
 var _learnInflight = null;       // 実行中の1本（これがあれば新しい実行はせず、この結果を待つ）
 var _learnFailCount = 0;         // 続けて失敗した回数（間隔を延ばすのに使う）
 var _learnNextTryAt = 0;         // 次に試してよい時刻（失敗の後はここまで待つ）
+/**
+ * ★ 2.8.310: 版の確認（touch=0）を最後に「同じ版・取り直し無し」で済ませた時刻（メモリのみ・SW 再起動で 0）。
+ *   実測: 2.8.309 まで `_checkMs` は計算されるだけで**使われて**おらず、タスク切替のたびに版の確認が走っていた。
+ *   → 確認間隔（自動中 60 秒・通常 5 分）の内は版の確認を飛ばす。版が変わっても次の確認（最大 60 秒〜5 分後）まで待つ。
+ *     強制の経路（popup を開く・起動・needs_auto）は TTL を見ない＝すぐ確かめる。
+ */
+var _headCheckAt = 0;
+var _headCheckAtBySite = { realpro: 0, itandi: 0 };
+var _pendingRefreshTargetSite = null;
+function _normLearnSite(s) {
+  var v = String(s || "").toLowerCase();
+  if (v === "itandi" || /itandibb/.test(v)) return "itandi";
+  if (v === "realpro" || v === "realnetpro" || /realnetpro/.test(v)) return "realpro";
+  return "";
+}
 /** 失敗した後の間: 1分 → 5分 → 15分（それ以上は15分のまま） */
 function _learnBackoffMs(n) {
   if (n <= 0) return 0;
@@ -2789,7 +2855,12 @@ function _learnStartJitterMs() {
  *   ⚠ 成否の後始末（間隔を延ばす・戻す）は**ここで1か所**でやる。
  *     `_refreshLearnedBundle` の中に散らすと、早期 return のどれかで記録し忘れて静かに壊れる。
  */
-function _refreshLearnedBundleQueued(force, _noChain) {
+function _refreshLearnedBundleQueued(force, targetSite, _noChain) {
+  if (typeof targetSite === "boolean") {
+    _noChain = targetSite;
+    targetSite = null;
+  }
+  var normSite = _normLearnSite(targetSite);
   if (_learnInflight) {
     /**
      * ★ 2026-11-19 タクヤ audit #1513（screen=0 のまま自動開始）:
@@ -2798,13 +2869,14 @@ function _refreshLearnedBundleQueued(force, _noChain) {
      */
     if (force && !_noChain) {
       return _learnInflight.then(function (r) {
-        if (r && r.skipped && r.skipped !== "backoff") return _refreshLearnedBundleQueued(true, true);
+        if (r && r.skipped && r.skipped !== "backoff") return _refreshLearnedBundleQueued(true, normSite || null, true);
         return r;
       });
     }
     // 実行中 → そのまま待つ（重ねて呼ばない）
     return _learnInflight;
   }
+  _pendingRefreshTargetSite = normSite || null;
   var p = _refreshLearnedBundle(force).then(function (r) {
     _learnInflight = null;
     /**
@@ -2837,28 +2909,59 @@ function _refreshLearnedBundleQueued(force, _noChain) {
  * ★ 2026-11-18: autofill（手動・一括・webapp）の直前に学習束を版確認／必要なら取り直す。
  *   ポップアップを開かない経路でも content script が storage 経由で最新束を使えるようにする。
  */
-async function _learnRefreshForAutofill() {
+async function _learnRefreshForAutofill(targetSite) {
   try {
     var st = await chrome.storage.local.get([
       "axlx_learn_needs_auto",
+      "axlx_learn_needs_auto__realpro",
+      "axlx_learn_needs_auto__itandi",
       "axlx_learn_screen",
+      "axlx_learn_screen__realpro",
+      "axlx_learn_screen__itandi",
       "axlx_learn_ver",
+      "axlx_learn_ver__realpro",
+      "axlx_learn_ver__itandi",
       "axlx_learn_link",
+      "axlx_learn_link__realpro",
+      "axlx_learn_link__itandi",
       "axlx_learn_next",
+      "axlx_learn_next__realpro",
+      "axlx_learn_next__itandi",
       "axlx_learn_points",
+      "axlx_learn_points__realpro",
+      "axlx_learn_points__itandi",
       "axlx_learn_playbook",
+      "axlx_learn_for_site",
+      "axlx_learn_playbook__realpro",
+      "axlx_learn_playbook__itandi",
       "axlx_learn_after_update",
     ]);
+    var _afSite = _normLearnSite(targetSite) || _normLearnSite(st && st.axlx_learn_for_site) || "";
+    if (!_normLearnSite(targetSite)) {
+      try {
+        var _tabsAf = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var _uAf = String((_tabsAf && _tabsAf[0] && _tabsAf[0].url) || "");
+        if (/itandibb\.com/.test(_uAf)) _afSite = "itandi";
+        else if (/realnetpro\.com/.test(_uAf)) _afSite = "realpro";
+      } catch (_) {}
+    }
+    var G = self.AxlxLearnRefreshGate;
+    var _stForGate = (G && G.projectLearnStorageForSite && _afSite)
+      ? G.projectLearnStorageForSite(st || {}, _afSite)
+      : Object.assign({}, st || {});
+    if (!_stForGate.axlx_learn_playbook && _afSite && st && st["axlx_learn_playbook__" + _afSite]) {
+      _stForGate.axlx_learn_playbook = st["axlx_learn_playbook__" + _afSite];
+    }
     /**
      * ★ 2026-11-22 2.8.183: 手順書欠落・更新直後も force（画面位置だけ揃って古い手順書のまま押し始めない）。
      */
-    var _gate = (self.AxlxLearnRefreshGate && self.AxlxLearnRefreshGate.shouldForceLearnRefresh)
-      ? self.AxlxLearnRefreshGate.shouldForceLearnRefresh(st)
-      : { force: !!(st.axlx_learn_needs_auto || !st.axlx_learn_ver), reason: "fallback" };
+    var _gate = (G && G.shouldForceLearnRefresh)
+      ? G.shouldForceLearnRefresh(_stForGate, { site: _afSite || undefined })
+      : { force: !!(_stForGate.axlx_learn_needs_auto || !_stForGate.axlx_learn_ver), reason: "fallback" };
     try {
-      if (_gate.force) console.log("[learn] autofill前の取込 force=" + _gate.reason);
+      if (_gate.force) console.log("[learn] autofill前の取込(" + (_afSite || "?") + ") force=" + _gate.reason);
     } catch (_) {}
-    return await _refreshLearnedBundleQueued(!!_gate.force);
+    return await _refreshLearnedBundleQueued(!!_gate.force, _afSite || null);
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
@@ -2876,12 +2979,50 @@ async function _refreshLearnedBundle(force) {
     }
     var st = await chrome.storage.local.get(_LEARN_KEYS.concat([
       "axlx_learn_link",
+      "axlx_learn_link__realpro",
+      "axlx_learn_link__itandi",
       "axlx_learn_needs_auto",
+      "axlx_learn_needs_auto__realpro",
+      "axlx_learn_needs_auto__itandi",
+      "axlx_learn_auto_linked__realpro",
+      "axlx_learn_auto_linked__itandi",
       "axlx_learn_screen",
+      "axlx_learn_screen__realpro",
+      "axlx_learn_screen__itandi",
+      "axlx_learn_next__realpro",
+      "axlx_learn_next__itandi",
+      "axlx_learn_points__realpro",
+      "axlx_learn_points__itandi",
+      "axlx_learn_playbook",
+      "axlx_learn_for_site",
+      "axlx_learn_ver__realpro",
+      "axlx_learn_ver__itandi",
+      "axlx_learn_playbook__realpro",
+      "axlx_learn_playbook__itandi",
       "axlx_learn_empty_refetch_at",
+      "axlx_learn_empty_refetch_at__realpro",
+      "axlx_learn_empty_refetch_at__itandi",
+      "axlx_learn_other_head_at__realpro",
+      "axlx_learn_other_head_at__itandi",
     ]));
+    // 呼び出し元のサイト指定があればそれを最優先（裏タブ作業中の別サイト誤判定を防ぐ）
+    var explicitSite = _normLearnSite(_pendingRefreshTargetSite);
+    _pendingRefreshTargetSite = null;
+    var curSite = explicitSite || _normLearnSite(st && st.axlx_learn_for_site) || "realpro";
+    if (!explicitSite) {
+      try {
+        var tabsEarly = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var uEarly = String((tabsEarly && tabsEarly[0] && tabsEarly[0].url) || "");
+        if (/itandibb\.com/.test(uEarly)) curSite = "itandi";
+        else if (/realnetpro\.com/.test(uEarly)) curSite = "realpro";
+      } catch (_) {}
+    }
+    var _siteSwitched = !!(st && st.axlx_learn_for_site && st.axlx_learn_for_site !== curSite);
+    var _G = self.AxlxLearnRefreshGate;
+    var _curView = (_G && _G.projectLearnStorageForSite) ? _G.projectLearnStorageForSite(st, curSite) : st;
     var last = Number(st && st.axlx_learn_at) || 0;
-    var lastVer = String((st && st.axlx_learn_ver) || "");
+    var lastVer = String((st && st["axlx_learn_ver__" + curSite]) || (!_siteSwitched && st && st.axlx_learn_ver) || "");
+    var _headHintBySite = { realpro: null, itandi: null };
     /**
      * 強制でない時: 1時間たっていなければ「版だけ」確かめる（軽い）。
      *   ・版が変わっていなければ何もしない
@@ -2901,170 +3042,171 @@ async function _refreshLearnedBundle(force) {
      *   → photo_learn で束が新しくなっても、通常モードでは最大5分気づかない。
      *   → **版確認（touch=0）は毎回やる**。版が同じかつ新鮮な時だけ取得をスキップ。
      */
+    _headCheckAt = Number(_headCheckAtBySite[curSite]) || 0;
     if (!force) {
       try {
-        /**
-         * ⚠ 2026-11-14 竹内さん「1と2順に改善するようにする」→ **実測で判明（ここが止まっていた）**:
-         *   版を見る `?touch=0` のタイムアウトが **8秒**だったが、
-         *   束が古い時はサーバーが**その場で作り直す**ので **14.6秒かかる**（実測）。
-         *   → 8秒で切れて `catch` に入り「取りに行く」流れになるが、
-         *     その直後の取得（15秒）も**足りずに失敗**し、結果として**新しい学びが届かなかった**。
-         *   → 版確認を **25秒**、取得を **40秒** に延ばす（実測 14.6秒＋余裕）。
-         *     ⚠ 1分ごとに走るが、`lastVer` が同じなら通信は1回で終わる（重くならない）。
-         */
-        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0", { cache: "no-store", signal: AbortSignal.timeout(25000) });
+        // ★ 2.8.310: 確認間隔の内は版を見に行かない（サイト切替時はスキップせず反映）
+        var _headAge = Date.now() - _headCheckAt;
+        if (!_siteSwitched && _headCheckAt > 0 && _headAge < _checkMs) {
+          return { ok: true, skipped: "head_recent", head_age_ms: _headAge, site: curSite };
+        }
+        var head = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(curSite), { cache: "no-store", signal: AbortSignal.timeout(25000) });
         if (head.ok) {
           var hj = await head.json();
+          _headHintBySite[curSite] = hj;
           var hv = String((hj && hj.generated_at) || "");
-          /**
-           * ★ 2026-11-15 竹内さん「版が同じなら取り直さない」（依頼1-4）
-           *   ⚠ 旧は `lastVer` が**空**（初回）の時や、版は同じでも `axlx_learn_at` が古い時に
-           *     scope ごとの重い取得（realpro / itandi / 全体）を**3回**やっていた。
-           *   → 版が**分かっている**（`hv` がある）かつ `hv === lastVer` なら**ここで終わる**（取得しない）。
-           *     ⚠ `lastVer` が空の時も `hv` があれば、手元に束が入っているかを別に見る（下）。
-           */
-          /**
-           * ★ 2026-11-16: 版同じでも read_count=0 なら「届いていない」扱い → 取り直して印を付ける。
-           *   版同じかつ既に読まれている時は mark_read=1 だけ飛ばしてスキップ（重い束は取らない）。
-           */
           var _serverRead = (hj && typeof hj.read_count === "number") ? hj.read_count : 0;
           var _serverSolid = (hj && typeof hj.screen_solid === "number") ? hj.screen_solid : null;
           var _needsAuto = !!(hj && hj.needs_auto);
-          /** ★ 2026-11-23: 手順書決まり版（attach で generated_at 据え置きでも検知） */
+          /** ★ 2026-11-23: 手順書決まり版（サイト別手順書を参照・ローカル空の時も stale 検知） */
           var _serverRulesV = (hj && hj.playbook_rules_v != null) ? String(hj.playbook_rules_v) : "";
           var _localRulesV = "";
           try {
-            var _lpb = st && st.axlx_learn_playbook;
+            var _lpb = (_curView && _curView.axlx_learn_playbook) || (st && st["axlx_learn_playbook__" + curSite]) || (st && !_siteSwitched ? st.axlx_learn_playbook : null);
             if (_lpb && typeof _lpb === "object") _localRulesV = String(_lpb.rules_v || "");
           } catch (_) {}
-          /**
-           * ★ 2.8.297 本番のコードが拡張より古い／手順書が古い版で作られている、を覚えておく（次の回の記録に server_behind を残す）。
-           *   実測 2026-11-25 22:00: 本番（古い main）が手順書を作り直すたび 91件→23件へ戻った。拡張は「版が違う」とだけ見て取り直し続け、
-           *   原因（本番のデプロイ遅れ）はどこにも出なかった。server_rules_up_to を返さない本番＝最新のコードが載っていない。
-           */
           try {
             var _extV = chrome.runtime.getManifest().version;
             var _srvUp = (hj && hj.server_rules_up_to) ? String(hj.server_rules_up_to) : "";
             var _pbUp = (hj && hj.playbook_rules_up_to) ? String(hj.playbook_rules_up_to) : "";
             var _srvBehind = !_srvUp || _cmpExtVer(_srvUp, _extV) < 0;
-            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0; /* ★ 2.8.304 逆向き: 拡張が本番の最新版より古い＝再読み込みの忘れ（実測 2026-11-26: 手元 2.8.303 に対し動いていた拡張は 2.8.295）。自動では再読み込みせず、案内と記録だけ出す */ var _extBehind = !!_srvUp && _cmpExtVer(_extV, _srvUp) < 0; if (_extBehind) { try { console.warn("[learn] ⚠ 拡張が古い（ext=" + _extV + " 本番の最新=" + _srvUp + "）→ git pull のあと chrome://extensions で再読み込み"); } catch (_) {} }
+            var _pbBehind = !_pbUp || _cmpExtVer(_pbUp, _extV) < 0;
+            var _extBehind = !!_srvUp && _cmpExtVer(_extV, _srvUp) < 0;
+            if (_extBehind) { try { console.warn("[learn] ⚠ 拡張が古い（ext=" + _extV + " 本番の最新=" + _srvUp + "）→ git pull のあと chrome://extensions で再読み込み"); } catch (_) {} }
             await chrome.storage.local.set({ axlx_server_state: {
               behind: !!(_srvBehind || _pbBehind), server_behind: !!_srvBehind, playbook_behind: !!_pbBehind,
-              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, ext_behind: !!_extBehind, at: Date.now(),
+              server_up_to: _srvUp || null, playbook_up_to: _pbUp || null, ext: _extV, ext_behind: !!_extBehind, site: curSite, at: Date.now(),
             } });
             if (_srvBehind) { try { console.warn("[learn] ⚠ 本番のコードが古い（server=" + (_srvUp || "版なし") + " ext=" + _extV + "）→ 手順書は作り直しのたび古い版へ戻る。デプロイが必要"); } catch (_) {} }
             else if (_pbBehind) { try { console.warn("[learn] ⚠ 手順書が古い版で作られている（手順書=" + (_pbUp || "版なし") + " ext=" + _extV + "）→ attach-playbook が必要"); } catch (_) {} }
           } catch (_) {}
-          var _rulesStale = !!(!_serverRulesV || !_localRulesV ? false : _serverRulesV !== _localRulesV);
+          var _rulesStale = !!(_serverRulesV && _serverRulesV !== _localRulesV);
           if (_rulesStale) {
-            try { console.log("[learn] 手順書の決まり版が違う（手元" + _localRulesV.slice(0, 8) + "→サーバ" + _serverRulesV.slice(0, 8) + "）→取り直します"); } catch (_) {}
+            try { console.log("[learn] 手順書の決まり版が違う（" + curSite + " 手元" + _localRulesV.slice(0, 8) + "→サーバ" + _serverRulesV.slice(0, 8) + "）→取り直します"); } catch (_) {}
           }
-          /**
-           * ★ 2026-11-17「学習しても改善されない／反映の抜け」:
-           *   版同じでも (1) サーバー solid が手元より多い → 取り直す
-           *   (2) needs_auto → 印を付けて返す（自動1回を促す・束は再取しない）
-           */
+          // ★ 2.8.310: 同じ版で取り直しも要らないと確かめた時だけ、次の確認までの時計を進める（サイト別＋互換変数）
+          if (!_rulesStale && hv && hv === lastVer) {
+            _headCheckAt = Date.now();
+            _headCheckAtBySite[curSite] = _headCheckAt;
+          }
           var _localSolid = null;
           try {
-            var _lnk0 = st && st.axlx_learn_link;
+            var _lnk0 = _curView && _curView.axlx_learn_link;
             if (_lnk0 && typeof _lnk0.screen_solid === "number") _localSolid = _lnk0.screen_solid;
           } catch (_) {}
           if (!_rulesStale && hv && hv === lastVer) {
-            /**
-             * ★ 2026-11-17 実測 2.8.76: 版同じ・read≥1 でも axlx_learn_screen が空 → aim無・reflect_gap。
-             *   → 手元 solid=0／screen空 かつサーバ solid>0 なら必ず取り直す。
-             */
             var _localScreenN = 0;
             try {
-              var _scr0 = st && st.axlx_learn_screen;
+              var _scr0 = _curView && _curView.axlx_learn_screen;
               if (_scr0 && typeof _scr0 === "object") _localScreenN = Object.keys(_scr0).length;
             } catch (_) {}
+            var _emptyRefetchKey = "axlx_learn_empty_refetch_at__" + curSite;
+            var _emptyRefetchAt = Number((st && st[_emptyRefetchKey]) || (st && st.axlx_learn_empty_refetch_at)) || 0;
             if (_serverRead <= 0) {
-              try { console.log("[learn] 版同じだが未読(read_count=0)→取り直して印を付けます"); } catch (_) {}
+              try { console.log("[learn] 版同じだが未読(" + curSite + " read_count=0)→取り直して印を付けます"); } catch (_) {}
             } else if (_serverSolid != null && _localSolid != null && _serverSolid > _localSolid) {
-              try { console.log("[learn] 版同じだが solid 増（手元" + _localSolid + "→サーバ" + _serverSolid + "）→取り直します"); } catch (_) {}
+              try { console.log("[learn] 版同じだが solid 増（" + curSite + " 手元" + _localSolid + "→サーバ" + _serverSolid + "）→取り直します"); } catch (_) {}
             } else if ((_localSolid === 0 || _localSolid == null || _localScreenN === 0) && _serverSolid != null && _serverSolid > 0) {
-              try { console.log("[learn] 版同じだが手元screen空/solid0（サーバ solid=" + _serverSolid + "）→取り直します"); } catch (_) {}
-            } else if (_localScreenN === 0 && Date.now() - (Number(st && st.axlx_learn_empty_refetch_at) || 0) > 10 * 60 * 1000) {
-              /**
-               * ★ 2026-11-19: 本番の版確認が screen_solid を返さない時（_serverSolid=null）も、
-               *   手元の画面位置が空なら取り直す（10分に1回まで・サーバーの負担を抑える）。
-               */
-              try { console.log("[learn] 版同じだが手元screen空（サーバ solid 不明）→取り直します"); } catch (_) {}
-              try { await chrome.storage.local.set({ axlx_learn_empty_refetch_at: Date.now() }); } catch (_) {}
+              try { console.log("[learn] 版同じだが手元screen空/solid0（" + curSite + " サーバ solid=" + _serverSolid + "）→取り直します"); } catch (_) {}
+            } else if (_localScreenN === 0 && Date.now() - _emptyRefetchAt > 10 * 60 * 1000) {
+              try { console.log("[learn] 版同じだが手元screen空（" + curSite + " サーバ solid 不明）→取り直します"); } catch (_) {}
+              try {
+                var _erPatch = { axlx_learn_empty_refetch_at: Date.now() };
+                _erPatch[_emptyRefetchKey] = Date.now();
+                await chrome.storage.local.set(_erPatch);
+              } catch (_) {}
             } else {
               var _localNextN = 0;
               var _localPtsN = 0;
-              try { _localNextN = Object.keys(st.axlx_learn_next || {}).length; } catch (_) {}
-              try { _localPtsN = Object.keys(st.axlx_learn_points || {}).length; } catch (_) {}
+              try { _localNextN = Object.keys((_curView && _curView.axlx_learn_next) || {}).length; } catch (_) {}
+              try { _localPtsN = Object.keys((_curView && _curView.axlx_learn_points) || {}).length; } catch (_) {}
               if (_needsAuto && (_localNextN === 0 || _localPtsN === 0 || _localScreenN === 0)) {
                 try {
-                  console.log("[learn] needs_autoだが手元の束が薄い（next=" + _localNextN + " points=" + _localPtsN + " screen=" + _localScreenN + "）→取り直します");
+                  console.log("[learn] needs_autoだが手元の束が薄い（" + curSite + " next=" + _localNextN + " points=" + _localPtsN + " screen=" + _localScreenN + "）→取り直します");
                 } catch (_) {}
               } else {
-              /**
-               * ★ 2026-11-17 実測: same_version のたびに mark_read×3 を飛ばし
-               *   read_count が 0→738 まで水増し（束は読んだが自動未使用なのに「拡張が読んだ738回」と誤認）。
-               *   → 心拍では mark_read しない。印は**実際に束を取り込んだ時だけ**付ける。
-               */
+              // ★ 2026-11-27: 反対側サイト（curSite=realpro 時の itandi 等）の版・決まり版が古い時も抜けない
+              var _otherSite = curSite === "itandi" ? "realpro" : "itandi";
+              var _otherStale = false;
               try {
-                await chrome.storage.local.set({
+                var _otherAt = Number(st && st["axlx_learn_other_head_at__" + _otherSite]) || 0;
+                var _otherPb = st && st["axlx_learn_playbook__" + _otherSite];
+                var _otherLocalRv = (_otherPb && typeof _otherPb === "object") ? String(_otherPb.rules_v || "") : "";
+                var _otherLastVer = String((st && st["axlx_learn_ver__" + _otherSite]) || "");
+                if (!_otherLocalRv || (Date.now() - _otherAt) >= _checkMs) {
+                  var _otherHead = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?touch=0&scope=" + encodeURIComponent(_otherSite), { cache: "no-store", signal: AbortSignal.timeout(15000) });
+                  if (_otherHead && _otherHead.ok) {
+                    var _ohj = await _otherHead.json();
+                    _headHintBySite[_otherSite] = _ohj;
+                    var _ohv = String((_ohj && _ohj.generated_at) || "");
+                    var _orv = (_ohj && _ohj.playbook_rules_v != null) ? String(_ohj.playbook_rules_v) : "";
+                    if ((_orv && _orv !== _otherLocalRv) || (_ohv && _ohv !== _otherLastVer)) {
+                      _otherStale = true;
+                      try { console.log("[learn] 反対側サイト(" + _otherSite + ")に更新あり → 両サイト取り直します"); } catch (_) {}
+                    } else {
+                      var _otherMark = {};
+                      _otherMark["axlx_learn_other_head_at__" + _otherSite] = Date.now();
+                      try { await chrome.storage.local.set(_otherMark); } catch (_) {}
+                    }
+                  }
+                }
+              } catch (_) {}
+              if (_otherStale) {
+                // 下の取り直しへ進む
+              } else {
+              try {
+                var _naPatch = {
                   axlx_learn_needs_auto: _needsAuto,
                   axlx_learn_server_solid: _serverSolid,
-                });
+                };
+                _naPatch["axlx_learn_needs_auto__" + curSite] = _needsAuto;
+                _naPatch["axlx_learn_server_solid__" + curSite] = _serverSolid;
+                await chrome.storage.local.set(_naPatch);
               } catch (_) {}
               return {
                 ok: true,
                 skipped: "same_version",
+                site: curSite,
                 server_read_count: _serverRead,
                 screen_solid: _serverSolid,
                 needs_auto: _needsAuto,
                 link: _needsAuto ? "needs_auto" : "same_version",
               };
               }
+              }
             }
           }
           if (hv && !lastVer) {
-            // 初回でも、既に同じ版の束が storage に入っているなら取り直さない
             var bySiteNow = st && st.axlx_learn_by_site;
-            if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length) {
-              await chrome.storage.local.set({ axlx_learn_ver: hv });
+            if (bySiteNow && typeof bySiteNow === "object" && Object.keys(bySiteNow).length && !_rulesStale) {
+              var _verFirst = { axlx_learn_ver: hv };
+              _verFirst["axlx_learn_ver__" + curSite] = hv;
+              await chrome.storage.local.set(_verFirst);
               if (_serverRead <= 0) {
-                try { console.log("[learn] 手元に束あり・サーバー未読→取り直して印を付けます"); } catch (_) {}
+                try { console.log("[learn] 手元に束あり・サーバー未読(" + curSite + ")→取り直して印を付けます"); } catch (_) {}
               } else {
-                // ★ 2026-11-17: ここも mark_read 連打しない（上と同じ穴）
-                return { ok: true, skipped: "same_version_first", server_read_count: _serverRead, needs_auto: _needsAuto };
+                return { ok: true, skipped: "same_version_first", site: curSite, server_read_count: _serverRead, needs_auto: _needsAuto };
               }
             }
           } else if (hv && hv !== lastVer) {
-            console.log("[learn] 学習が新しくなりました（" + lastVer + " → " + hv + "）→ 取り込みます");
+            console.log("[learn] 学習が新しくなりました（" + curSite + " " + lastVer + " → " + hv + "）→ 取り込みます");
           }
         }
       } catch (e) {
-        // ⚠ 版が読めなくても取りに行く（安全側）。理由を残す（次に同じ事が起きたら分かる）
         try { console.log("[learn] 版を確かめられません（取りに行きます）:", (e && e.message) || e); } catch (_) {}
       }
     }
-    // touch=1（既定）で読む＝**読んだ印**をサーバーに残す（どの PC が読んでいるか分かる）
-    /**
-     * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習。それぞれの性質を理解するためにも
-     *   改善していくためにも必要」:
-     *
-     *   ⚠ 旧は `?scope=` を付けずに読んでいたので、**リアプロと itandi の学びが1つに混ざった束**を
-     *     両方のサイトで使っていた。サイトごとに手順も欄の名前も違うので、
-     *     混ぜると「itandi で学んだ順番をリアプロで使う」ような**誤適用**が起きる。
-     *
-     *   → **サイトごとに別々に取る**（`?scope=realpro` / `?scope=itandi`）。
-     *     ・`axlx_learn_by_site` … `{ realpro: {next, points, ...}, itandi: {...} }`（サイト別の正本）
-     *     ・今までのキー（`axlx_learn_next` など）は**今いるサイトの物**を入れる
-     *       （page-script は今まで通り読める＝変更が要らない）
-     */
     var SITES = ["realpro", "itandi"];
     var perSite = {};
+    var _forceSalt = force ? ("force_" + Math.floor(Date.now() / 1000)) : "";
     for (var si = 0; si < SITES.length; si++) {
       var sc = SITES[si];
       try {
-        var sres = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc, { cache: "no-store", signal: AbortSignal.timeout(40000) });
+        var _scHint = _headHintBySite[sc];
+        var _scUrl = (_G && _G.buildBundleFetchUrl)
+          ? _G.buildBundleFetchUrl(SUMORA_BATCH_API, sc, _scHint || (_forceSalt ? { bundle_v: _forceSalt } : null))
+          : (SUMORA_BATCH_API + "/api/human-learn-profile?scope=" + sc + (_forceSalt ? "&v=" + encodeURIComponent(_forceSalt) : ""));
+        var sres = await fetch(_scUrl, { cache: "no-store", signal: AbortSignal.timeout(40000) });
         if (!sres.ok) continue;
         var sjson = await sres.json();
         if (sjson && sjson.bundle && typeof sjson.bundle === "object") {
@@ -3075,76 +3217,47 @@ async function _refreshLearnedBundle(force) {
         }
       } catch (_) { /* 片方が取れなくても、もう片方は使う */ }
     }
-    // 今いるタブのサイト（分からなければ realpro）
-    var curSite = "realpro";
-    try {
-      var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
-      if (/itandibb\.com/.test(uNow)) curSite = "itandi";
-      else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
-    } catch (_) {}
+    // 明示呼び出しでない場合だけアクティブタブで再確定（裏タブ作業のサイト上書きを防ぐ）
+    if (!explicitSite) {
+      try {
+        var tabsNow = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        var uNow = String((tabsNow && tabsNow[0] && tabsNow[0].url) || "");
+        if (/itandibb\.com/.test(uNow)) curSite = "itandi";
+        else if (/realnetpro\.com/.test(uNow)) curSite = "realpro";
+      } catch (_) {}
+    }
     /**
-     * ★ 2026-11-15 竹内さん「改善したら更新されていく」「ボトルネックとなっている部分改善」:
-     *   ⚠ 実測: `all` に画面位置 x/y=71・n≥3=33 があるのに、拡張は **古い realpro**（x/y=0）を優先して
-     *     **全体を見に行かなかった** → 学んでも自動に届かない（ボトルネックの本体）。
-     *   → **必ず all も取る**。サイト別と全体で **新しい方を正**にする。
-     *     サイト別の next/points はサイト別を優先しつつ、`shots.learned`（画面位置）は新しい方から載せる。
+     * ★ 2026-11-27 サイト横断汚染遮断:
+     *   allBundle（混載束）は、対象サイトの束がまだ1件も無い（初回）時のフォールバックのみに限定する。
+     *   perSite.realpro / perSite.itandi が取れている時は混載 allBundle の shots.learned / screen_flow 等で
+     *   上書きしない（ITANDI 操作が all 経由で realpro へ逆流・混入するのを防ぐ）。
      */
     var allBundle = null;
-    try {
-      var allRes = await fetch(SUMORA_BATCH_API + "/api/human-learn-profile", { cache: "no-store", signal: AbortSignal.timeout(40000) });
-      if (allRes.ok) {
-        var allJson = await allRes.json();
-        if (allJson && allJson.bundle && typeof allJson.bundle === "object") {
-          allBundle = allJson.bundle;
-          try {
-            if (typeof allJson.read_count === "number") allBundle._server_read_count = allJson.read_count;
-          } catch (_) {}
-        }
-      }
-    } catch (_) {}
-    function _genMs(b) {
-      if (!b || typeof b !== "object") return 0;
-      return Date.parse(String(b.generated_at || "")) || 0;
-    }
-    function _mergeLearnedShots(into, from) {
-      if (!into || !from) return into;
+    if (curSite !== "itandi" && !perSite.realpro) {
       try {
-        if (!into.shots || typeof into.shots !== "object") into.shots = {};
-        if (from.shots && from.shots.learned) into.shots.learned = from.shots.learned;
-        if (from.shots && typeof from.shots.total === "number") into.shots.total = from.shots.total;
-        if (from.screen_flow && typeof from.screen_flow === "object") into.screen_flow = from.screen_flow;
+        var allUrl = SUMORA_BATCH_API + "/api/human-learn-profile" + (force ? ("?v=" + encodeURIComponent(_forceSalt)) : "");
+        var allRes = await fetch(allUrl, { cache: "no-store", signal: AbortSignal.timeout(40000) });
+        if (allRes.ok) {
+          var allJson = await allRes.json();
+          if (allJson && allJson.bundle && typeof allJson.bundle === "object") {
+            allBundle = allJson.bundle;
+            try {
+              if (typeof allJson.read_count === "number") allBundle._server_read_count = allJson.read_count;
+            } catch (_) {}
+          }
+        }
       } catch (_) {}
-      return into;
     }
     var siteBundle = perSite[curSite] || null;
     var bundle = null;
-    if (siteBundle && allBundle) {
-      if (_genMs(allBundle) > _genMs(siteBundle)) {
-        // 全体の方が新しい＝学習が進んだ側。サイト別の順番は残しつつ、画面位置は全体から載せる
-        bundle = siteBundle;
-        _mergeLearnedShots(bundle, allBundle);
-        // サイト別の next が薄い時は全体の next/points も新しい方で補う
-        try {
-          if ((!bundle.next || !Object.keys(bundle.next).length) && allBundle.next) bundle.next = allBundle.next;
-          if ((!bundle.points || !Object.keys(bundle.points).length) && allBundle.points) bundle.points = allBundle.points;
-          if (allBundle.supervisor) bundle.supervisor = allBundle.supervisor;
-          bundle.generated_at = allBundle.generated_at || bundle.generated_at;
-        } catch (_) {}
-        console.log("[learn] 全体の束の方が新しい → 画面位置を all から載せました（" + curSite + " は " + String((siteBundle.generated_at || "")).slice(0, 19) + " / all " + String((allBundle.generated_at || "")).slice(0, 19) + "）");
-      } else {
-        bundle = siteBundle;
-      }
+    if (curSite === "itandi") {
+      // ITANDI には allBundle（混載）を絶対に混ぜない
+      bundle = siteBundle;
     } else {
       bundle = siteBundle || allBundle;
     }
-    // perSite 台帳にも、新しい画面位置を載せておく（サイト切替ですぐ使える）
-    if (allBundle && _genMs(allBundle) > 0) {
-      for (var _psk in perSite) {
-        if (_genMs(allBundle) > _genMs(perSite[_psk])) _mergeLearnedShots(perSite[_psk], allBundle);
-      }
-      if (!perSite[curSite] && allBundle) perSite[curSite] = allBundle;
-    }
+    // perSite 台帳の補完も realpro が完全に空の初回のみ（既存 perSite.realpro は all で上書きしない）
+    if (!perSite.realpro && curSite !== "itandi" && allBundle) perSite.realpro = allBundle;
     if (!bundle || typeof bundle !== "object") {
       // まだ束が無い（学習の記録が少ない・cron の前）→ 何もしない
       await chrome.storage.local.set({ axlx_learn_at: Date.now() });
@@ -3197,172 +3310,196 @@ async function _refreshLearnedBundle(force) {
      *   旧は n≥3 だけ → flashで読んだ弱い欄（n=1〜2）が storage に載らず aim無のまま。
      *   → **n≥1 も載せる**（thin）。連携完了の solid 数えは n≥3 のまま。
      */
-    var _screenAim = {};
-    try {
-      var learned = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
-      if (learned && typeof learned === "object") {
-        for (var _sc in learned) {
-          var list = Array.isArray(learned[_sc]) ? learned[_sc] : [];
-          for (var _i = 0; _i < list.length; _i++) {
-            var f = list[_i];
-            if (!f || typeof f.name !== "string" || typeof f.x !== "number" || typeof f.y !== "number") continue;
-            if ((Number(f.n) || 0) < 1) continue;
-            var k = String(f.name).slice(0, 40);
-            if (!_screenAim[k] || (Number(_screenAim[k].n) || 0) < (Number(f.n) || 0)) {
-              _screenAim[k] = {
-                x: Math.round(f.x * 100) / 100,
-                y: Math.round(f.y * 100) / 100,
-                n: Number(f.n) || 0,
-                kind: f.kind || null,
-                screen: _sc,
-                thin: (Number(f.n) || 0) < 3,
-              };
+    function _extractScreenAndSceneFromBundle(b, bSite) {
+      var sAim = {};
+      try {
+        var lrn = (b && b.shots && b.shots.learned) ? b.shots.learned : null;
+        if (lrn && typeof lrn === "object") {
+          for (var _sck in lrn) {
+            var lst = Array.isArray(lrn[_sck]) ? lrn[_sck] : [];
+            for (var _idx = 0; _idx < lst.length; _idx++) {
+              var ff = lst[_idx];
+              if (!ff || typeof ff.name !== "string" || typeof ff.x !== "number" || typeof ff.y !== "number") continue;
+              if ((Number(ff.n) || 0) < 1) continue;
+              var kk = String(ff.name).slice(0, 40);
+              if (!sAim[kk] || (Number(sAim[kk].n) || 0) < (Number(ff.n) || 0)) {
+                sAim[kk] = {
+                  x: Math.round(ff.x * 100) / 100,
+                  y: Math.round(ff.y * 100) / 100,
+                  n: Number(ff.n) || 0,
+                  kind: ff.kind || null,
+                  screen: _sck,
+                  thin: (Number(ff.n) || 0) < 3,
+                };
+              }
             }
           }
         }
-      }
-      /** ★ 2026-11-17: HTML名↔日本語名を複製（page-script の別名引きと二重で連動） */
-      var _aimAliasPairs = [
-        ["city_code[]", "所在地絞り込み", "所在地を絞り込み", "区を選ぶ"],
-        ["route_id[]", "沿線を選ぶ", "沿線・駅絞り込み＋", "沿線・駅絞り込み", "路線"],
-        ["station_id[]", "駅", "駅を選ぶ"],
-        ["transportation_id", "駅からの移動手段", "移動手段"],
-        ["required_time", "分数", "徒歩分数", "駅徒歩"],
-        ["rental_cost1", "賃料下限", "下限賃料", "賃料"],
-        ["rental_cost2", "賃料上限", "上限賃料"],
-        ["update_date", "更新日"],
-        ["structured_date", "築年数", "築年"],
-        ["確定してリストへ", "確定してリストへ｜span", "確定"],
-      ];
-      for (var _ap = 0; _ap < _aimAliasPairs.length; _ap++) {
-        var _pair = _aimAliasPairs[_ap];
-        var _src = null;
-        for (var _pj = 0; _pj < _pair.length; _pj++) {
-          var _pv = _screenAim[_pair[_pj]];
-          if (_pv && typeof _pv.x === "number" && typeof _pv.y === "number") {
-            if (!_src || (Number(_pv.n) || 0) > (Number(_src.n) || 0)) _src = _pv;
-          }
-        }
-        if (!_src) continue;
-        for (var _pk = 0; _pk < _pair.length; _pk++) {
-          var _nm = _pair[_pk];
-          if (!_screenAim[_nm] || (Number(_screenAim[_nm].n) || 0) < (Number(_src.n) || 0)) {
-            _screenAim[_nm] = { x: _src.x, y: _src.y, n: _src.n, kind: _src.kind || null, screen: _src.screen || null };
-          }
-        }
-      }
-    } catch (_) {}
-    /**
-     * ★ 2026-11-15 竹内さん「学習からの連携をしっかり完了するまで一連の流れを拡張ちゃんと把握して
-     *   新しくなったら新しくしたのもちゃんと把握してつくる」:
-     *   取り込みのたびに **一連の到達点**を storage に残す（版・前の版・画面位置の数・完了か）。
-     *   ⚠ これが無いと「取ったつもり・新しいのに古い」が現場で分からない。
-     */
-    /**
-     * ★ 2026-11-18 竹内さん「場面ごとの強化を画像学習にも紐づける」:
-     *   束の shots.learned_scene（場面 area/station/cond… ごとの欄の位置）を axlx_learn_scene へ。
-     *   拡張は「今いる場面」の位置を先に引き、無ければ従来の axlx_learn_screen（画面単位）へ戻る。
-     */
-    var _sceneAim = {};
-    try {
-      var _ls = (bundle.shots && bundle.shots.learned_scene) ? bundle.shots.learned_scene : null;
-      if (_ls && typeof _ls === "object") {
-        for (var _sck in _ls) {
-          var _sarr = _ls[_sck];
-          if (!Array.isArray(_sarr)) continue;
-          var _sm = {};
-          for (var _si = 0; _si < _sarr.length; _si++) {
-            var _sf = _sarr[_si];
-            if (!_sf || typeof _sf.name !== "string" || typeof _sf.x !== "number" || typeof _sf.y !== "number") continue;
-            if ((Number(_sf.n) || 0) < 2) continue;
-            var _sk = String(_sf.name).slice(0, 40);
-            if (!_sm[_sk] || (Number(_sm[_sk].n) || 0) < (Number(_sf.n) || 0)) {
-              _sm[_sk] = { x: Math.round(_sf.x * 100) / 100, y: Math.round(_sf.y * 100) / 100, n: Number(_sf.n) || 0, kind: _sf.kind || null };
+        var _pairs = bSite === "itandi"
+          ? [
+            ["所在地で絞り込み", "所在地で絞り込みを開く"],
+            ["路線・駅で絞り込み", "路線・駅で絞り込みを開く"],
+            ["更新日", "募集条件更新"],
+            ["検索", "検索する", "この条件で検索"],
+            ["敷金・礼金なし", "敷金礼金なし"],
+          ]
+          : [
+            ["city_code[]", "所在地絞り込み", "所在地を絞り込み", "区を選ぶ"],
+            ["route_id[]", "沿線を選ぶ", "沿線・駅絞り込み＋", "沿線・駅絞り込み", "路線"],
+            ["station_id[]", "駅", "駅を選ぶ"],
+            ["transportation_id", "駅からの移動手段", "移動手段"],
+            ["required_time", "分数", "徒歩分数", "駅徒歩"],
+            ["rental_cost1", "賃料下限", "下限賃料", "賃料"],
+            ["rental_cost2", "賃料上限", "上限賃料"],
+            ["update_date", "更新日"],
+            ["structured_date", "築年数", "築年"],
+            ["確定してリストへ", "確定してリストへ｜span", "確定"],
+          ];
+        for (var _ap = 0; _ap < _pairs.length; _ap++) {
+          var _pair = _pairs[_ap];
+          var _src = null;
+          for (var _pj = 0; _pj < _pair.length; _pj++) {
+            var _pv = sAim[_pair[_pj]];
+            if (_pv && typeof _pv.x === "number" && typeof _pv.y === "number") {
+              if (!_src || (Number(_pv.n) || 0) > (Number(_src.n) || 0)) _src = _pv;
             }
           }
-          if (Object.keys(_sm).length) _sceneAim[String(_sck).slice(0, 12)] = _sm;
+          if (!_src) continue;
+          for (var _pk = 0; _pk < _pair.length; _pk++) {
+            var _nm = _pair[_pk];
+            if (!sAim[_nm] || (Number(sAim[_nm].n) || 0) < (Number(_src.n) || 0)) {
+              sAim[_nm] = { x: _src.x, y: _src.y, n: _src.n, kind: _src.kind || null, screen: _src.screen || null };
+            }
+          }
         }
-      }
-    } catch (_) { _sceneAim = {}; }
-    /**
-     * ★ 2026-11-19 竹内さん「束不安定なのはどう改善したら最善なのか」→「拡張の保険」:
-     *   本番の作り直し（#2413〜#2420）は位置0の束を出し、手元の良い位置を空で上書きしていた。
-     *   → サイトごとに最後の良い位置を控え（axlx_learn_screen_keep）、新しい束が位置0ならそのサイトの控えを使う。
-     *   ⚠ 控えはサイト別（リアプロの位置を ITANDI に使わない・タブ切替で消さない）。
-     */
-    var _screenKept = null;
+      } catch (_) {}
+      var scAim = {};
+      try {
+        var _ls = (b && b.shots && b.shots.learned_scene) ? b.shots.learned_scene : null;
+        if (_ls && typeof _ls === "object") {
+          for (var _sck2 in _ls) {
+            var _sarr = _ls[_sck2];
+            if (!Array.isArray(_sarr)) continue;
+            var _sm = {};
+            for (var _si2 = 0; _si2 < _sarr.length; _si2++) {
+              var _sf = _sarr[_si2];
+              if (!_sf || typeof _sf.name !== "string" || typeof _sf.x !== "number" || typeof _sf.y !== "number") continue;
+              if ((Number(_sf.n) || 0) < 2) continue;
+              var _sk = String(_sf.name).slice(0, 40);
+              if (!_sm[_sk] || (Number(_sm[_sk].n) || 0) < (Number(_sf.n) || 0)) {
+                _sm[_sk] = { x: Math.round(_sf.x * 100) / 100, y: Math.round(_sf.y * 100) / 100, n: Number(_sf.n) || 0, kind: _sf.kind || null };
+              }
+            }
+            if (Object.keys(_sm).length) scAim[String(_sck2).slice(0, 12)] = _sm;
+          }
+        }
+      } catch (_) { scAim = {}; }
+      return { screenAim: sAim, sceneAim: scAim };
+    }
+    var _keep = {};
     try {
       var _keepSt = await chrome.storage.local.get(["axlx_learn_screen_keep"]);
-      var _keep = (_keepSt && _keepSt.axlx_learn_screen_keep && typeof _keepSt.axlx_learn_screen_keep === "object")
+      _keep = (_keepSt && _keepSt.axlx_learn_screen_keep && typeof _keepSt.axlx_learn_screen_keep === "object")
         ? _keepSt.axlx_learn_screen_keep : {};
-      var _ks = String(curSite || "");
-      if (_ks) {
-        if (Object.keys(_screenAim).length) {
-          _keep[_ks] = { screen: _screenAim, scene: _sceneAim, ver: String(bundle.generated_at || ""), at: Date.now() };
-          await chrome.storage.local.set({ axlx_learn_screen_keep: _keep });
-        } else if (_keep[_ks] && _keep[_ks].screen && typeof _keep[_ks].screen === "object" && Object.keys(_keep[_ks].screen).length) {
-          _screenAim = _keep[_ks].screen;
-          if (!Object.keys(_sceneAim).length && _keep[_ks].scene && typeof _keep[_ks].scene === "object") _sceneAim = _keep[_ks].scene;
-          _screenKept = String(_keep[_ks].ver || "kept").slice(0, 19);
-          try { console.log("[learn] 新しい束の画面位置が0 → " + _ks + " の控え（版 " + _screenKept + "）を使います"); } catch (_) {}
-        }
+    } catch (_) { _keep = {}; }
+    var _sitePrepared = {};
+    for (var _spSiteKey in perSite) {
+      if (!Object.prototype.hasOwnProperty.call(perSite, _spSiteKey)) continue;
+      var _spB = perSite[_spSiteKey];
+      if (!_spB || typeof _spB !== "object") continue;
+      var _ex = _extractScreenAndSceneFromBundle(_spB, _spSiteKey);
+      var _keptTag = null;
+      if (Object.keys(_ex.screenAim).length) {
+        _keep[_spSiteKey] = { screen: _ex.screenAim, scene: _ex.sceneAim, ver: String(_spB.generated_at || ""), at: Date.now() };
+      } else if (_keep[_spSiteKey] && _keep[_spSiteKey].screen && typeof _keep[_spSiteKey].screen === "object" && Object.keys(_keep[_spSiteKey].screen).length) {
+        _ex.screenAim = _keep[_spSiteKey].screen;
+        if (!Object.keys(_ex.sceneAim).length && _keep[_spSiteKey].scene && typeof _keep[_spSiteKey].scene === "object") _ex.sceneAim = _keep[_spSiteKey].scene;
+        _keptTag = String(_keep[_spSiteKey].ver || "kept").slice(0, 19);
+        try { console.log("[learn] 新しい束の画面位置が0 → " + _spSiteKey + " の控え（版 " + _keptTag + "）を使います"); } catch (_) {}
       }
-    } catch (_) {}
-    var _screenAllKeys = Object.keys(_screenAim).length;
-    var _screenSolid = 0;
-    try {
-      for (var _ssk in _screenAim) {
-        if ((Number(_screenAim[_ssk].n) || 0) >= 3) _screenSolid++;
+      var _spAllKeys = Object.keys(_ex.screenAim).length;
+      var _spSolid = 0;
+      for (var _ssk0 in _ex.screenAim) {
+        if ((Number(_ex.screenAim[_ssk0].n) || 0) >= 3) _spSolid++;
       }
-    } catch (_) { _screenSolid = 0; }
-    var _screenAll = 0;
-    try {
-      var _lrn = (bundle.shots && bundle.shots.learned) ? bundle.shots.learned : null;
-      if (_lrn && typeof _lrn === "object") {
-        for (var _sc2 in _lrn) {
-          var _lst2 = Array.isArray(_lrn[_sc2]) ? _lrn[_sc2] : [];
-          for (var _j2 = 0; _j2 < _lst2.length; _j2++) {
-            if (_lst2[_j2] && typeof _lst2[_j2].x === "number" && typeof _lst2[_j2].y === "number") _screenAll++;
+      var _spAll = 0;
+      try {
+        var _lrnSp = (_spB.shots && _spB.shots.learned) ? _spB.shots.learned : null;
+        if (_lrnSp && typeof _lrnSp === "object") {
+          for (var _scSp in _lrnSp) {
+            var _lstSp = Array.isArray(_lrnSp[_scSp]) ? _lrnSp[_scSp] : [];
+            for (var _jSp = 0; _jSp < _lstSp.length; _jSp++) {
+              if (_lstSp[_jSp] && typeof _lstSp[_jSp].x === "number" && typeof _lstSp[_jSp].y === "number") _spAll++;
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+      _sitePrepared[_spSiteKey] = {
+        screenAim: _ex.screenAim,
+        sceneAim: _ex.sceneAim,
+        screenKept: _keptTag,
+        screenAllKeys: _spAllKeys,
+        screenSolid: _spSolid,
+        screenAll: _spAll,
+      };
+    }
+    try { await chrome.storage.local.set({ axlx_learn_screen_keep: _keep }); } catch (_) {}
+    var _curPrep = _sitePrepared[curSite] || (function () {
+      var _exCur = _extractScreenAndSceneFromBundle(bundle, curSite);
+      var _scAll = Object.keys(_exCur.screenAim).length;
+      var _scSol = 0;
+      for (var _kSol in _exCur.screenAim) { if ((Number(_exCur.screenAim[_kSol].n) || 0) >= 3) _scSol++; }
+      return { screenAim: _exCur.screenAim, sceneAim: _exCur.sceneAim, screenKept: null, screenAllKeys: _scAll, screenSolid: _scSol, screenAll: _scAll };
+    })();
+    var _screenAim = _curPrep.screenAim;
+    var _sceneAim = _curPrep.sceneAim;
+    var _screenKept = _curPrep.screenKept;
+    var _screenAllKeys = _curPrep.screenAllKeys;
+    var _screenSolid = _curPrep.screenSolid;
+    var _screenAll = _curPrep.screenAll;
     var _newVer = String(bundle.generated_at || "");
     var _prevVer = lastVer || "";
     var _updated = !!(_newVer && _prevVer && _newVer !== _prevVer);
     var _linkComplete = _screenSolid >= 3 && Object.keys(next).length > 0 && Object.keys(points).length > 0;
-    var _link = {
-      ver: _newVer,
-      prev_ver: _prevVer || null,
-      updated: _updated,
-      at: new Date().toISOString(),
-      site: curSite,
-      next: Object.keys(next).length,
-      points: Object.keys(points).length,
-      screen_solid: _screenSolid,
-      screen_all: _screenAll,
-      screen_keys: _screenAllKeys,
-      screen_kept: _screenKept,
-      complete: _linkComplete,
-      server_read_count: (typeof bundle._server_read_count === "number")
-        ? bundle._server_read_count
-        : ((perSite[curSite] && typeof perSite[curSite]._server_read_count === "number")
-          ? perSite[curSite]._server_read_count
-          : null),
-      steps: [
-        "1.サーバーの束を取得（read印つき）",
-        "2.サイト別と全体で新しい方を採用",
-        "3.画面位置 n≥1=" + _screenAllKeys + "欄（うち solid n≥3=" + _screenSolid + "）を axlx_learn_screen へ",
-        "4.順番 " + Object.keys(next).length + "・場所 " + Object.keys(points).length + " を配置",
-        _linkComplete ? "5.連携完了（自動が使える状態）" : "5.まだ不足（画面位置か順番が薄い）",
-        "6.自動1回で効果確認（F6/F31/F38・読んだだけでは改善済みにしない）",
-      ],
-      needs_auto: true,
-    };
+    function _buildLinkObj(b, bSite, prep, prevVerStr) {
+      var bNext = (b && b.next && typeof b.next === "object") ? b.next : {};
+      var bPoints = (b && b.points && typeof b.points === "object") ? b.points : {};
+      var bNewVer = String((b && b.generated_at) || "");
+      var bUpdated = !!(bNewVer && prevVerStr && bNewVer !== prevVerStr);
+      var bComplete = prep.screenSolid >= 3 && Object.keys(bNext).length > 0 && Object.keys(bPoints).length > 0;
+      return {
+        ver: bNewVer,
+        prev_ver: prevVerStr || null,
+        updated: bUpdated,
+        at: new Date().toISOString(),
+        site: bSite,
+        next: Object.keys(bNext).length,
+        points: Object.keys(bPoints).length,
+        screen_solid: prep.screenSolid,
+        screen_all: prep.screenAll,
+        screen_keys: prep.screenAllKeys,
+        screen_kept: prep.screenKept,
+        complete: bComplete,
+        server_read_count: (b && typeof b._server_read_count === "number") ? b._server_read_count : null,
+        steps: [
+          "1.サーバーの束を取得（read印つき）",
+          "2.サイト別と全体で新しい方を採用",
+          "3.画面位置 n≥1=" + prep.screenAllKeys + "欄（うち solid n≥3=" + prep.screenSolid + "）を axlx_learn_screen へ",
+          "4.順番 " + Object.keys(bNext).length + "・場所 " + Object.keys(bPoints).length + " を配置",
+          bComplete ? "5.連携完了（自動が使える状態）" : "5.まだ不足（画面位置か順番が薄い）",
+          "6.自動1回で効果確認（F6/F31/F38・読んだだけでは改善済みにしない）",
+        ],
+        needs_auto: bComplete,
+      };
+    }
+    var _link = _buildLinkObj(bundle, curSite, _curPrep, _prevVer);
+    if (_link.server_read_count == null && perSite[curSite] && typeof perSite[curSite]._server_read_count === "number") {
+      _link.server_read_count = perSite[curSite]._server_read_count;
+    }
     if (_updated) {
-      try { console.log("[learn] ★学びが新しくなりました: " + _prevVer.slice(0, 19) + " → " + _newVer.slice(0, 19) + "／画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + "／連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+      try { console.log("[learn] ★学びが新しくなりました(" + curSite + "): " + _prevVer.slice(0, 19) + " → " + _newVer.slice(0, 19) + "／画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + "／連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
     } else {
-      try { console.log("[learn] 学びを取り込みました（版 " + _newVer.slice(0, 19) + "）画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + " 連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
+      try { console.log("[learn] 学びを取り込みました（" + curSite + " 版 " + _newVer.slice(0, 19) + "）画面位置 keys=" + _screenAllKeys + " solid=" + _screenSolid + " 連携" + (_linkComplete ? "完了" : "未完了")); } catch (_) {}
     }
     await chrome.storage.local.set({
       axlx_learn_screen: _screenAim,
@@ -3375,45 +3512,15 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_weak: weak,
       axlx_learn_site_flow: siteFlow,
       axlx_learn_screen_flow: screenFlow,
-      /**
-       * 2026-11-14 竹内さん「リアプロ itandi それぞれちゃんと区別して学習」:
-       *   **サイト別の正本**（リアプロ用と itandi 用を別々に持つ）。
-       *   ⚠ 上のキー（`axlx_learn_next` など）は**今いるサイトの物**なので、
-       *     タブを切り替えた時に取り直せば、そのサイトの学びに切り替わる。
-       */
       axlx_learn_by_site: perSite,
-      /**
-       * 2026-11-14 竹内さん「学習の統括の部分判断できるようにちゃんと強化していく」:
-       *   統括の**判断**（結論・次にやる事・数字）も置く。
-       *   ⚠ これが無いと「今の学びを自動検索に渡してよいか」が現場で分からない。
-       */
       axlx_learn_supervisor: (bundle.supervisor && typeof bundle.supervisor === "object") ? bundle.supervisor : null,
       axlx_learn_supervisor_by_site: (bundle.supervisor_by_site && typeof bundle.supervisor_by_site === "object") ? bundle.supervisor_by_site : null,
-      /**
-       * 2026-11-14 竹内さん「自動検索の部分これでちゃんと強化されたかな」→ **まだだった**。
-       *
-       *   ⚠ サーバーで**場面ごとの手順**（`scene_flows`・人が実際に押した順）を作ったのに、
-       *     拡張は**1箇所も読んでいなかった**（実測 0箇所）。
-       *     ＝「計算したが現場に届かない」を、前回（`screen_flow`）と**同じ穴でもう一度**作っていた。
-       *
-       *   → 自動検索が使える形で置く:
-       *     ・`axlx_learn_scene_flows` … 場面ごとの手順（area/station/cond/search/list/next）
-       *     ・`axlx_learn_stopped_scene` … 止まる回が多い場面（自動が「ここで慎重に」を選べる）
-       *     ・`axlx_learn_scene_missing` … 手本が無い場面（自動で**推測しない**ための印）
-       *   ⚠ これらは**並べ替えの材料**として使う（項目の増減は絶対にしない＝検索漏れを出さない）。
-       */
       axlx_learn_scene_flows: Array.isArray(bundle.scene_flows) ? bundle.scene_flows.slice(0, 12) : null,
       axlx_learn_stopped_scene: (typeof bundle.stopped_scene === "string" && bundle.stopped_scene) ? bundle.stopped_scene : null,
       axlx_learn_scene_missing: (typeof bundle.scene_missing === "number" && bundle.scene_missing > 0)
         ? { n: bundle.scene_missing, names: String(bundle.scene_missing_names || "") } : null,
-      /**
-       * 2026-11-20 竹内さん「手順書は束の中に載せる」: 束から作った手順書（場面の手順・押す位置・開く欄・次のページの件数）。
-       *   ⚠ 並べ替え・確かめの材料として使う（項目の増減はしない）。サーバーが作れなかった時は null。
-       */
       axlx_learn_playbook: (bundle.playbook && typeof bundle.playbook === "object") ? bundle.playbook : null,
-      /** 今どのサイトの学びを上のキーに入れたか（点検用） */
       axlx_learn_for_site: curSite,
-      /** サイト別に何が学べているか（1行ずつ） */
       axlx_learn_site_summary: (function () {
         var o = {};
         for (var k in perSite) {
@@ -3436,20 +3543,66 @@ async function _refreshLearnedBundle(force) {
       axlx_learn_seq: seqFlow,
       axlx_learn_by_mode: byMode,
       axlx_learn_plan: plan,
-      /** モード別の押す順番（そのモードで学べている時だけ） */
       ...(modeNext ? { axlx_learn_next_mode: modeNext, axlx_learn_next_mode_name: myMode } : {}),
       axlx_learn_at: Date.now(),
-      /** 2026-11-14: 学習の版（変わったら取り直す印） */
       axlx_learn_ver: String(bundle.generated_at || ""),
       axlx_learn_src: { rows: (bundle.source && bundle.source.rows) || 0, at: bundle.generated_at || null, dropped: bundle.dropped_cols || null },
-      /**
-       * ★ 2026-11-17: 新束を読んだ直後は「自動未確認」。自動1回後に false にする。
-       *   学習しても改善されない抜け＝読むだけで終わるのを止める印。
-       */
       axlx_learn_needs_auto: _linkComplete,
       axlx_learn_server_solid: _screenSolid,
-      /** ★ 2.8.183: 更新直後の強制取込が成功したら印を下ろす（次回は版確認だけでよい） */
       axlx_learn_after_update: false,
+      // ★ 2026-11-27 サイト分離: 両サイトの全学習キーをサイト専用キー(__realpro / __itandi)へ完全分離保存
+      ...(function () {
+        var extra = {};
+        for (var _scKey in perSite) {
+          if (!Object.prototype.hasOwnProperty.call(perSite, _scKey)) continue;
+          var _sb = perSite[_scKey];
+          if (!_sb || typeof _sb !== "object") continue;
+          var _suf = "__" + _scKey;
+          var _sp = _sitePrepared[_scKey] || { screenAim: {}, sceneAim: {}, screenKept: null, screenAllKeys: 0, screenSolid: 0, screenAll: 0 };
+          var _prevScVer = String((st && st["axlx_learn_ver" + _suf]) || "");
+          var _scLink = _buildLinkObj(_sb, _scKey, _sp, _prevScVer);
+          var _scHint = _headHintBySite[_scKey];
+          var _scNeedsAuto = (_scHint && typeof _scHint.needs_auto === "boolean")
+            ? _scHint.needs_auto
+            : (_scLink.complete && (_prevScVer !== _scLink.ver || !(st && st["axlx_learn_auto_linked" + _suf])));
+          var _scByMode = (_sb.by_mode && typeof _sb.by_mode === "object") ? _sb.by_mode : {};
+          var _scModeNext = (myMode && _scByMode[myMode] && _scByMode[myMode].next) ? _scByMode[myMode].next : null;
+          extra["axlx_learn_playbook" + _suf] = (_sb.playbook && typeof _sb.playbook === "object") ? _sb.playbook : null;
+          extra["axlx_learn_next" + _suf] = (_sb.next && typeof _sb.next === "object") ? _sb.next : {};
+          extra["axlx_learn_points" + _suf] = (_sb.points && typeof _sb.points === "object") ? _sb.points : {};
+          extra["axlx_learn_scene_flows" + _suf] = Array.isArray(_sb.scene_flows) ? _sb.scene_flows.slice(0, 12) : null;
+          extra["axlx_learn_stopped_scene" + _suf] = (typeof _sb.stopped_scene === "string" && _sb.stopped_scene) ? _sb.stopped_scene : null;
+          extra["axlx_learn_scene_missing" + _suf] = (typeof _sb.scene_missing === "number" && _sb.scene_missing > 0)
+            ? { n: _sb.scene_missing, names: String(_sb.scene_missing_names || "") } : null;
+          extra["axlx_learn_supervisor" + _suf] = (_sb.supervisor && typeof _sb.supervisor === "object") ? _sb.supervisor : null;
+          extra["axlx_learn_ver" + _suf] = String(_sb.generated_at || "");
+          extra["axlx_learn_screen" + _suf] = _sp.screenAim;
+          extra["axlx_learn_scene" + _suf] = _sp.sceneAim;
+          extra["axlx_learn_opens" + _suf] = (_sb.opens && typeof _sb.opens === "object") ? _sb.opens : {};
+          extra["axlx_learn_gaps" + _suf] = (_sb.gaps && typeof _sb.gaps === "object") ? _sb.gaps : {};
+          extra["axlx_learn_weak" + _suf] = Array.isArray(_sb.weak) ? _sb.weak.slice(0, 80) : [];
+          extra["axlx_learn_site_flow" + _suf] = (_sb.site_flow && typeof _sb.site_flow === "object") ? _sb.site_flow : {};
+          extra["axlx_learn_screen_flow" + _suf] = (_sb.screen_flow && typeof _sb.screen_flow === "object") ? _sb.screen_flow : {};
+          extra["axlx_learn_seq" + _suf] = (_sb.sequence_flow && typeof _sb.sequence_flow === "object") ? _sb.sequence_flow : {};
+          extra["axlx_learn_by_mode" + _suf] = _scByMode;
+          extra["axlx_learn_plan" + _suf] = (_sb.learn_plan && typeof _sb.learn_plan === "object") ? _sb.learn_plan : {};
+          extra["axlx_learn_motion" + _suf] = (_sb.motion && typeof _sb.motion === "object") ? _sb.motion : {};
+          extra["axlx_learn_cursor_hand" + _suf] = (_sb.cursor_hand && typeof _sb.cursor_hand === "object") ? _sb.cursor_hand : {};
+          if (_scModeNext) {
+            extra["axlx_learn_next_mode" + _suf] = _scModeNext;
+            extra["axlx_learn_next_mode_name" + _suf] = myMode;
+          }
+          extra["axlx_learn_link" + _suf] = _scLink;
+          extra["axlx_learn_needs_auto" + _suf] = !!_scNeedsAuto;
+          extra["axlx_learn_server_solid" + _suf] = _sp.screenSolid;
+          if (_scKey === curSite) {
+            extra.axlx_learn_needs_auto = !!_scNeedsAuto;
+          }
+          _headCheckAtBySite[_scKey] = Date.now();
+        }
+        _headCheckAt = Date.now();
+        return extra;
+      })(),
     });
     console.log("[learn] 学習の束を取り込みました: 順番 " + Object.keys(next).length + "通り・場所 " + Object.keys(points).length + "個・弱い所 " + weak.length + "件・画面 " + Object.keys(screenFlow).length + "種類・一連 " + ((seqFlow.sequence || []).length) + "手・展開先 " + Object.keys(opens).length + "個"
       + (modeNext ? "・モード別(" + myMode + ") " + Object.keys(modeNext).length + "通り" : "")
@@ -3517,7 +3670,80 @@ try {
 try {
   chrome.runtime.onMessage.addListener(function (msg, _s, sendResponse) {
     if (!msg) return;
-    if (msg.type === "axlx-learn-refresh") { _refreshLearnedBundleQueued(true).then(function (r) { try { sendResponse(r); } catch (_) {} }); return true; }
+    /**
+     * ★ 2.8.309 旧「いつも強制」＝タスク切替の関所が毎回 重い束を取りに行く穴を塞ぐ（実測: 強制は版確認を飛ばし scope=realpro/itandi を各最大40秒で取る）。
+     *   ・強制にするのは「ポップアップを開いた時（src=popup_open）と、ページ起動で束が空・古い時（src=boot_need）」だけ。
+     *   ・それ以外（検索前・タスク切替の関所）は gate 判定（更新直後・手順書欠・needs_auto 等の時だけ強制。普段は版確認だけで「取らず」）。
+     */
+        if (msg.type === "axlx-reset-before-fill") {
+      (async function () {
+        try {
+          // 案内モード中（normal）は絶対にリセットボタンを押さない
+          var core = self.AxlxModeCore;
+          var stKeys = (core && core.STORAGE_KEYS) || ["staffMode", "staffModeAt", "aixMode", "aiMode", "brainMode", "autoModeAt"];
+          var st = await chrome.storage.local.get(stKeys);
+          var stMode = core && (core.effectiveState || core.readState) ? (core.effectiveState || core.readState)(st || {}, Date.now()).mode : "normal";
+          if (stMode === "normal") { sendResponse({ skipped: "guide_mode" }); return; }
+          var prefTabId = _s && _s.tab && _s.tab.id ? _s.tab.id : null;
+          // 一括が回っている間は入力前リセットを一括の流れが持つ（ここから押すと二重になる・#1666/#1671）
+          if (_manualBulkAlive || _batchLoopAlive) {
+            try { if (_bulkPhaseRunId) _auditStep(_bulkPhaseRunId, "reset_before_fill_dup_skip", ("一括の最中に別の入口から入力前リセットの頼み→押さない（一括が持つ）cid=" + String((msg.customer && msg.customer.id) || msg.customerId || "-").slice(0, 8)).slice(0, 120)); } catch (_) {}
+            sendResponse({ skipped: "bulk_owns_reset", dispatched: false });
+            return;
+          }
+          var rr = await _resetBeforeFill(msg.customer || { id: msg.customerId || null }, msg.runId || null, prefTabId);
+          var dispatched = false;
+          // ★ 2026-11-27 修正: ページ内 iframe（underbar）のポップアップはリセットのページ再読み込みで消えるため、
+          //   autoFillAfter が付いていたらリロード完了後も生きている background から直接自動入力を送る。
+          if (msg.autoFillAfter && msg.autoFillAfter.conditions) {
+            try {
+              var _af = msg.autoFillAfter;
+              var _tabsAf = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+              var _tabAf = (prefTabId ? (_tabsAf || []).find(function (t) { return t && t.id === prefTabId; }) : null)
+                || (_tabsAf || []).filter(function (t) { return t && t.id && t.active; })[0]
+                || (_tabsAf || [])[0];
+              if (_tabAf && _tabAf.id) {
+                try { await _batchWaitForTabComplete(_tabAf.id, 15000); } catch (_) {}
+                var _sentAf = false;
+                for (var _att = 0; _att < 5 && !_sentAf; _att++) {
+                  if (_att > 0) await new Promise(function (r) { setTimeout(r, 900 + Math.floor(Math.random() * 500)); });
+                  try {
+                    await new Promise(function (resolve) {
+                      chrome.tabs.sendMessage(_tabAf.id, {
+                        type: "axlx-set-fill-customer",
+                        customerId: _af.customerId || null,
+                      }, function () { void chrome.runtime.lastError; resolve(); });
+                    });
+                    _sentAf = await new Promise(function (resolve) {
+                      chrome.tabs.sendMessage(_tabAf.id, {
+                        type: "axlx-realnetpro-autofill",
+                        customerId: _af.customerId || null,
+                        conditions: _af.conditions,
+                        source: _af.source || "manual",
+                      }, function (resp) {
+                        if (chrome.runtime.lastError || !resp || !resp.ok) { resolve(false); return; }
+                        resolve(true);
+                      });
+                    });
+                  } catch (_) {}
+                }
+                dispatched = _sentAf;
+              }
+            } catch (_) {}
+          }
+          sendResponse(Object.assign({}, rr || { ok: false, why: "no_result" }, { dispatched: dispatched }));
+        } catch (e) {
+          try { sendResponse({ ok: false, why: String((e && e.message) || e).slice(0, 60) }); } catch (_) {}
+        }
+      })();
+      return true;
+    }
+    if (msg.type === "axlx-learn-refresh") {
+      var _lrSite = _normLearnSite(msg.site) || _normLearnSite(_s && _s.tab && _s.tab.url) || null;
+      var _lrP = (msg.force === true && (msg.src === "popup_open" || msg.src === "boot_need")) ? _refreshLearnedBundleQueued(true, _lrSite) : _learnRefreshForAutofill(_lrSite);
+      _lrP.then(function (r) { try { sendResponse(r); } catch (_) {} });
+      return true;
+    }
     /**
      * ★ 2.8.238: 詰まり時にリアプロタブを前へ（画面照会で tab_hidden の最善次手）
      */
@@ -3538,25 +3764,52 @@ try {
     }
     /**
      * ★ 2026-11-17: page-script が learn_reflect_ok を出したら即連動完了印。
-     *   fill-done 前に反映できた回も needs_auto を下ろせる。
+     *   fill-done 前に反映できた回も needs_auto を下ろせる。サイト別に分けて保存する。
      */
     if (msg.type === "axlx-learn-auto-linked") {
       try {
+        var _lkSite = _normLearnSite(msg.site) || _normLearnSite(_s && _s.tab && _s.tab.url) || "";
+        var _lkPatch = {};
         if (msg.ok) {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: false,
-            axlx_learn_auto_linked: true,
-            axlx_learn_auto_linked_at: Date.now(),
-            axlx_learn_auto_linked_screen: Number(msg.screen) || 0,
-            axlx_learn_flow_linked: !!msg.flow,
+          if (_lkSite) {
+            _lkPatch["axlx_learn_needs_auto__" + _lkSite] = false;
+            _lkPatch["axlx_learn_auto_linked__" + _lkSite] = true;
+            _lkPatch["axlx_learn_auto_linked_at__" + _lkSite] = Date.now();
+            _lkPatch["axlx_learn_auto_linked_screen__" + _lkSite] = Number(msg.screen) || 0;
+            _lkPatch["axlx_learn_flow_linked__" + _lkSite] = !!msg.flow;
+          }
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!_lkSite || !fs || fs === _lkSite) {
+                _lkPatch.axlx_learn_needs_auto = false;
+                _lkPatch.axlx_learn_auto_linked = true;
+                _lkPatch.axlx_learn_auto_linked_at = Date.now();
+                _lkPatch.axlx_learn_auto_linked_screen = Number(msg.screen) || 0;
+                _lkPatch.axlx_learn_flow_linked = !!msg.flow;
+              }
+              chrome.storage.local.set(_lkPatch);
+            } catch (_) {}
           });
         } else {
           /** ★ F46: 流れ反映不足なら needs_auto を残す（録画強化→自動反映を切らない） */
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: true,
-            axlx_learn_auto_linked: false,
-            axlx_learn_flow_linked: !!msg.flow,
-            axlx_learn_auto_reflect_miss_at: Date.now(),
+          if (_lkSite) {
+            _lkPatch["axlx_learn_needs_auto__" + _lkSite] = true;
+            _lkPatch["axlx_learn_auto_linked__" + _lkSite] = false;
+            _lkPatch["axlx_learn_flow_linked__" + _lkSite] = !!msg.flow;
+            _lkPatch["axlx_learn_auto_reflect_miss_at__" + _lkSite] = Date.now();
+          }
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!_lkSite || !fs || fs === _lkSite) {
+                _lkPatch.axlx_learn_needs_auto = true;
+                _lkPatch.axlx_learn_auto_linked = false;
+                _lkPatch.axlx_learn_flow_linked = !!msg.flow;
+                _lkPatch.axlx_learn_auto_reflect_miss_at = Date.now();
+              }
+              chrome.storage.local.set(_lkPatch);
+            } catch (_) {}
           });
         }
       } catch (_) {}
@@ -3564,17 +3817,30 @@ try {
       return true;
     }
     if (msg.type !== "axlx-learn-status") return;
-    chrome.storage.local.get(_LEARN_KEYS.concat(["axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver"])).then(function (r) {
-      var nx = (r && r.axlx_learn_next) || {};
-      var pt = (r && r.axlx_learn_points) || {};
-      var link = (r && r.axlx_learn_link) || null;
-      var scr = (r && r.axlx_learn_screen) || {};
+    var stKeys = _LEARN_KEYS.concat(["axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver", "axlx_learn_for_site"]);
+    var wantSt = (msg.site === "itandi" || msg.site === "realpro") ? msg.site : null;
+    if (wantSt) {
+      ["axlx_learn_at", "axlx_learn_src", "axlx_learn_link", "axlx_learn_screen", "axlx_learn_ver", "axlx_learn_next", "axlx_learn_points"].forEach(function (k) {
+        stKeys.push(k + "__" + wantSt);
+      });
+    }
+    chrome.storage.local.get(stKeys).then(function (r) {
+      var pick = function (k) {
+        if (!r) return null;
+        if (wantSt) return r[k + "__" + wantSt] || (r.axlx_learn_for_site === wantSt ? r[k] : null) || null;
+        return r[k] || null;
+      };
+      var nx = pick("axlx_learn_next") || {};
+      var pt = pick("axlx_learn_points") || {};
+      var link = pick("axlx_learn_link") || null;
+      var scr = pick("axlx_learn_screen") || {};
       try {
         sendResponse({
           ok: true,
-          at: (r && r.axlx_learn_at) || null,
-          src: (r && r.axlx_learn_src) || null,
-          ver: (r && r.axlx_learn_ver) || null,
+          site: wantSt || (r && r.axlx_learn_for_site) || null,
+          at: pick("axlx_learn_at") || null,
+          src: pick("axlx_learn_src") || null,
+          ver: pick("axlx_learn_ver") || null,
           link: link,
           screen_solid: link && typeof link.screen_solid === "number" ? link.screen_solid : Object.keys(scr).length,
           complete: !!(link && link.complete),
@@ -4649,6 +4915,16 @@ if (msg.type === "axlx-human-shots-list") {  (async () => {
   // 全ページをスクレイプして /api/compare-properties に POST する。
   if (msg.type === "axlx-scrape-and-compare") {
     const { customerId, conditions } = msg;
+    // ★ 2.8.328: axlx-webapp-search と同じ関所。一括の途中・邪魔しない窓の間は、別のお客さんへの切り替え・main.php への移動をしない
+    if (_manualBulkAlive || _quietNow()) {
+      var _qwc = _quietDefer("webapp_compare", "cid=" + String(customerId || "").slice(0, 8));
+      sendResponse({
+        ok: false,
+        error: "bulk_busy",
+        message: "一括検索の途中（" + (_qwc ? _qwc.kind : "一括中") + "）なので、今は物件の比較をしません。一括が終わってから押し直してください。",
+      });
+      return true;
+    }
     (async () => {
       try {
         var scrapedCount = await _runScrapeAndCompare(customerId, conditions);
@@ -4765,7 +5041,7 @@ async function _runScrapeAndCompare(customerId, conditions) {
     try {
       await chrome.tabs.update(_scRealTab.id, { active: true });
       // content.js に現在の顧客IDを通知（fill-done relay に customerId を付与するため）
-      try { await chrome.tabs.sendMessage(_scRealTab.id, { type: "axlx-set-fill-customer", customerId: String(customerId) }); } catch(_) {}
+      try { await _withTimeout(chrome.tabs.sendMessage(_scRealTab.id, { type: "axlx-set-fill-customer", customerId: String(customerId) }), 4000, "set_fill_customer"); } catch(_) {}
       var _directResp = await new Promise(function(resolve) {
         chrome.tabs.sendMessage(_scRealTab.id, {
           type:         "axlx-switch-customer",
@@ -5123,16 +5399,23 @@ var _auditTracker = (self.AxlxSearchAudit && self.AxlxSearchAudit.createTracker(
 var AUDIT_OPEN_RUNS_KEY = "axlx_audit_open_runs";
 var AUDIT_PERSIST_DEBOUNCE_MS = 800;
 var _auditPersistT = null;
-function _auditPersistSoon() {
+function _auditPersistNow() {
   try {
-    if (!_auditTracker || !_auditTracker.exportOpen || _auditPersistT) return;
+    if (!_auditTracker || !_auditTracker.exportOpen) return;
+    if (_auditPersistT) { clearTimeout(_auditPersistT); _auditPersistT = null; }
+    var o = {};
+    o[AUDIT_OPEN_RUNS_KEY] = { at: Date.now(), runs: _auditTracker.exportOpen() };
+    chrome.storage.session.set(o);
+  } catch (_) {}
+}
+function _auditPersistSoon(immediate) {
+  try {
+    if (!_auditTracker || !_auditTracker.exportOpen) return;
+    if (immediate) { _auditPersistNow(); return; }
+    if (_auditPersistT) return;
     _auditPersistT = setTimeout(function () {
       _auditPersistT = null;
-      try {
-        var o = {};
-        o[AUDIT_OPEN_RUNS_KEY] = { at: Date.now(), runs: _auditTracker.exportOpen() };
-        chrome.storage.session.set(o);
-      } catch (_) {}
+      _auditPersistNow();
     }, AUDIT_PERSIST_DEBOUNCE_MS);
   } catch (_) {}
 }
@@ -5141,9 +5424,10 @@ function _auditPersistSoon() {
   ["begin", "step", "attachFill", "attachProgress", "attachResult", "finish"].forEach(function (name) {
     var orig = _auditTracker[name];
     if (typeof orig !== "function") return;
+    var immediate = (name === "begin" || name === "attachFill" || name === "attachResult" || name === "finish");
     _auditTracker[name] = function () {
       var out = orig.apply(_auditTracker, arguments);
-      _auditPersistSoon();
+      _auditPersistSoon(immediate);
       return out;
     };
   });
@@ -5422,8 +5706,17 @@ async function _auditOnFillDone(msg, sender) {
       _auditFinish(_rid, {});
       return;
     }
-    // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索で失敗した時もここで閉じる
-    if (run.site === "reins" || ((run.trigger === "single" || run.trigger === "local") && _pageErr)) _auditFinish(_rid, {});
+    var _hasFillW = false;
+    try {
+      var _cidFill = run.property_customer_id != null ? String(run.property_customer_id) : "";
+      _hasFillW = _fillDoneWaiters.some(function (w) {
+        return _waiterSiteMatch(w, run.site) && (!w.customerId || !_cidFill || String(w.customerId) === _cidFill);
+      });
+    } catch (_) { _hasFillW = false; }
+    // レインズは結果の読み取り（一括送信）が無いので fill-done で閉じる。個別の検索、または SW再起動で復元／待ち手消滅後に失敗が来た時は即閉じる
+    if (run.site === "reins" || (_pageErr && (run.trigger === "single" || run.trigger === "local" || run.restored || (!_manualBulkAlive && !_batchLoopAlive && !_hasFillW)))) {
+      _auditFinish(_rid, _pageErr ? { error: _pageErr } : {});
+    }
   } catch (e) { console.warn("[search-audit] fill-done の記録に失敗:", e && e.message); }
 }
 
@@ -5438,7 +5731,16 @@ function _auditOnBatchDone(customerId, propertyCount, audit) {
     delete res.site;
     if (propertyCount != null) res.property_count = propertyCount;
     _auditTracker.attachResult(run.run_id, res);
-    if (run.trigger === "single") _auditFinish(run.run_id, {});
+    var _hasBatchW = false;
+    try {
+      var _cidB = customerId != null ? String(customerId) : "";
+      _hasBatchW = _batchCustomerDoneWaiters.some(function (w) {
+        return _waiterSiteMatch(w, site || run.site) && (!w.customerId || !_cidB || String(w.customerId) === _cidB);
+      });
+    } catch (_) { _hasBatchW = false; }
+    if (run.trigger === "single" || run.restored || (!_manualBulkAlive && !_batchLoopAlive && !_hasBatchW)) {
+      _auditFinish(run.run_id, {});
+    }
   } catch (e) { console.warn("[search-audit] 結果の記録に失敗:", e && e.message); }
 }
 
@@ -6034,6 +6336,19 @@ async function _manualBulkRun(o) {
       // 前回バッチのストップ残留をクリア（即解決を防ぐ）
       _batchShouldStop = false;
       try { await chrome.storage.local.set({ batchStopRequested: false }); } catch(_) {}
+      // 同一ブラウザ内に残っていた前の放置 run（やり直しで孤立した bulk_manual）を先に掃除する（abandoned 防止）
+      try {
+        if (_auditTracker && _auditTracker.listOpen) {
+          var _oldBulkRuns = _auditTracker.listOpen();
+          for (var _obi = 0; _obi < _oldBulkRuns.length; _obi++) {
+            var _or = _oldBulkRuns[_obi];
+            if (_or && _or.trigger === "bulk_manual" && _or.run_id) {
+              _auditStep(_or.run_id, "bulk_superseded", "新しい一括開始により前回の残りを閉じる");
+              _auditFinish(_or.run_id, { error: "superseded_by_new_bulk" });
+            }
+          }
+        }
+      } catch (_) {}
     } else {
       try {
         var _stopSt = await chrome.storage.local.get("batchStopRequested");
@@ -6227,7 +6542,36 @@ async function _manualBulkRun(o) {
          *   → 条件を入れる前に必ず「ページが空か」を読み、空でなければリセットを押して空を確かめる（人の順番）。
          *     押せない・空にならない時だけ従来の外し（ページ側）に任せる。
          */
-        try { await _resetBeforeFill(_bc, _bulkAudit ? _bulkAudit.runId : null); } catch (_) {}
+        /**
+         * ★ 2.8.317 竹内さん「検索始めの1番最初のお客さんはリセットしなくて大丈夫」「リセットしたら必ず空になっているので、
+         *   そのままお客さんの条件を拡張ツールからいれるようにする」:
+         *   ・この一括の最初の客（再開ではない回の頭）は入力前にリセットしない。
+         *   ・前の客のリセットが済んでいる（_axlxLastPsReset が前客の物で成功）なら、入力前の「空か読む→空でなければリセット」もしない。
+         *   ・印が無い回（前客が途中で終わった・裏が起き直した・再開）だけ従来どおり入力前に空を読む。
+         *   ⚠ ページ側の「外す」安全網（leftover 判定）は残る。ここは「リセットを押す回数を減らす」だけ。
+         */
+        var _skipPreFill = "";
+        try {
+          if (_bi === _startIndex && !_resume) {
+            _skipPreFill = "この一括の最初の客はリセットしない";
+          } else {
+            var _lp0 = self._axlxLastPsReset;
+            var _prevT0 = _bi > 0 ? _bulkTargets[_bi - 1] : null;
+            if (_lp0 && _lp0.ok && _prevT0 && String(_lp0.cid) === String(_prevT0.id) && Date.now() - Number(_lp0.at || 0) < 20 * 60 * 1000) {
+              _skipPreFill = "前客のリセットが空と確かめ済み（そのまま入れる）";
+            }
+          }
+        } catch (_) { _skipPreFill = ""; }
+        if (_skipPreFill) {
+          console.log("[manual-bulk-search] 入力前のリセットは見送り: " + _skipPreFill + "（" + (_bc.customer_name || "") + "）");
+          try { if (_bulkAudit) _auditStep(_bulkAudit.runId, "reset_before_fill", ("見送り=" + _skipPreFill).slice(0, 120)); } catch (_) {}
+        } else {
+          try {
+            var _rbf = await _resetBeforeFill(_bc, _bulkAudit ? _bulkAudit.runId : null);
+            // ★ 2026-11-27 空を確かめられず止めた→この客へ入れず一括を止める（残りを持ち越さない）
+            if (_rbf && (_rbf.stop || (!_rbf.ok && !_rbf.skipped))) { _batchShouldStop = true; _resetStopNotify(_bc.customer_name || "", _bulkSite === "itandi" ? "ITANDI" : "リアプロ", !!_rbf.hiddenStuck); }
+          } catch (_) {}
+        }
         if (_myGen !== _manualBulkGen) { console.warn("[manual-bulk-search] 入力前のリセットの間に新しいループへ → 古いループは抜ける gen=" + _myGen); return; }
         if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（入力前のリセット） → 中断"); break; }
       }
@@ -6310,7 +6654,7 @@ async function _manualBulkRun(o) {
               nextName: _bulkNextNm,
               nextId: _bulkTargets[_bi + 1] && _bulkTargets[_bi + 1].id != null ? String(_bulkTargets[_bi + 1].id) : "",
               names: _bulkNames,
-              nextMove: _bulkNextNm ? "前客の選択を1つずつ外す" : "一括完了",
+              nextMove: _bulkNextNm ? "リセットで空にして次のお客さんへ" : "一括完了",
               waitingFor: _bulkNextNm ? "次客へ渡す" : "一括完了",
             }), 8000, "publish_done");
           } catch (_) {}
@@ -6329,9 +6673,23 @@ async function _manualBulkRun(o) {
           } catch (_) { _lookMs = 3500; }
           if (_lookMs < 1800) _lookMs = 1800;
           if (_lookMs > 13000) _lookMs = 13000;
-          console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
-          _bulkPhaseSet("look", _lookMs, {});
-          await new Promise(function (r) { setTimeout(r, _lookMs); });
+          /**
+           * ★ 2.8.307 竹内さん「5（資料を見る間）はいるのか」→ リセットが成功した客は省く（reset_success_skips_look）:
+           *   リセット後の待ち30秒以上＋空の確認＋撮影までの間が、もう人の間になっている。リセットが使えなかった客だけ今まで通り置く。
+           */
+          var _skipLook = false;
+          try {
+            var _lp = self._axlxLastPsReset;
+            _skipLook = !!(_lp && _lp.ok && String(_lp.cid) === String(_bc.id) && Date.now() - _lp.at < 180000);
+          } catch (_) { _skipLook = false; }
+          if (_skipLook) {
+            console.log("[manual-bulk-search] 👀 資料を見る間は省く（リセットで人の間は済んでいる）（" + (_bc.customer_name || "") + "）");
+            try { if (_bulkAudit) _auditStep(_bulkAudit.runId, "look_skip", "リセット成功のため資料を見る間は省く"); } catch (_) {}
+          } else {
+            console.log("[manual-bulk-search] 👀 資料を見る間 " + Math.round(_lookMs / 1000) + "秒（" + (_bc.customer_name || "") + "）");
+            _bulkPhaseSet("look", _lookMs, {});
+            await new Promise(function (r) { setTimeout(r, _lookMs); });
+          }
           if (_batchShouldStop) { console.log("[manual-bulk-search] ストップ要求（資料を見る間） → 中断"); break; }
         }
         // 2026-09-27 v2.5.32: 記録は検索を押せた後（失敗して投げた回は記録しない）
@@ -6527,7 +6885,7 @@ async function _waitInheritedReset(runId) {
     if (runId) _auditStep(runId, "quiet_inherit", ("前の回のリセットが途中（" + Math.round(el / 1000) + "秒前）→ あと" + Math.round(need / 1000) + "秒待ち・前客の選択を外してから入れる").slice(0, 80));
     try {
       var tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
-      var tab = (tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (tabs || [])[0];
+      var tab = _pickRealproResetTab(tabs, null);
       if (tab && tab.id) {
         await _withTimeout(chrome.scripting.executeScript({
           target: { tabId: tab.id },
@@ -6861,7 +7219,56 @@ try {
         if (!q || q.done) return;
         if (!q.beatAt || Date.now() - q.beatAt > 20 * 60000) { _bulkQueueSave({ done: true, why: "stale_on_start" }); return; }
         if (q.stage === "running") {
-          console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける");
+          console.warn("[bulk] 裏が立ち上がり直した（" + (Number(q.index) + 1) + "人目の入力・送付中）→ 画面の送付完了を待って続ける（90秒反応なければ自動確認）");
+          var _swWdRun = function (_swTry) {
+            (async function () {
+              try {
+                if (_manualBulkAlive || _batchLoopAlive) return;
+                var q2 = await _bulkQueueLoad();
+                if (!q2 || q2.done || q2.stage !== "running") return;
+                if (Date.now() - (Number(q2.beatAt) || 0) < 90000) return;
+                /**
+                 * ★ 2.8.315 実測 #1659→#1661（2026-11-27）: 入力（fillRunning）は終わっていても、検索後の
+                 *   「並べ替え→一覧→PDF」は画面側（bulk-dl）が続けている。旧はそこを見ず「放置」と決めて
+                 *   次客を始め、並べ替えが終わった5秒後に次客の「リセット」が前客の物件取得を割った
+                 *   （次客は前客の鍵で最大10分待ち → 条件が入らない）。
+                 *   → 前客の一連の鍵（axlx_pipeline_job）か検索後の印（axlx_pending_auto_send）が生きている間は
+                 *     次へ進めず、60秒ごとに見直す（鍵は無進捗12分・開始30分で切れるので永久には待たない）。
+                 */
+                try {
+                  var _wdLk = await chrome.storage.local.get("axlx_pipeline_job");
+                  var _wdJob = _wdLk && _wdLk.axlx_pipeline_job;
+                  var _wdSs = await chrome.storage.session.get("axlx_pending_auto_send");
+                  var _wdPa = _wdSs && _wdSs.axlx_pending_auto_send;
+                  var _wdCid = String(q2.cid || "");
+                  var _wdJobLive = !!(_wdJob && String(_wdJob.customerId || "") === _wdCid && _pipelineJobLive(_wdJob));
+                  var _wdPaLive = !!(_wdPa && String(_wdPa.customerId || "") === _wdCid && Date.now() - Number(_wdPa.ts || 0) < 10 * 60 * 1000);
+                  if ((_wdJobLive || _wdPaLive) && _swTry < 40) {
+                    console.warn("[bulk] SW再起動後の見張り: 前客は検索後の一覧・PDFの途中（鍵=" + _wdJobLive + " 印=" + _wdPaLive + "）→ 次へ進めず待つ " + (_swTry + 1));
+                    // beatAt は更新しない（更新すると次の見直しが「まだ新しい」で抜けて見張りが消える）
+                    var _swWdGapMs = 60000;
+                    setTimeout(function () { _swWdRun(_swTry + 1); }, _swWdGapMs);
+                    return;
+                  }
+                } catch (_) {}
+                // 画面タブが生きているか／実はもう終わっていないか確認し、止まったままなら次へ進める
+                var tabsR = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
+                var aliveFilling = false;
+                for (var ti = 0; ti < (tabsR || []).length; ti++) {
+                  var tb = tabsR[ti];
+                  if (!tb || !tb.id) continue;
+                  var isIt = /^https:\/\/itandibb\.com/.test(String(tb.url || ""));
+                  var pr = isIt ? await _probeItandiTab(tb.id) : await _probeRealproTab(tb.id);
+                  if (pr && pr.fillRunning) { aliveFilling = true; break; }
+                }
+                if (!aliveFilling && q2.cid) {
+                  console.warn("[bulk] SW再起動後の見張り: 入力中ではなく放置状態 → batch_done_sw_watchdog で再開");
+                  await _bulkKick("batch_done_sw_watchdog", { doneCid: String(q2.cid) });
+                }
+              } catch (_) {}
+            })();
+          };
+          setTimeout(function () { _swWdRun(0); }, 90000);
           return;
         }
         await _bulkKick("sw_restart");
@@ -7677,7 +8084,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
               _auditStep(
                 _flowRid,
                 "next_move_grasp",
-                "次の動き=前客の選択を1つずつ外す（または物件取得続き） fill一連",
+                "次の動き=リセットで空にして次のお客さんへ（または物件取得続き） fill一連",
               );
             } catch (_) {}
           } else if (!msg.error && _flowRid) {
@@ -7685,18 +8092,40 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           }
         } catch (_) {}
         if (_refOk) {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: false,
-            axlx_learn_auto_confirmed_at: Date.now(),
-            axlx_learn_auto_linked: true,
+          var _lkAutoSite = _normLearnSite(_msgSite) || "realpro";
+          var _refPatchOk = {};
+          _refPatchOk["axlx_learn_needs_auto__" + _lkAutoSite] = false;
+          _refPatchOk["axlx_learn_auto_confirmed_at__" + _lkAutoSite] = Date.now();
+          _refPatchOk["axlx_learn_auto_linked__" + _lkAutoSite] = true;
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!fs || fs === _lkAutoSite) {
+                _refPatchOk.axlx_learn_needs_auto = false;
+                _refPatchOk.axlx_learn_auto_confirmed_at = Date.now();
+                _refPatchOk.axlx_learn_auto_linked = true;
+              }
+              chrome.storage.local.set(_refPatchOk);
+            } catch (_) {}
           });
         } else {
-          chrome.storage.local.set({
-            axlx_learn_needs_auto: true,
-            axlx_learn_auto_reflect_miss_at: Date.now(),
-            axlx_learn_auto_linked: false,
+          var _lkMissSite = _normLearnSite(_msgSite) || "realpro";
+          var _refPatchNg = {};
+          _refPatchNg["axlx_learn_needs_auto__" + _lkMissSite] = true;
+          _refPatchNg["axlx_learn_auto_reflect_miss_at__" + _lkMissSite] = Date.now();
+          _refPatchNg["axlx_learn_auto_linked__" + _lkMissSite] = false;
+          chrome.storage.local.get(["axlx_learn_for_site"], function (cur) {
+            try {
+              var fs = _normLearnSite(cur && cur.axlx_learn_for_site);
+              if (!fs || fs === _lkMissSite) {
+                _refPatchNg.axlx_learn_needs_auto = true;
+                _refPatchNg.axlx_learn_auto_reflect_miss_at = Date.now();
+                _refPatchNg.axlx_learn_auto_linked = false;
+              }
+              chrome.storage.local.set(_refPatchNg);
+            } catch (_) {}
           });
-          try { console.warn("[learn] 自動完了だが learn_reflect_ok 無し → needs_auto 維持（連動未完了）"); } catch (_) {}
+          try { console.warn("[learn] 自動完了だが learn_reflect_ok 無し(" + _lkMissSite + ") → needs_auto 維持（連動未完了）"); } catch (_) {}
         }
       }
     } catch (_) {}
@@ -7920,6 +8349,8 @@ async function _reloadOrphanTabsOnInstall(details) {
     var reason = details && details.reason;
     if (reason !== "update" && reason !== "install") return;
     await new Promise(function (r) { setTimeout(r, 1500); });
+    var ver = "";
+    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
     var tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/main.php*", "https://realnetpro.com/main.php*", "https://itandibb.com/*"] });
     var reloaded = 0;
     for (var i = 0; i < (tabs || []).length; i++) {
@@ -7927,11 +8358,15 @@ async function _reloadOrphanTabsOnInstall(details) {
       if (!t || !t.id || t.discarded) continue;
       var isItandi = /^https:\/\/itandibb\.com/.test(String(t.url || ""));
       var p = isItandi ? await _probeItandiTab(t.id) : await _probeRealproTab(t.id);
-      if (!p || p.pong || p.gone) continue;
+      if (!p || p.pong || p.gone) {
+        // pong ありでも、もし応答内の extVer が現在の版と違う（旧版スクリプトが残存・かつ入力中でない）なら更新する
+        if (p && p.pong && !p.gone && ver && p.extVer && p.extVer !== ver && !p.fillRunning) {
+          try { await chrome.tabs.reload(t.id); reloaded++; } catch (_) {}
+        }
+        continue;
+      }
       try { await chrome.tabs.reload(t.id); reloaded++; } catch (_) {}
     }
-    var ver = "";
-    try { ver = chrome.runtime.getManifest().version; } catch (_) {}
     try { await chrome.storage.session.set({ axlx_orphan_reload: { at: Date.now(), n: reloaded, ver: ver, reason: reason } }); } catch (_) {}
     console.log("[orphan] 拡張 v" + ver + "（" + reason + "）→ 古い中身のタブを " + reloaded + " 個読み直しました");
   } catch (e) { console.warn("[orphan] タブの入れ替え失敗:", e && e.message); }
@@ -8576,7 +9011,7 @@ async function _runBatchSearch(command) {
                 currentName: _qlmIt.currentName || "",
                 nextName: _qlmIt.nextName || "",
                 names: _qNames,
-                nextMove: _qlmIt.nextName ? "前客の選択を1つずつ外す" : "一括完了",
+                nextMove: _qlmIt.nextName ? "リセットで空にして次のお客さんへ" : "一括完了",
                 waitingFor: _qlmIt.nextName ? "次客へ渡す" : "一括完了",
               });
             }
@@ -8613,7 +9048,7 @@ async function _runBatchSearch(command) {
                 currentName: _qlm.currentName || "",
                 nextName: _qlm.nextName || "",
                 names: _qNames,
-                nextMove: _qlm.nextName ? "前客の選択を1つずつ外す" : "一括完了",
+                nextMove: _qlm.nextName ? "リセットで空にして次のお客さんへ" : "一括完了",
                 waitingFor: _qlm.nextName ? "次客へ渡す" : "一括完了",
               });
             }
@@ -8965,11 +9400,31 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
    *     ⚠ キャッシュした条件で回さない（`cache: "no-store"`）。
    *   → `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す。
    *
-   *   ⚠ 読めなかった時は**今までの条件で続行**する（検索を止めない・理由を残す）。
+   *   ⚠ 2.8.318 読めなかった時は**古い条件では検索せず、そのお客さんを飛ばす**（理由を残す・次のお客さんへ進む）。
    *   ⚠ 手動の一括検索でも同じ（人が押した時こそ最新の条件で動くべき）。
    */
-  var customer = await _refreshCustomerBeforeSearch(customer, site);
+  customer = await _refreshCustomerBeforeSearch(customer, site);
+  // ★ 2.8.318 竹内さん「読み直しが失敗したら、古い条件では検索せず、そのお客さんを飛ばして理由を残す」:
+  //   3回とも読めなかった（または API の一覧に居ない）時は、手元の古い条件で検索しない。入力の前に止めて飛ばす
+  //   （呼び出し元は「検索できなかった」として理由を残し、次のお客さんへ進む）。
+  var _rlFail = _lastCustomerReload;
+  var _rlFailed = !!(_rlFail && !_rlFail.ok && customer && customer.id != null && String(_rlFail.cid) === String(customer.id));
+  // ★ 2026-11-27 竹内さん「作業ごとに完了してから20秒あける」: 読み直しが済んだら、20秒あけてから入れる（api_reload_gap）
+  if (!_rlFailed) await _gapBeforeNext(customer && customer.id, null, "api_reload_gap", 20000);
+  if (_rlFailed) {
+    try {
+      if (auditRun && auditRun.runId) _auditStep(auditRun.runId, "customer_api_reload", ("API読み直し失敗→このお客さんは飛ばす（古い条件では検索しない・" + String(_rlFail.why || "-").slice(0, 40) + "・" + _rlFail.tries + "回）").slice(0, 120));
+    } catch (_) {}
+    throw new Error("AXLX_API_RELOAD_FAILED: 条件を最新に読み直せませんでした（" + String(_rlFail.why || "-").slice(0, 40) + "・" + _rlFail.tries + "回）→古い条件では検索せず飛ばしました");
+  }
   var conds = _buildBatchConditions(customer, isWide, opts);
+  // ★ 2.8.317 毎回のAPI読み直しの結果を監査に残す（読めたか・条件が更新されていたか・失敗の理由。竹内さん「かなり重要」）
+  try {
+    var _rl = _lastCustomerReload;
+    if (auditRun && auditRun.runId && _rl && String(_rl.cid) === String(customer && customer.id)) {
+      _auditStep(auditRun.runId, "customer_api_reload", (_rl.ok ? ("API読み直しOK " + _rl.tries + "回目" + (_rl.changed ? "・条件が更新されていた" : "・更新なし")) : ("API読み直し失敗→このお客さんは飛ばす（古い条件では検索しない・" + String(_rl.why || "-").slice(0, 40) + "・" + _rl.tries + "回）")).slice(0, 120));
+    }
+  } catch (_) {}
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
   //   popup はお客様の登録の条件から欄を作り直すので、同じ上書きを searchOverride で渡して一時調整の欄に入れさせる（pass は area_mode）
   var _searchOverride = (opts && self.AxlxSearchOverride && self.AxlxSearchOverride.sourceAllows(opts.source)) ? self.AxlxSearchOverride.sanitize(opts.search_override) : null;
@@ -9228,7 +9683,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         }
       }
       // content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
-      try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }); } catch(_) {}
+      try { await _withTimeout(chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: _cidStr }), 4000, "set_fill_customer"); } catch(_) {}
       /**
        * ★ 2026-11-17: 新客の検索開始時に送る相手（storage）もその客へ揃える。
        *   popup が一連ロック中に次客を選んでいた／未開の時でも、物件保存が前客のままになる抜けを止める。
@@ -9349,7 +9804,7 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
     // リアプロと同一フロー: chrome.tabs.sendMessage → underbar.js → popup.js → itandi-page-script.js
     // itandi-content.js に現在の顧客IDを事前通知（fill-done relay に customerId を付与するため）
     // v2.5.48: itandi-bulk-dl.js もこの合図を受け、自動の送信は「この入力を始めさせたお客様」で送る（popup の今の選択を後から読まない・名前も渡す）
-    try { await chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }); } catch(_) {}
+    try { await _withTimeout(chrome.tabs.sendMessage(tab.id, { type: "axlx-set-fill-customer", customerId: String(customer.id), customerName: customer.customer_name || null }), 4000, "set_fill_customer"); } catch(_) {}
     // ★ 2026-11-17: 新客開始時に送る相手 storage を揃える（リアプロと同じ・物件が前客に付く抜け防止）
     try {
       await chrome.storage.local.set({
@@ -9423,8 +9878,9 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
       console.warn("[batchAutofill] itandi: axlx-switch-customer 未応答 → direct fallback");
       _auditStep(auditRun && auditRun.runId, "popup_fallback", "switch-customer 未応答 → 直接入力");
       _auditPostIntended(auditRun, site, conds);
+      if (auditRun && auditRun.runId && !conds._audit_run_id) conds._audit_run_id = auditRun.runId;
       var itandiFbSent = await new Promise(function(resolve) {
-        chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
+        chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds, customerId: String(customer.id) }, function(resp) {
           resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
         });
       });
@@ -9433,11 +9889,11 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           world: "MAIN",
-          func: function(c) {
-            window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
-            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c }, "*");
+          func: function(c, cid) {
+            window.postMessage({ from: "axlx-itandi-autofill-initiated", customerId: cid || null }, "*");
+            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c, customerId: cid || null }, "*");
           },
-          args: [conds]
+          args: [conds, String(customer.id)]
         });
       }
     }
@@ -9625,7 +10081,7 @@ function _buildBatchConditions(c, isWide, opts) {
  *     ① `cache: "no-store"` で読み直す（キャッシュを使わない）
  *     ② `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す
  *        （`_nudge` があればそこに・無ければ console）
- *     ③ 読めなければ**今までの条件で続行**（検索を止めない・理由を残す）
+ *     ③ 読めなければ**古い条件では検索せず、そのお客さんを飛ばす**（2.8.318・理由を残す）
  *
  *   ⚠ 返すのは**顧客オブジェクト**（読めなければ元の物をそのまま返す）。
  *   ⚠ 条件の中身（賃料・エリア等）はサーバーが作った物をそのまま使う（拡張で作り直さない）。
@@ -9671,29 +10127,60 @@ async function _fetchCustomerListWithRetry(url, tag) {
   throw (lastErr instanceof Error) ? lastErr : new Error("顧客データ取得失敗");
 }
 
+/**
+ * ★ 2.8.317 竹内さん「次のお客さんの条件を拡張ツールからAPIで読み込んでいれなおすってところかなり重要。これを毎回することでループが安定性もつ」:
+ *   毎回（1人目も・2人目以降も）リセットの後・条件を入れる直前に API から読み直す。結果（成功・更新あり/なし・失敗の理由・何回目か）は
+ *   _lastCustomerReload に残し、_batchAutofill が監査の段 customer_api_reload に書く（読めたか後から DB で確かめられる）。
+ *   ・失敗（通信エラー・5xx・時間切れ）は最大3回までやり直す（間 2秒→4秒）。4xx・「その客が居ない」はやり直さない。
+ *   ・3回とも読めない時は今までの条件で検索しない。このお客さんを飛ばして理由を残す（2.8.318）。
+ */
+var _lastCustomerReload = null;
 async function _refreshCustomerBeforeSearch(c, site) {
+  var _note = { cid: (c && c.id != null) ? String(c.id) : "", ok: false, tries: 0, changed: false, why: "", at: Date.now(), site: String(site || "") };
+  _lastCustomerReload = _note;
   try {
-    if (!c || c.id == null) return c;
+    if (!c || c.id == null) { _note.why = "no_customer"; return c; }
     var id = String(c.id);
-    var url = "https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(id) + "&fresh=" + Date.now();
-    var res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
-    if (!res.ok) {
-      console.warn("[customer] 条件を読み直せませんでした（HTTP " + res.status + "）→ 今までの条件で検索します");
-      return c;
-    }
-    var j = await res.json();
-    /**
-     * ⚠ API の返す形が「配列」「{customer}」「1件そのもの」のどれでも動くようにする。
-     */
     var fresh = null;
-    if (Array.isArray(j)) fresh = j.find(function (x) { return x && String(x.id) === id; }) || null;
-    else if (j && Array.isArray(j.customers)) fresh = j.customers.find(function (x) { return x && String(x.id) === id; }) || null;
-    else if (j && j.customer && String(j.customer.id) === id) fresh = j.customer;
-    else if (j && String(j.id) === id) fresh = j;
+    for (var _t = 1; _t <= 3 && !fresh; _t++) {
+      _note.tries = _t;
+      var retryable = true;
+      try {
+        var url = "https://sumora-ai-ui.vercel.app/api/property-customers?id=" + encodeURIComponent(id) + "&fresh=" + Date.now();
+        var res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
+        if (!res.ok) {
+          _note.why = "HTTP " + res.status;
+          if (res.status >= 400 && res.status < 500) retryable = false;
+          console.warn("[customer] 条件を読み直せませんでした（HTTP " + res.status + "・" + _t + "回目）");
+        } else {
+          var j = await res.json();
+          /**
+           * ⚠ API の返す形が「配列」「{customer}」「1件そのもの」のどれでも動くようにする。
+           */
+          if (Array.isArray(j)) fresh = j.find(function (x) { return x && String(x.id) === id; }) || null;
+          else if (j && Array.isArray(j.customers)) fresh = j.customers.find(function (x) { return x && String(x.id) === id; }) || null;
+          else if (j && j.customer && String(j.customer.id) === id) fresh = j.customer;
+          else if (j && String(j.id) === id) fresh = j;
+          if (!fresh) {
+            _note.why = "not_in_response";
+            retryable = false;
+            console.warn("[customer] 読み直した中にこのお客様が居ません → このお客さんは飛ばします（古い条件では検索しない）");
+          }
+        }
+      } catch (e) {
+        _note.why = "error:" + String((e && e.message) || e).slice(0, 40);
+        console.warn("[customer] 条件の読み直しで例外（" + _t + "回目）:", (e && e.message) || e);
+      }
+      if (!fresh && retryable && _t < 3) await new Promise(function (r) { setTimeout(r, _t === 1 ? 2000 : 4000); });
+      else if (!fresh && !retryable) break;
+    }
     if (!fresh) {
-      console.warn("[customer] 読み直した中にこのお客様が居ません → 今までの条件で検索します");
+      // ★ 2.8.318: 古い条件では検索しない。ここでは印（_lastCustomerReload.ok=false）を残し、_batchAutofill が飛ばす
+      console.warn("[customer] 条件を読み直せませんでした（" + _note.why + "・" + _note.tries + "回）→ このお客さんは飛ばします（古い条件では検索しない）");
       return c;
     }
+    _note.ok = true;
+    _note.why = "";
 
     /**
      * ② `updated_at` が前より新しければ「条件が変わった」印を出す。
@@ -9702,6 +10189,7 @@ async function _refreshCustomerBeforeSearch(c, site) {
     var before = Date.parse(String(c.updated_at || "")) || 0;
     var after = Date.parse(String(fresh.updated_at || "")) || 0;
     if (after && before && after > before) {
+      _note.changed = true;
       var msg = "🔔 条件が変わりました（" + (c.name || fresh.name || "このお客様") + "）→ 新しい条件で検索します";
       console.log("[customer] " + msg + "（" + String(c.updated_at) + " → " + String(fresh.updated_at) + "）");
       try { if (typeof _nudge === "function") _nudge(msg); } catch (_) {}
@@ -9721,7 +10209,7 @@ async function _refreshCustomerBeforeSearch(c, site) {
     for (k in fresh) { if (Object.prototype.hasOwnProperty.call(fresh, k) && fresh[k] != null) merged[k] = fresh[k]; }
     return merged;
   } catch (e) {
-    console.warn("[customer] 条件の読み直しで例外 → 今までの条件で検索します:", (e && e.message) || e);
+    console.warn("[customer] 条件の読み直しで例外 → このお客さんは飛ばします（古い条件では検索しない）:", (e && e.message) || e);
     return c;
   }
 }
@@ -9792,6 +10280,7 @@ async function _probeRealproTab(tabId) {
     pong: pong,
     page: pong && typeof resp.page === "boolean" ? resp.page : null,
     vis: pong && typeof resp.vis === "string" ? resp.vis : null,
+    extVer: pong && resp.extVer ? String(resp.extVer) : null,
     fillRunning: pong && !!resp.fillRunning,
     fillCustomerId: pong && resp.fillCustomerId ? String(resp.fillCustomerId) : null,
     err: resp && resp.err ? String(resp.err).slice(0, 120) : null,
@@ -9838,6 +10327,20 @@ async function _bringRealproTabFront(tab, runId, vis) {
   } catch (e) { console.warn("[batchAutofill] タブを前に出せない:", e && e.message); }
 }
 
+/**
+ * ★ 2.8.328 リセットで押すタブを入力と同じ選び方に揃える（指定のタブ → main.php の前面 → main.php → 前面 → 最初）。
+ *   旧は「前面のリアプロ、無ければ最初」で、詳細のタブが前面だとリセットのボタンが無く保険→止めるになり得た。
+ */
+function _pickRealproResetTab(tabs, preferredTabId) {
+  var list = (tabs || []).filter(function (t) { return t && t.id; });
+  var isMain = function (t) { return /realnetpro\.com\/main\.php/.test(String(t.url || t.pendingUrl || "")); };
+  return (preferredTabId ? list.find(function (t) { return t.id === preferredTabId; }) : null)
+    || list.filter(function (t) { return t.active && isMain(t); })[0]
+    || list.filter(isMain)[0]
+    || list.filter(function (t) { return t.active; })[0]
+    || list[0]
+    || null;
+}
 // 使える状態のリアプロのタブを返す（だめなら読み直して1回だけ確かめ直す）。それでもだめなら投げる（検索しない）
 async function _ensureRealproTab(tab, auditRun, why, customerId, lastKnownUrl) {
   var G = self.AxlxBatchGuard;
@@ -9848,6 +10351,23 @@ async function _ensureRealproTab(tab, auditRun, why, customerId, lastKnownUrl) {
     probe.lastKnownUrl = String(lastKnownUrl);
   }
   var plan = G ? G.realproTabPlan(probe) : { action: probe.pong ? "use" : "reload", reason: probe.pong ? "alive" : "content_script_dead" };
+  /**
+   * ★ 2.8.328（#1675）: 1.5秒で返事が無いだけ（Chrome の「受け手がいない」エラー無し）は、ページが重くて答えられないだけ。
+   *   旧はすぐ「拡張の中身が応答しない」と読み直した（リセットの読み直しの76秒後・隠れたタブ → 読み直し → 客を見送り）。
+   *   → エラー無しの無返事は確かめ直す（邪魔しない窓の中は約15秒・外は約6秒）。エラー付き（本当に居ない）は今まで通りすぐ読み直す。
+   */
+  if (!why && !probe.pong && !probe.err && !probe.gone && /realnetpro\.com/.test(String(probe.url || ""))) {
+    var _slowMax = _quietNow() ? 6 : 3;
+    _auditStep(runId, "tab_check", "返事なし（エラー無し＝重いだけの事が多い）→ 確かめ直し最大" + _slowMax + "回");
+    for (var _sl = 0; _sl < _slowMax; _sl++) {
+      await new Promise(function (r) { setTimeout(r, 2500); });
+      var _ps = await _probeRealproTab(tab.id);
+      probe = _ps;
+      plan = G ? G.realproTabPlan(_ps) : { action: _ps.pong ? "use" : "reload", reason: _ps.pong ? "alive" : "content_script_dead" };
+      if (_ps.pong || _ps.err || _ps.gone) break;
+    }
+    if (probe.pong) _auditStep(runId, "tab_check", "返事が遅かっただけ（読み直さない）");
+  }
   if (plan.action === "use" && !why) {
     if (plan.front) await _bringRealproTabFront(tab, runId, probe.vis);
     return tab;
@@ -9948,7 +10468,7 @@ async function _probeItandiTab(tabId) {
     } catch (e) { if (!done) { done = true; clearTimeout(timer); resolve({ err: (e && e.message) || String(e) }); } }
   });
   var pong = !!(resp && !resp.err && resp.pong);
-  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
+  return { url: url, pong: pong, list: pong && typeof resp.list === "boolean" ? resp.list : null, vis: pong && typeof resp.vis === "string" ? resp.vis : null, extVer: pong && resp.extVer ? String(resp.extVer) : null, fillRunning: pong && !!resp.fillRunning, err: resp && resp.err ? String(resp.err).slice(0, 120) : null };
 }
 
 // v2.5.48 背面（hidden）の ITANDI のタブを、そのウィンドウの中で前に出す（ウィンドウの前後・最小化は触らない・リアプロの _bringRealproTabFront と同じ）。
@@ -10130,16 +10650,27 @@ async function _webappAutofill(site, conditions) {
       );
     }
     // itandi / reins は従来どおり executeScript にフォールバック
-    // 修正: フォールバックも失敗したら throw して呼び出し元が status:'error' を記録できるようにする
+    // 修正: ITANDI は CustomEvent("axlx-itandi-fill") ではなく window.postMessage("axlx-itandi-fill-exec") を待つ
     console.warn("[webapp-autofill] sendMessage failed, fallback to executeScript for", site);
     try {
-      var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-        args: [evName, conditions]
-      });
+      if (site === "reins") {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) { window.dispatchEvent(new CustomEvent("axlx-reins-fill", { detail: c })); },
+          args: [conditions]
+        });
+      } else {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) {
+            window.postMessage({ from: "axlx-itandi-autofill-initiated", customerId: (c && c.customer_id) || null }, "*");
+            window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c, customerId: (c && c.customer_id) || null }, "*");
+          },
+          args: [conditions]
+        });
+      }
     } catch (fallbackErr) {
       throw new Error("autofill failed (" + site + "): sendMessage失敗 + executeScriptフォールバック失敗: " +
         ((fallbackErr && fallbackErr.message) || fallbackErr));
@@ -10440,77 +10971,22 @@ async function _refreshCustomerThink(customer, auditRun) {
   return think;
 }
 /**
- * 送付後の外し（案B）をリアプロのタブへ頼む。**投げない**（失敗・時間切れ・off・タブなしはログだけで {ok:false|skipped} を返す）。
- *   page-script は MAIN world（content.js の中継は編集しない決まりのため chrome.runtime では受けられない）→
- *   chrome.scripting.executeScript({world:"MAIN"}) でページ側の公開関数 window.__axlxPostSendClearP() を呼ぶ（Promise を待てる）。
- *   ページ側は fail-open（例外・120秒でも結果を返す・入力中は何もしない）。ここの待ちは最大125秒。
- */
-/**
- * ★ 2.8.203: runId を明示渡し（findOpen が閉じ済みだと印が消えていた＝DB実測 post_send=0件の穴）。
- *   見送り・失敗でも必ず監査段を残す。
- */
-async function _postSendClearRealpro(customerId, auditRunId) {
-  var _t0 = Date.now();
-  var _stamp = function (note) {
-    try {
-      var _rid = auditRunId || _auditOpenRunId(String(customerId), "realpro");
-      if (_rid) _auditStep(_rid, "post_send_clear", String(note || "").slice(0, 120));
-    } catch (_) {}
-  };
-  try {
-    var _off = await chrome.storage.local.get("axlx_post_send_clear_off");
-    if (_off && _off.axlx_post_send_clear_off === true) {
-      console.log("[post-send-clear] off フラグ → 実行しない");
-      _stamp("見送り=off");
-      return { skipped: "off" };
-    }
-    var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
-    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
-    if (!_tab || !_tab.id) {
-      console.log("[post-send-clear] リアプロのタブなし → 何もしない");
-      _stamp("見送り=no_tab");
-      return { skipped: "no_tab" };
-    }
-    var _exec = chrome.scripting.executeScript({
-      target: { tabId: _tab.id },
-      world: "MAIN",
-      func: function () {
-        try {
-          if (typeof window.__axlxPostSendClearP === "function") return window.__axlxPostSendClearP();
-        } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
-        return { ok: false, why: "no_page_fn" };
-      },
-    });
-    var _to = new Promise(function (resolve) { setTimeout(function () { resolve("__timeout__"); }, 125000); });
-    var _r = await Promise.race([_exec, _to]);
-    var _res = (_r && _r !== "__timeout__" && _r[0] && _r[0].result) || null;
-    var _note = _r === "__timeout__" ? "125秒待ち切れ（次客へ進む）" : (_res ? ("ok=" + !!_res.ok + " 残=" + (_res.left == null ? "-" : _res.left) + (_res.why ? " " + _res.why : "") + (_res.skipped ? " 見送り=" + _res.skipped : "")) : "応答なし");
-    console.log("[post-send-clear] " + _note + " " + Math.round((Date.now() - _t0) / 1000) + "秒 customer=" + customerId);
-    _stamp(_note);
-    return _res || { ok: false, why: _note };
-  } catch (e) {
-    console.warn("[post-send-clear] 失敗（非致命・次客へ進む）:", e && e.message ? e.message : e);
-    _stamp("error:" + String(e && e.message || e).slice(0, 60));
-    return { ok: false, why: "error" };
-  }
-}
-/**
  * ★ 2.8.284 竹内さん「条件はずしはかなりむずかしくバグやエラーが多い。人間のようにリセットボタンに切り替える。
  *   リセットおして→待機→画面照会（スクショ）→空になったと確認してから、新しいお客さんの拡張ツール API を動かす」:
  *   送付が終わった直後（次客の switch より前・一連ロックを外す前）に、そのタブで
  *     ① 完了の小窓を閉じてリセットを押す（page-script _resetPress）
  *     ② ページが読み直されるのを待つ（読み直されなくても進む）
- *     ③ 人の間（1.2〜2.2秒）待つ
- *     ④ フォームが**すべて空**か読み戻す（_resetVerify・URL/DOM。画像では決めない）
- *     ⑤ 空なら人の間（1.5〜3秒）の後に画面の写真を1枚撮って DB へ（reset_check）→ 次客へ
+ *     ③ 30〜34秒待つ（人の間・ラグ対策。3回に分ける）
+ *     ④ ★ 2.8.317: 待った後は**空とみなして次客へ**（読み戻しのループ・写真・猶予は廃止。「きれい」の印のため1回だけ読む・reset_settled）
  *   ⚠ 2.8.107 で戻した理由は「入力中の自動がリセットで消えた」こと。ここは送付完了の後の1点だけ（入力中は page 側が断る）。
- *   ⚠ 空にならない／押せない／タブが無い時は**従来の1つずつ外す**（_postSendClearRealpro）へ戻る（fail-open・次客を止めない）。
- *   ⚠ chrome.storage.local の axlx_reset_button_mode が false なら使わない（切り替えフラグ・既定は使う）。
- *   投げない。{ ok, left, reset:true, reloaded, why? } か { skipped } を返す。
+ *   ⚠ 2.8.328: 空にならない／押せない／タブが無い時は、従来の1つずつ外しへは戻らず、保険→止める（_resetWithInsurance）。
+  *   投げない。{ ok, left, reset:true, reloaded, why? } か { skipped } を返す。
  */
-var RESET_BUTTON_MODE_KEY = "axlx_reset_button_mode";
-var RESET_PRESS_TIMEOUT_MS = 25000;
-var RESET_VERIFY_TOTAL_MS = 25000;
+// ★ 2.8.315: ページ側が最大120秒まで押すのを待つ（page-script _RESET_PRESS_HARD_MS）。裏はそれより長く待つ（旧25秒は15秒で「押せず」→実は押されていた #1661）。2.8.316 竹内さん「止まって120秒以上にする」
+var RESET_PRESS_TIMEOUT_MS = 130000;
+/** ★ 2.8.329 返事が無い・時間切れの時、読み直しが済むまで押した印を確かめ直す長さと間隔 */
+var RESET_LATE_TRY_MS = 25000;
+var RESET_LATE_POLL_MS = 1500;
 // 2.8.285 押した後の待機は10秒以上（ラグ・人の間）。写真の前も人の間を置く
 // 2.8.292 竹内さん「リセットの後の物件表示されるまで処理があるから30秒以上あけてやると詰まらずにできていく」
 //   → 下限を30秒に（録画で確かめた人の間は約100秒。次のお客さんの条件入力はこの待ちの後）
@@ -10540,8 +11016,8 @@ async function _waitAfterHumanReset(runId) {
     return need;
   } catch (_) { return 0; }
 }
-var RESET_SHOT_GAP_MIN_MS = 2000;
-async function _resetShot(shotTab, runId, customerId) {
+/** ★ 2.8.317 リセット後の写真・猶予・空の読み戻しのループは廃止（押す→30〜34秒待つだけ）。写真（_resetShot）は押せなかった時の保険でだけ使う */
+async function _resetShot(shotTab, runId, customerId, whatLabel) {
   try {
     if (typeof _capturePaced !== "function" || typeof _sendShotNow !== "function") return "no_capture_fn";
     if (typeof chrome.permissions === "undefined" || !chrome.permissions.contains) return "no_permissions_api";
@@ -10572,7 +11048,7 @@ async function _resetShot(shotTab, runId, customerId) {
     var mode = null;
     try { mode = await _modeLabelNow(); } catch (_) {}
     var res = await _sendShotNow({
-      data_url: up, site: "realnetpro", what: "reset_verified", kind: "reset_check",
+      data_url: up, site: "realnetpro", what: whatLabel || "reset_verified", kind: "reset_check",
       shot_w: w, shot_h: h, mode: mode, run_id: runId || null, seq: 0, tab_id: shotTab.id,
     });
     return res && res.ok ? ("ok " + Math.round(String(up).length * 3 / 4 / 1024) + "KB") : ("upload_ng " + String((res && res.error) || "").slice(0, 40));
@@ -10580,6 +11056,172 @@ async function _resetShot(shotTab, runId, customerId) {
     return "error:" + String((e && e.message) || e).slice(0, 50);
   }
 }
+/**
+ * ★ 2026-11-27 竹内さん「リセットの完了を確実に確かめる。1で完了／2は保険（通知が来ない時だけ・60〜90秒後・スクショ→確かめ→押し直し1回）／残りがあるまま次の客へ進まない／『空とみなして次へ』は無くす」
+ *   1. 押す→30〜34秒待つ→画面を1回読む（_postSendResetRealpro）。空なら完了→次へ。
+ *   2. 完了が来ない（空と読めない・押せず）→ さらに60〜90秒後に画面を撮って読む。空なら完了（reset_stuck_recovered）。
+ *   3. まだ残っていれば押し直しを**1回だけ**（確かめた後だけ）→30〜34秒待って読む。空なら完了。
+ *   4. それでも空を確かめられなければ**止める**（reset_stop・stop:true）。次のお客さんへ進まない・従来の1つずつ外しへも行かない（画面は残す）。
+ *   skipped（off／入力の最中）・ストップ要求は何もしない。投げない。
+ */
+async function _resetWithInsurance(customerId, runId, phase) {
+  try { _bulkResetPosShow(phase); } catch (_) {}
+  var rr = null;
+  try { rr = await _postSendResetRealpro(customerId, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
+  if (!rr || rr.ok || rr.skipped) return rr;
+  if (_batchShouldStop) return rr;
+  // 見えないまま10分たった（押していない）→保険で押し直さずに止める（見えないタブでは押せないため）
+  if (rr.hiddenStuck) return { ok: false, why: "reset_stop", stop: true, hiddenStuck: true };
+  var _stamp = function (k, note) {
+    try {
+      var _rid = runId || _auditOpenRunId(String(customerId), "realpro");
+      if (_rid) _auditStep(_rid, k, String(note || "").slice(0, 120));
+    } catch (_) {}
+  };
+  try {
+    var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
+    var _tab = _pickRealproResetTab(_tabs, null);
+    // ★ 2026-11-27 タブが無ければ空を確かめられない → 止める（従来の外しへ落とさない・残りを次へ持ち越さない）
+    if (!_tab || !_tab.id) { _stamp("reset_stop", "リセットのタブが無く空を確かめられず→止める"); return { ok: false, why: "reset_stop", stop: true }; }
+    // ① 完了の通知が来なかった → さらに60〜90秒後に画面を確かめる（押し直すのは確かめた後だけ）
+    var _insureMs = 60000 + Math.floor(Math.random() * 30000);
+    _stamp("reset_insure_wait", "完了の通知が来ない（" + String(rr.why || "-").slice(0, 50) + "）→さらに" + Math.round(_insureMs / 1000) + "秒待ってから画面を確かめる（保険）");
+    _bulkWaitShow("reset_insure", _insureMs);
+    if (_manualBulkAlive && phase) _bulkPhaseSet(phase, 330000, { cid: String(customerId) });
+    _quietSet("reset", 330000, { cid: String(customerId), runId: runId || null });
+    await new Promise(function (r) { setTimeout(r, _insureMs); });
+    _stamp("reset_stuck_shot", "保険：画面を1枚撮って読む");
+    var _shotNote = await _withTimeout(_resetShot(_tab, runId || _auditOpenRunId(String(customerId), "realpro"), customerId, "reset_stuck"), 25000, "reset_stuck_shot");
+    _stamp("reset_stuck_shot", "撮影 " + ((_shotNote && _shotNote.__timeout) ? "時間切れ" : String(_shotNote)));
+    var _g = null;
+    try {
+      var _gr = await _withTimeout(chrome.scripting.executeScript({
+        target: { tabId: _tab.id },
+        world: "MAIN",
+        func: function (c) {
+          try {
+            if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 2500, cid: c });
+          } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+          return { ok: false, why: "no_page_fn" };
+        },
+        args: [String(customerId || "")],
+      }), 15000, "reset_stuck_grasp");
+      _g = (_gr && !_gr.__timeout && _gr[0] && _gr[0].result) || null;
+    } catch (_) { _g = null; }
+    _stamp("reset_stuck_grasp", _g ? ("ready=" + (_g.ready ? 1 : 0) + " 空=" + (_g.empty ? 1 : 0) + " 残=" + (_g.left != null ? _g.left : "?") + " " + String(_g.detail || _g.why || "").slice(0, 50)) : "読めず");
+    if (_g && _g.ok && _g.empty) {
+      _stamp("reset_stuck_recovered", "画面は空だった（通知が遅れただけ）→完了");
+      return { ok: true, left: 0, reset: true, recovered: true };
+    }
+    if (_batchShouldStop) return rr;
+    // ② まだ残っている → 押し直しを1回だけ（押した後の空の確かめまで同じ）
+    _stamp("reset_retry", "残りが見える→リセットをもう1回押す（1回だけ）");
+    var rr2 = null;
+    try { rr2 = await _postSendResetRealpro(customerId, runId); } catch (e) { rr2 = { ok: false, why: "reset_exception" }; }
+    if (rr2 && rr2.ok) {
+      _stamp("reset_retry", "2回目で空を確認→完了");
+      return rr2;
+    }
+    // ③ 空を確かめられない → 止める（次のお客さんへ進まない・従来の外しへ行かない・画面は残す）
+    _stamp("reset_stop", "押し直しても空を確かめられず→止める（次のお客さんへ進まない・画面は残す）（1回目=" + String(rr.why || "-").slice(0, 40) + "／2回目=" + String((rr2 && (rr2.why || rr2.skipped)) || "-").slice(0, 40) + "）");
+    return { ok: false, why: "reset_stop", stop: true };
+  } catch (e) {
+    _stamp("reset_stop", "保険でエラー→止める:" + String((e && e.message) || e).slice(0, 50));
+    return { ok: false, why: "reset_stop", stop: true };
+  }
+}
+/** ★ 2026-11-27 リセットを確かめられず止めた時、一括を止めて知らせる（次のお客さんへ進まない）。枠・グループへ */
+function _resetStopNotify(customerName, siteLabel, hiddenStuck) {
+  try { _bulkPressShow("reset", hiddenStuck ? "hidden_stopped" : "stopped", ""); } catch (_) {}
+  try {
+    fetch(SUMORA_BATCH_API + "/api/notify-group", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: hiddenStuck
+          ? "⚠【リアプロの画面が隠れていて止めました】" + (customerName ? customerName + "さんの前に" : "") + "リセットを押せませんでした（Chrome の窓が10分見えないまま）。Chrome を前に出してから一括をもう一度始めてください"
+          : "⚠【リセットを確かめられず止めました】" + (customerName ? customerName + "さんの" : "") + (siteLabel || "") + "検索は、前のお客さんの条件が残っているかもしれないため次へ進みません（画面を確かめてください）",
+        group_key: "pickup_group_id",
+      }),
+    }).catch(function () {});
+  } catch (_) {}
+}
+/**
+ * ★ 2.8.328 竹内さん「ちゃんとリセットがでるようにして」→ 選択「見えるまで待って知らせる」（設計知見 67da6f24）:
+ *   前に出してもリアプロのタブが見えない（Chrome の窓が他のアプリに隠れている）時は、リセットを押さずに待つ。
+ *   見えないタブでは Chrome が待ちの時計を遅くし、人の動きのクリックが120秒たっても押されなかった（#1661・#1666・#1671）。
+ *   ・Windows の通知（押すと Chrome の窓を前に出す）と枠（⏳・押した結果の行）で知らせる。強制的に前に出さない
+ *   ・待つ間は段と窓（quiet reset）の上限を1分ごとに伸ばす（見張りが固着と見て割り込まない）
+ *   ・見えたら { ok:true }、ストップ要求・タブが無い・10分見えない（tab_hidden_stuck）は { ok:false, why }
+ */
+var RESET_HIDDEN_WAIT_MAX_MS = 600000;
+var RESET_HIDDEN_POLL_MS = 5000;
+var RESET_HIDDEN_NOTIFY_ID = "axlx-reset-hidden";
+var _resetHiddenWinId = null;
+var _RESET_HIDDEN_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+function _resetHiddenNotify(on) {
+  try {
+    if (!chrome.notifications) return;
+    if (!on) { chrome.notifications.clear(RESET_HIDDEN_NOTIFY_ID, function () { void chrome.runtime.lastError; }); return; }
+    chrome.notifications.create(RESET_HIDDEN_NOTIFY_ID, {
+      type: "basic",
+      iconUrl: _RESET_HIDDEN_ICON,
+      title: "リアプロの画面が隠れています",
+      message: "リセットを押せないので待っています。ここを押すか、Chrome を前に出してください（10分見えなければ止めます）",
+      requireInteraction: true,
+      priority: 2,
+    }, function () { void chrome.runtime.lastError; });
+  } catch (_) {}
+}
+try {
+  if (chrome.notifications && chrome.notifications.onClicked) {
+    chrome.notifications.onClicked.addListener(function (id) {
+      if (id !== RESET_HIDDEN_NOTIFY_ID || _resetHiddenWinId == null) return;
+      try { chrome.windows.update(_resetHiddenWinId, { focused: true, drawAttention: true }).catch(function () {}); } catch (_) {}
+    });
+  }
+} catch (_) {}
+async function _waitRealproVisible(tab, customerId, runId, stamp) {
+  var t0 = Date.now();
+  var lastExtend = 0;
+  var _sleepH = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  try { _resetHiddenWinId = tab && tab.windowId != null ? tab.windowId : null; } catch (_) { _resetHiddenWinId = null; }
+  stamp("reset_hidden_wait", "前に出しても見えない→リセットは押さずに見えるまで待つ（最大" + Math.round(RESET_HIDDEN_WAIT_MAX_MS / 1000) + "秒・通知と枠で知らせる）");
+  _bulkWaitShow("reset_hidden", RESET_HIDDEN_WAIT_MAX_MS);
+  _bulkPressShow("reset", "hidden_wait", "");
+  _resetHiddenNotify(true);
+  try {
+    while (Date.now() - t0 < RESET_HIDDEN_WAIT_MAX_MS) {
+      if (_batchShouldStop) { stamp("reset_hidden_wait", "ストップ要求→待ちをやめる"); return { ok: false, why: "stop_requested" }; }
+      if (Date.now() - lastExtend >= 60000) {
+        lastExtend = Date.now();
+        try { if (_manualBulkAlive && _bulkPhase && _bulkPhase.phase) _bulkPhaseSet(_bulkPhase.phase, 330000, { cid: String(customerId) }); } catch (_) {}
+        try { _quietSet("reset", 330000, { cid: String(customerId), runId: runId || null }); } catch (_) {}
+      }
+      await _sleepH(RESET_HIDDEN_POLL_MS);
+      var p = null;
+      try { p = await _probeRealproTab(tab.id); } catch (_) { p = null; }
+      if (p && p.gone) { stamp("reset_hidden_wait", "待っている間にタブが無くなった→止める判断へ"); return { ok: false, why: "no_tab" }; }
+      if (p && p.vis && p.vis !== "hidden") {
+        stamp("reset_hidden_visible", "見えた（" + p.vis + "）→" + Math.round((Date.now() - t0) / 1000) + "秒待ってリセットを押す");
+        _bulkWaitShow("reset_hidden", 0);
+        return { ok: true };
+      }
+    }
+    stamp("reset_hidden_stuck", Math.round((Date.now() - t0) / 1000) + "秒見えないまま→リセットは押さずに止める（次のお客さんへ進まない）");
+    return { ok: false, why: "tab_hidden_stuck" };
+  } finally {
+    _resetHiddenNotify(false);
+    _resetHiddenWinId = null;
+  }
+}
+/**
+ * ★ 2.8.317 竹内さん「リセットは 30〜34秒のところだけで・リセットしたら必ず空になっている」（reset_empty_is_enough）:
+ *   ①完了の小窓を閉じる ②リセットを押す（押せたか＝クリックの実行で決める・最大130秒待つ）③読み直しを待ち、30〜34秒（3回に分けて）待つ
+ *   ④押して待ったら空とみなして返す（reset_settled・assumedEmpty）。空かの読み戻しの繰り返し・写真・5〜9秒の猶予は置かない
+ *   （読み戻しは『きれい』の印 axlx_reset_clean を付けるための1回・最大1.5秒だけ。結果で成功・失敗は決めない）。
+ *   押せなかった・例外の時は呼び元（_resetWithInsurance）が保険へ（押し直し後も空を確かめられなければ止める・2026-11-27）。
+ */
 async function _postSendResetRealpro(customerId, auditRunId) {
   var _t0 = Date.now();
   var _stamp = function (k, note) {
@@ -10590,10 +11232,8 @@ async function _postSendResetRealpro(customerId, auditRunId) {
   };
   var _sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   try {
-    var _m = await chrome.storage.local.get(RESET_BUTTON_MODE_KEY);
-    if (_m && _m[RESET_BUTTON_MODE_KEY] === false) { _stamp("reset_press", "見送り=off（従来の外し）"); return { skipped: "off" }; }
     var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
-    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
+    var _tab = _pickRealproResetTab(_tabs, null);
     if (!_tab || !_tab.id) { _stamp("reset_press", "見送り=no_tab"); return { skipped: "no_tab" }; }
     /**
      * ★ 2.8.295: リセットの読み直しの後に、送り終えた客の「検索後の続き」の印（Case C／Case E）が残っていると、
@@ -10604,15 +11244,40 @@ async function _postSendResetRealpro(customerId, auditRunId) {
       await chrome.storage.session.remove(["axlx_pending_auto_send", "axlx_auto_next_page", "axlx_search_grasped", "axlx_ad_sort_pending"]);
       _stamp("reset_clear_marks", "リセット前に前客の続きの印を消した");
     } catch (_) {}
+    // ★ 2.8.320 押す前にリアプロのタブの見え方を確かめ、背面（hidden）なら前に出す。
+    //   実測（#1666・#1661）: リセットの押す処理は人の動きの列（setTimeout）で動く。背面のタブではブラウザがタイマーを遅らせ、
+    //   120秒経っても押されなかった（ページ側の15秒の印も残らず＝タイマーが動いていなかった）。入力前の tab_front と同じやり方で前に出す。
+    //   見え方の印（reset_vis／reset_front）を残す。見えなくても止まらない（そのまま押す・結果は印で確かめる）。
+    var _ridFront = auditRunId || _auditOpenRunId(String(customerId), "realpro");
+    try {
+      var _pv0 = await _probeRealproTab(_tab.id);
+      var _vis0 = (_pv0 && _pv0.vis) || "不明";
+      _stamp("reset_vis", "押す前の見え方=" + _vis0 + (_pv0 && _pv0.pong ? "" : "（返事なし）"));
+      if (_vis0 === "hidden") {
+        await _bringRealproTabFront(_tab, _ridFront, "hidden");
+        var _pv1 = await _probeRealproTab(_tab.id);
+        _stamp("reset_front", "背面だったので前に出した→見え方=" + ((_pv1 && _pv1.vis) || "不明"));
+        if (_pv1 && _pv1.vis === "hidden") {
+          var _hw = await _waitRealproVisible(_tab, customerId, _ridFront, _stamp);
+          if (!_hw.ok) {
+            if (_hw.why === "tab_hidden_stuck") return { ok: false, why: "tab_hidden_stuck", notPressed: true, hiddenStuck: true };
+            return { ok: false, why: _hw.why, notPressed: true };
+          }
+        }
+      }
+    } catch (_) {}
     // ① 完了の小窓を閉じて、リセットを押す（読み直しで切れても押した扱い→③④で確かめる）
     var _press = null;
+    var _pressT0 = Date.now();
     try {
       var _pr = await _withTimeout(chrome.scripting.executeScript({
         target: { tabId: _tab.id },
         world: "MAIN",
         func: function () {
           try {
-            ["axlx_pending_auto_send_sync", "axlx_search_grasped_sync", "axlx_auto_send"].forEach(function (k) {
+            // axlx_sort_pressed_sync: 並べ替えを押した印（3分有効）。残るとリセットの読み直し後の全件一覧を「並べ替え済み」と見て物件取得を始め得る
+            // axlx_reset_fired: 前のリセットの押した印。残ると今回押していないのに「押せた」と見る
+            ["axlx_pending_auto_send_sync", "axlx_search_grasped_sync", "axlx_auto_send", "axlx_sort_pressed_sync", "axlx_reset_fired"].forEach(function (k) {
               try { sessionStorage.removeItem(k); } catch (_) {}
             });
           } catch (_) {}
@@ -10627,12 +11292,76 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     } catch (e) {
       _press = { ok: true, pressed: true, cut: true, why: "page_reloaded:" + String((e && e.message) || e).slice(0, 40) };
     }
+    /**
+     * ★ 2.8.315 実測 #1661: 返事が「押せず（時間切れ・返事なし）」でも、実は押されて画面が読み直された事がある
+     *   （人の動きのクリックはキューに残って後で実行される。タブが背面だと遅い）。押した印（axlx_reset_pressed の bootAt）が
+     *   いまのページの起動と違う＝読み直された、なら「押した（遅れて）」として先へ進む（もう1回押さない・従来の外しへ行かない）。
+     */
+    // ★ 2.8.320 ページ側の押す処理の途中の印を、背景側の点検へ移す（ページの点検は次の入力で捨てられるため）
+    try { if (_press && Array.isArray(_press.steps)) _press.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
+    /**
+     * ★ 2.8.329 実測 #1677（タブが見えていた）: すぐ押せてページが読み直され、押す処理の返事ごと消えた（no_answer）。
+     *   旧はここで1回だけ確かめ、読み直しの最中の失敗を黙って捨てて「押せず」→保険の86秒待ちに入っていた（画面は空だった）。
+     *   → 読み直しが済むまで数回（最大 RESET_LATE_TRY_MS）確かめ直す。ページの関数に頼らず、押した瞬間の印
+     *     （sessionStorage の axlx_reset_fired）と、いまのページの起動時刻（performance.timeOrigin）を直接読む。
+     *     印の時刻より後に起動したページ＝押した後に読み直された＝押せた。毎回の結果を1行にまとめて点検に残す。
+     */
+    if (!_press || (_press.ok === false && !_press.skipped && /^press_timeout/.test(String(_press.why || "")))) {
+      var _lateWhy = String((_press && _press.why) || "no_answer");
+      var _lateT0 = Date.now();
+      var _tries = [];
+      var _lateHit = null;
+      while (Date.now() - _lateT0 < RESET_LATE_TRY_MS) {
+        var _st = "?";
+        try { var _tInfo = await chrome.tabs.get(_tab.id); _st = (_tInfo && _tInfo.status) || "?"; } catch (_) { _st = "no_tab"; }
+        if (_st === "no_tab") { _tries.push("no_tab"); break; }
+        if (_st === "loading") { _tries.push("loading"); await _sleep(RESET_LATE_POLL_MS); continue; }
+        var _lr = null;
+        try {
+          var _lv = await _withTimeout(chrome.scripting.executeScript({
+            target: { tabId: _tab.id },
+            world: "MAIN",
+            func: function () {
+              var f = null;
+              try { f = JSON.parse(window.sessionStorage.getItem("axlx_reset_fired") || "null"); } catch (_) { f = null; }
+              var origin = 0;
+              try { origin = Math.round(performance.timeOrigin || 0); } catch (_) { origin = 0; }
+              return { fired: f, origin: origin, ready: document.readyState };
+            },
+          }), 4000, "reset_late_press_probe");
+          if (_lv && _lv.__timeout) _tries.push("timeout");
+          else _lr = (_lv && _lv[0] && _lv[0].result) || null;
+          if (!_lr && !(_lv && _lv.__timeout)) _tries.push("no_result");
+        } catch (e) {
+          _tries.push("err:" + String((e && e.message) || e).slice(0, 24));
+        }
+        if (_lr) {
+          var _fa = _lr.fired && Number(_lr.fired.at) || 0;
+          if (_fa && _fa < _pressT0 - 2000) _fa = 0;
+          if (_fa && _lr.origin && _lr.origin > _fa) { _lateHit = _lr; _tries.push("fired+reloaded"); break; }
+          _tries.push(_fa ? "fired_same_page" : "no_mark");
+          // 押した印があって同じページのまま＝まだ読み直し前→確かめを続ける。
+          // 返事が消えた（no_answer）のに読み終えたページで印が3回続けて無い＝押していない→待たずに保険へ（時間切れの時は遅れて押し得るので続ける）
+          if (!_fa && _lateWhy === "no_answer" && _lr.ready === "complete" && _tries.slice(-3).join(",") === "no_mark,no_mark,no_mark") break;
+        }
+        await _sleep(RESET_LATE_POLL_MS);
+      }
+      var _tryLine = _tries.slice(-8).join(",");
+      _stamp("reset_press_late_check", "返事=" + _lateWhy + " 確かめ" + _tries.length + "回 " + Math.round((Date.now() - _lateT0) / 1000) + "秒 結果=" + (_lateHit ? "押せた" : "未確認") + " [" + _tryLine + "]");
+      if (_lateHit) {
+        _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが、押した後にページが読み直されていた）→先へ進む");
+        _bulkPressShow("reset", "pressed_late", String(_lateWhy).slice(0, 30));
+        _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };
+      }
+    }
     if (!_press || _press.ok === false || !_press.pressed) {
       var _why = (_press && (_press.why || _press.skipped)) || "no_answer";
-      _stamp("reset_press", "押せず→従来の外しへ: " + _why + (_press && _press.closed ? " 小窓閉じ=" + _press.closed : ""));
+      _stamp("reset_press", "押せず→保険（確かめて押し直し）へ: " + _why + (_press && _press.closed ? " 小窓閉じ=" + _press.closed : ""));
+      _bulkPressShow("reset", "not_pressed", String(_why).slice(0, 30));
       return { ok: false, why: "reset_not_pressed:" + _why, notPressed: true };
     }
     _stamp("reset_press", "押した" + (_press.cut ? "（読み直しで返事が切れた）" : "") + " 押した先=" + String(_press.via || "-") + " 位置=" + String(_press.aim || "-") + " 小窓閉じ=" + (_press.closed || 0) + " 押す前の残=" + String(_press.before || "-").slice(0, 50));
+    _bulkPressShow("reset", "pressed", String(_press.via || "-").slice(0, 30));
     // ② 読み直しを待つ（loading を見たら complete まで・8秒見ても無ければ読み直し無しとして進む）
     var _sawLoading = false, _tw = Date.now();
     while (Date.now() - _tw < 8000) {
@@ -10650,51 +11379,44 @@ async function _postSendResetRealpro(customerId, auditRunId) {
     _stamp("reset_wait", "押した後の待機 " + Math.round(_settleMs / 1000) + "秒（ラグ対策・人の間）");
     var _w1 = Math.floor(_settleMs * (0.35 + Math.random() * 0.1));
     var _w2 = Math.floor(_settleMs * (0.3 + Math.random() * 0.1));
+    _bulkWaitShow("reset_settle", _settleMs);
     await _sleep(_w1);
     await _sleep(_w2);
     await _sleep(Math.max(1000, _settleMs - _w1 - _w2));
-    // ④ すべて空かを読み戻す（ページが読み直しの途中で答えない時は少し待って聞き直す）
-    var _ver = null, _vt = Date.now(), _tries = 0;
-    while (Date.now() - _vt < RESET_VERIFY_TOTAL_MS) {
-      _tries++;
-      try {
-        var _vr = await _withTimeout(chrome.scripting.executeScript({
-          target: { tabId: _tab.id },
-          world: "MAIN",
-          func: function (cid) {
-            try {
-              if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 8000, cid: cid });
-            } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
-            return { ok: false, why: "no_page_fn" };
-          },
-          args: [String(customerId || "")],
-        }), 15000, "reset_verify");
-        _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
-      } catch (_) { _ver = null; }
-      if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) break;
-      await _sleep(700);
-    }
+    /**
+     * ★ 2.8.317 竹内さん「前客のリセットのところ多すぎてバグる可能性ある。30〜34秒のところだけでリセットすればより改善される」
+     *   「リセットしたら必ず空になっているので、そのままお客さんの条件を拡張ツールからいれる」:
+     *   ④空の読み戻し（最大25秒のループ）・⑤写真（2〜4秒の間＋最大25秒）・⑥5〜9秒の猶予は**やめた**。
+     *   押す→読み直しを待つ→30〜34秒待つ、で終わり。待った後は空とみなして次へ進む（reset_settled）。
+     *   ⚠ ページに「きれい」の印（axlx_reset_clean）を付けるため、ページを**1回だけ**読む（待たない・繰り返さない・空でなくても止めない・外しへ回さない）。
+     *     印があると次客の入力前に「所在地の小窓を開いて確かめる」時間を省ける。読めなければ印は付かないだけ（ページ側の安全網が確かめる）。
+     *   ⚠ 押せなかった時の保険（_resetWithInsurance）と従来の外しは、押せなかった時だけ残す（ここは通らない）。
+     */
+    var _ver = null;
+    try {
+      var _vr = await _withTimeout(chrome.scripting.executeScript({
+        target: { tabId: _tab.id },
+        world: "MAIN",
+        func: function (cid) {
+          try {
+            if (typeof window.__axlxResetVerifyP === "function") return window.__axlxResetVerifyP({ maxMs: 1500, cid: cid });
+          } catch (e) { return { ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }; }
+          return { ok: false, why: "no_page_fn" };
+        },
+        args: [String(customerId || "")],
+      }), 8000, "reset_settle_mark");
+      _ver = (_vr && !_vr.__timeout && _vr[0] && _vr[0].result) || null;
+    } catch (_) { _ver = null; }
+    _bulkPressShow("reset_check", _ver ? (_ver.empty ? "empty" : "not_empty") : "unknown", _ver && !_ver.empty ? String(_ver.left != null ? _ver.left : "?") : "");
     var _reloaded = !!(_ver && _ver.reloaded) || _sawLoading;
-    var _cntNote = " 件数 前=" + (_ver && _ver.countBefore != null ? _ver.countBefore : "-") + " 後=" + (_ver && _ver.countNow != null ? _ver.countNow : "-") + (_ver && _ver.countKnown === false ? "（読めず・空だけで判定）" : "");
-    if (_ver && _ver.ok && _ver.empty && _ver.verified !== false) {
-      _stamp("reset_verified", "空を確認 読み直し=" + (_reloaded ? "あり" : "なし") + " 聞いた回数=" + _tries + " " + Math.round((Date.now() - _t0) / 1000) + "秒" + _cntNote);
-      // ⑤ 待機（人の間）→ 画面の写真を1枚（空になった画面の記録）。撮れなくても進む
-      await _sleep(RESET_SHOT_GAP_MIN_MS + Math.floor(Math.random() * 2000));
-      var _shotNote = await _withTimeout(_resetShot(_tab, auditRunId || _auditOpenRunId(String(customerId), "realpro"), customerId), 25000, "reset_shot");
-      _stamp("reset_shot", (_shotNote && _shotNote.__timeout) ? "時間切れ（進む）" : String(_shotNote));
-      return { ok: true, left: 0, reset: true, reloaded: _reloaded };
-    }
-    // ★ 2.8.289 空でも件数が増えていない＝リセットで外れた証拠なし → 従来の1つずつ外しへ（残りは0でも確かめのため）
-    if (_ver && _ver.ok && _ver.empty && _ver.verified === false) {
-      _stamp("reset_count_same", "空だが件数が増えず（外れた証拠なし）→従来の外しへ" + _cntNote);
-      return { ok: false, left: 0, reset: true, reloaded: _reloaded, countSame: true, why: "reset_count_same" };
-    }
-    var _left = _ver && _ver.left != null ? _ver.left : -1;
-    _stamp("reset_not_empty", "空にならず→従来の外しで残りを外す 残=" + _left + " " + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 60));
-    return { ok: false, left: _left, reset: true, reloaded: _reloaded, why: "reset_not_empty:" + String((_ver && (_ver.detail || _ver.why)) || "").slice(0, 40) };
+    // ★ 2026-11-27 完了は「押した後に空と読めた」ことで決める。空と読めなければ空とみなさない（保険へ）
+    var _confirmed = !!(_ver && _ver.ok && _ver.empty);
+    _stamp("reset_settled", (_confirmed ? "押して" : "押して") + Math.round(_settleMs / 1000) + "秒待った→" + (_confirmed ? "空を確認（完了）" : "空を確かめられず（" + (_ver ? ("残=" + (_ver.left != null ? _ver.left : "?")) : "読めず") + "）→保険へ") + "・読み直し=" + (_reloaded ? "あり" : "なし") + " 計" + Math.round((Date.now() - _t0) / 1000) + "秒");
+    if (_confirmed) return { ok: true, left: 0, reset: true, reloaded: _reloaded, confirmed: true };
+    return { ok: false, why: "not_confirmed:" + (_ver ? ("残=" + (_ver.left != null ? _ver.left : "?")) : "読めず"), unconfirmed: true, reloaded: _reloaded };
   } catch (e) {
-    console.warn("[reset-press] 失敗（非致命・従来の外しへ）:", e && e.message ? e.message : e);
-    _stamp("reset_press", "error→従来の外しへ:" + String(e && e.message || e).slice(0, 50));
+    console.warn("[reset-press] 失敗（非致命・保険へ）:", e && e.message ? e.message : e);
+    _stamp("reset_press", "error→保険へ（止める判断へ）:" + String(e && e.message || e).slice(0, 50));
     return { ok: false, why: "error", notPressed: true };
   }
 }
@@ -10708,35 +11430,70 @@ function _cmpExtVer(a, b) {
   }
   return 0;
 }
-/** 送付後の「前客の条件はずし」: まずリセット→空の確認。だめなら従来の1つずつ外す（どちらも投げない）
- *  ★ 2.8.305 reset_replaces_clear: リセットで空と確かめられたら1つずつ外す工程は行わない（外しは、リセットが押せない・空にならない時の代わり）。 */
+/**
+ * 送付後の「前客の条件はずし」（2026-11-27 竹内さん「完了の20秒以降にリセットする」「従来の1つずつ外しを完全に消す」）:
+ *   ① 送付の完了の合図のあと20秒あける（reset_gap）→ ② リセットを押して空を確かめる（_resetWithInsurance）
+ *   ③ 空を確かめたら20秒あけてから次のお客さんへ（reset_done_gap）
+ *   空を確かめられなければ止める（reset_stop・次のお客さんへ進まない）。従来の1つずつ外しは使わない（2.8.328）。
+ */
 async function _postSendClearOrReset(customerId, auditRunId) {
+  await _gapBeforeNext(customerId, auditRunId, "reset_gap", 20000);
   var rr = null;
-  try { rr = await _postSendResetRealpro(customerId, auditRunId); } catch (_) { rr = { ok: false, why: "reset_exception" }; }
-  if (rr && rr.ok) return rr;
-  try {
-    var _rid = auditRunId || _auditOpenRunId(String(customerId), "realpro");
-    if (_rid) _auditStep(_rid, "reset_fallback", "従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");
-  } catch (_) {}
-  return _postSendClearRealpro(customerId, auditRunId);
+  try { rr = await _resetWithInsurance(customerId, auditRunId, "post_send_clear"); } catch (_) { rr = { ok: false, why: "reset_exception" }; }
+  if (rr && rr.ok) await _gapBeforeNext(customerId, auditRunId, "reset_done_gap", 20000);
+  return rr;
+}
+/**
+ * ★ 2026-11-27 竹内さん「作業ごとに完了してから時間をあける（手順書完了から時間をあけないと止まりやすい）」:
+ *   完了の合図のあと、次の作業へ行く前に ms ミリ秒あける。枠には何を待っているかを出す（WAIT_WORDS の id）。
+ */
+function _gapBeforeNext(customerId, auditRunId, waitId, ms) {
+  return new Promise(function (resolve) {
+    try {
+      var _rid = auditRunId || _auditOpenRunId(String(customerId), "realpro");
+      if (_rid) _auditStep(_rid, waitId, "完了から" + Math.round(ms / 1000) + "秒あけて次へ");
+    } catch (_) {}
+    try { _bulkWaitShow(waitId, ms); } catch (_) {}
+    setTimeout(resolve, ms);
+  });
 }
 /**
  * ★ 2.8.296 条件を入れる前の1点: ページが空でなければリセットを押して空を確かめる（人の順番）。
  *   - すでに空（前客のリセットで確認済み・新しいページ）→ 押さない（二重に押さない・待たない）
  *   - 入力の最中（_axFillRunning）→ 押さない（入力が消える。2.8.105→107 の戻した理由）
  *   - 空でない → 邪魔しない窓 reset を張ってリセット→待機30秒以上→空の確認（_postSendResetRealpro と同じ手順）
- *   - 押せない・空にならない → 何も壊さず返す（ページ側の従来の外しが安全網として残る）
+ *   - 押せない・空にならない → 止める（_resetWithInsurance の結果で一括を止める。従来の1つずつ外しは使わない・2.8.328）
  *   監査の段: reset_before_fill（結果）。リアプロ以外・タブ無しは何もしない。投げない。
  */
-async function _resetBeforeFill(customer, runId) {
+/**
+ * 入力前リセットは同時に1本だけ（2.8.328・#1666 29回／#1671 58回の重なり）。
+ *   走っている間に来た頼みは押さずに、走っている1本の結果を受け取る（reset_before_fill_join を残す）。
+ *   ⚠ 上限 6分（_resetWithInsurance の最長＋余裕）を過ぎた1本は待たない（固まりで次が永久に止まらないように）。
+ */
+var _resetBeforeFillInFlight = null; // { p, at, cid }
+var RESET_BEFORE_FILL_JOIN_MAX_MS = 360000;
+async function _resetBeforeFill(customer, runId, preferredTabId) {
+  var cid = customer && customer.id != null ? String(customer.id) : "";
+  var cur = _resetBeforeFillInFlight;
+  if (cur && Date.now() - cur.at < RESET_BEFORE_FILL_JOIN_MAX_MS) {
+    var note = "入力前リセットが走っている最中→押さずにその結果を待つ（走っている客=" + String(cur.cid || "-").slice(0, 8) + "・" + Math.round((Date.now() - cur.at) / 1000) + "秒目）";
+    try { var _jr = runId || _bulkPhaseRunId; if (_jr) _auditStep(_jr, "reset_before_fill_join", note.slice(0, 120)); } catch (_) {}
+    var shared = null;
+    try { shared = await cur.p; } catch (_) { shared = null; }
+    return Object.assign({}, shared || { ok: false, why: "no_result" }, { joined: true });
+  }
+  var p = _resetBeforeFillOnce(customer, runId, preferredTabId);
+  var mine = { p: p, at: Date.now(), cid: cid };
+  _resetBeforeFillInFlight = mine;
+  try { return await p; } finally { if (_resetBeforeFillInFlight === mine) _resetBeforeFillInFlight = null; }
+}
+async function _resetBeforeFillOnce(customer, runId, preferredTabId) {
   var _stamp = function (note) { try { if (runId) _auditStep(runId, "reset_before_fill", String(note || "").slice(0, 120)); } catch (_) {} };
   var cid = customer && customer.id != null ? String(customer.id) : "";
   var _t0 = Date.now();
   try {
-    var _m = await chrome.storage.local.get(RESET_BUTTON_MODE_KEY);
-    if (_m && _m[RESET_BUTTON_MODE_KEY] === false) { _stamp("見送り=off（従来の外し）"); return { skipped: "off" }; }
     var _tabs = await chrome.tabs.query({ url: ["https://www.realnetpro.com/*"] });
-    var _tab = (_tabs || []).filter(function (t) { return t && t.id && t.active; })[0] || (_tabs || [])[0];
+    var _tab = _pickRealproResetTab(_tabs, preferredTabId);
     if (!_tab || !_tab.id) { _stamp("見送り=no_tab"); return { skipped: "no_tab" }; }
     // ① いま空か（フォームの読み戻し）。空なら押さない
     var _probe = null;
@@ -10760,17 +11517,18 @@ async function _resetBeforeFill(customer, runId) {
     // ② 空でない → 窓を張ってリセット（人の間・空の確認まで）
     var _left = _probe && _probe.left != null ? _probe.left : "?";
     _stamp("空でない（残=" + _left + " " + String((_probe && _probe.detail) || "").slice(0, 40) + "）→リセットを押す");
-    if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 260000, { cid: cid });
-    _quietSet("reset", 260000, { cid: cid, runId: runId || null });
+    if (_manualBulkAlive) _bulkPhaseSet("pre_fill_reset", 330000, { cid: cid });
+    _quietSet("reset", 330000, { cid: cid, runId: runId || null });
     var rr = null;
-    try { rr = await _postSendResetRealpro(cid, runId); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
+    try { rr = await _resetWithInsurance(cid, runId, "pre_fill_reset"); } catch (e) { rr = { ok: false, why: "reset_exception" }; }
     _quietClear("reset", "pre_fill_done");
-    if (rr && rr.ok) _stamp("リセットで空を確認 " + Math.round((Date.now() - _t0) / 1000) + "秒");
-    else _stamp("空にできず→入力の前にページ側の従来の外しへ（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "）");
+    if (rr && rr.ok) _stamp("リセットを押して待った＝空とみなす " + Math.round((Date.now() - _t0) / 1000) + "秒");
+    else if (rr && rr.skipped) _stamp("見送り=" + String(rr.skipped));
+    else _stamp("空にできず→入力の前に止める（理由=" + String((rr && (rr.why || rr.skipped)) || "-").slice(0, 60) + "・次のお客さんへ入れない）");
     return rr || { ok: false, why: "no_result" };
   } catch (e) {
     try { _quietClear("reset", "pre_fill_error"); } catch (_) {}
-    _stamp("error→従来の外しへ:" + String((e && e.message) || e).slice(0, 60));
+    _stamp("error→止める判断へ:" + String((e && e.message) || e).slice(0, 60));
     return { ok: false, why: "error" };
   }
 }
@@ -10792,6 +11550,12 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   if (_manualBulkAlive) _bulkPhaseSet("wait_fill_done", _fillDoneTimeoutMs(_siteKey) + 60000, { cid: String(customerId) });
   // fill-done を待つ（検索実行完了シグナル）
   var fillDone = fillDonePromise ? await fillDonePromise : null;
+  // 段階1（2026-11-27）: 前客の条件が残って中止した回（page-script の leftover_stuck）は、次の客へ進まず一括を止める
+  if (fillDone && fillDone.error && /leftover_stuck:/.test(String(fillDone.error))) {
+    _batchShouldStop = true;
+    try { _resetStopNotify(customerName, siteLabel || ""); } catch (_) {}
+    throw new Error("__BATCH_STOPPED__");
+  }
   // ★ 2.8.295 邪魔しない窓: 条件入力が済んだら「検索確認→並べ替え→押し始め」の窓へ（押し始めでページが外す・上限で必ず切れる）
   if (_siteKey === "realnetpro") {
     if (fillDone && !fillDone.stopped && !fillDone.timedOut) _quietSet("sort", 150000, { cid: String(customerId), runId: _runId });
@@ -10925,7 +11689,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   /**
    * ★ 2026-11-19 竹内さん「入れたのを覚えていたら外せるので、完了したらちゃんと外すようにすれば問題ない。順番に行えば」→ 統括Pro 案B:
    *   リアプロの送付が終わった直後（次客の switch／fill より前・一連ロックを外す前）に、そのタブへ「送付後の外し」を頼み、
-   *   最大260秒まで待つ（リセットのあと10秒以上の間を含む。非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
+   *   最大330秒まで待つ（リセットのあと10秒以上の間を含む。非致命・失敗は握りつぶしてログ）。次客開始時のきれい確認（page-script の _cleanStartGate）は安全網として残る。
    *   ・ITANDI には入れない（リアプロの連続のみ）／送付が途中のまま切り上げた回（送付進捗あり）は触らない
    *   ・最後のお客さん（_axlxLastCustomerId）は待たずに戻す（ページを汚れたまま残さないが、完了を待たせない）
    *   ・chrome.storage.local の axlx_post_send_clear_off が true なら実行しない（切り替えフラグ）
@@ -10936,15 +11700,18 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     try {
       if (!(batchDone && batchDone.timedOut && batchDone.sawProgress)) {
         _psIsLast = !!(self._axlxLastCustomerId && String(self._axlxLastCustomerId) === String(customerId));
-        // ★ 2.8.284: リセット（最大約2分）＋失敗時の従来の外し（最大125秒）を入れるため上限を 140→260秒に
-        if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 260000, { cid: String(customerId) });
-        _quietSet("reset", 260000, { cid: String(customerId), runId: _runId });
+        // ★ 2.8.284: リセット（最大約2分）＋保険（20秒＋60〜90秒＋押し直し）を入れるため上限を 140→330秒に（従来の外しは2.8.328で廃止）
+        if (_manualBulkAlive && !_psIsLast) _bulkPhaseSet("post_send_clear", 330000, { cid: String(customerId) });
+        _quietSet("reset", 330000, { cid: String(customerId), runId: _runId });
         var _psP = _postSendClearOrReset(customerId, _runId);
         if (_psIsLast) {
           _psP.catch(function () {}).then(function () { _quietClear("reset", "last_customer_done"); });
           _psRes = { skipped: "last_customer_async" };
         } else {
           _psRes = await _psP;
+          if (_psRes && _psRes.stop) { _batchShouldStop = true; _resetStopNotify(customerName, _site, !!_psRes.hiddenStuck); }
+          // ★ 2.8.307 リセットが成功したか（一括ループが「資料を見る間」を省く判断に使う・reset_success_skips_look）
+          try { self._axlxLastPsReset = { cid: String(customerId), ok: !!(_psRes && _psRes.ok && _psRes.reset), at: Date.now() }; } catch (_) {}
           // リセット→待機→空の確認が済んだ＝ここから次の客までの間（別の持ち主のまま残る reset は次の回が引き継いで待つ）
           if (_manualBulkAlive) _quietSet("gap", 180000, { cid: String(customerId), runId: _runId });
           else _quietClear("reset", "single_done");
@@ -11012,7 +11779,7 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
         var _resetCleared = !!(_psRes && _psRes.reset === true && _psRes.ok === true && Number(_psRes.left) === 0);
         var _moveName = !_nxtNm && _psOk
           ? "一括完了"
-          : (_resetCleared ? "リセットで空を確認済み→次客の条件を入れる" : "前客の選択を1つずつ外す");
+          : (_resetCleared ? "リセットで空を確認済み→次客の条件を入れる" : "リセットで空にして次のお客さんへ");
         _auditStep(
           _runId,
           "next_move_grasp",

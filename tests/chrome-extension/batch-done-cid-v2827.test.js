@@ -17,7 +17,18 @@ ok("_autoRunCid と _doneCidFrom がある", /var _autoRunCid = null;/.test(bd) 
 ok("押し始めで番号を控える（最初の1回だけ・ページをまたいでも変えない）", /if \(cid && !_autoRunCid\) _autoRunCid = cid;/.test(bd));
 ok("読み直しをまたぐ時は session の印から戻す（Case E）", /if \(s\.customerId\) _autoRunCid = s\.customerId;/.test(bd));
 const doneSenders = bd.match(/var cid = _doneCidFrom\(r\);/g) || [];
-ok("終わりの合図の2か所（_autoFinish・_sendBatchDone）が控えた番号を使う", doneSenders.length === 2, doneSenders.length);
+// 2.8.248 で _autoFinish の合図は _sendBatchDone 一本化された（旧は2か所で送っていた）。→ 送る口は _sendBatchDone の1か所で控えた番号を使い、
+//   _autoFinish は自分では合図を作らず _sendBatchDone を呼ぶ事を見る（同じ強さ：自動の終わりの合図は全部控えた番号を通る）。
+{
+  const iSend = bd.indexOf("function _sendBatchDone(");
+  const sendBody = iSend > 0 ? bd.slice(iSend, bd.indexOf("function _sendSkipDoneFor(", iSend)) : "";
+  const iFin = bd.indexOf("function _autoFinish(");
+  const finBody = iFin > 0 ? bd.slice(iFin, bd.indexOf("function _autoNextPageThenRestart", iFin)) : "";
+  ok("終わりの合図は _sendBatchDone の1口で控えた番号を使い、_autoFinish は直送せず _sendBatchDone 経由",
+    doneSenders.length === 1 && /var cid = _doneCidFrom\(r\);[\s\S]{0,200}axlx-batch-customer-done/.test(sendBody)
+    && finBody.length > 500 && !/axlx-batch-customer-done/.test(finBody) && (finBody.match(/_sendBatchDone\(/g) || []).length >= 3,
+    { senders: doneSenders.length, sendBody: sendBody.length, finBody: finBody.length });
+}
 ok("旧の「その時の storage の番号だけ」で合図を作る所が残っていない（自動の2か所）",
   !/var cid = \(r && r\.current_customer_id\) \|\| null;\s*chrome\.runtime\.sendMessage\(\{\s*type: "axlx-batch-customer-done"/.test(bd));
 ok("合図を送ったら控えを捨てる（次のお客さんに持ち越さない）", (bd.match(/_autoRunCid = null;/g) || []).length >= 3);

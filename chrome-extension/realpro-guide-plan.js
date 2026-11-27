@@ -181,7 +181,34 @@
         return true;
       });
     }
-    if (lm === "area" && c.city_codes && c.city_codes.length) push({ kind: "pick_city", codes: c.city_codes.map(String).slice(0, 40), label: "「所在地絞り込み」から区を選んでください（光っている区にチェック）" });
+    var townNames = [];
+    if (Array.isArray(c.town_names) && c.town_names.length) {
+      townNames = c.town_names.map(function (x) { return String(x || "").trim(); }).filter(Boolean);
+    } else if (c.detail_area) {
+      townNames = [String(c.detail_area).trim()].filter(Boolean);
+    }
+    var hasCity = (c.city_codes && c.city_codes.length > 0) || !!c.detail_ward;
+    if (lm === "area" && hasCity) {
+      var hasTowns = townNames.length > 0;
+      var wardName = c.detail_ward ? String(c.detail_ward).trim() : null;
+      push({
+        kind: "pick_city",
+        codes: (c.city_codes || []).map(String).slice(0, 40),
+        ward_name: wardName,
+        hasTowns: hasTowns,
+        label: hasTowns
+          ? "「所在地絞り込み」から" + (wardName || "区") + "を選び「詳細な地域の設定へ進む」"
+          : "「所在地絞り込み」から区を選んでください（光っている区にチェック）",
+      });
+      if (hasTowns) {
+        push({
+          kind: "pick_town",
+          ward: wardName,
+          towns: townNames.slice(0, 40),
+          label: "町名（" + townNames.slice(0, 4).join("・") + (townNames.length > 4 ? " 他" : "") + "）を選んで「確定してリストへ」",
+        });
+      }
+    }
     // 2026-10-06 v2.5.84 竹内「沿線はちゃんと選択されているのに何で駅直通全て表示されていないのか」（みくさん・梅田まで電車1本＝12路線・122駅）:
     //   旧は駅の名前を先頭の 40 で切っていた → 御堂筋・阪急京都・阪急宝塚の駅だけが光り、阪急神戸・阪神・JR・環状・おおさか東・四つ橋・谷町の 82駅が黙って落ちた。
     //   → 切らない（MAX_GUIDE_STATIONS は安全のための上限・自動入力の 240駅より上）

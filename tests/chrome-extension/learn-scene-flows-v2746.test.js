@@ -38,7 +38,9 @@ console.log("■ ① background が場面ごとの手順を storage に置く");
 
 console.log("\n■ ② page-script が読む（実測0箇所だった所）");
 {
-  ok("storage から axlx_learn_scene_flows を読む", /chrome\.storage\.local\.get\(\[[\s\S]{0,300}?axlx_learn_scene_flows/.test(psc));
+  // 読み方は「読む鍵の一覧（_LEARN_NEXT_KEYS）→ _applyLearnNextStorage(r) で r.axlx_learn_scene_flows を取る」（2026-11-26 見本を今の配線に）
+  ok("storage から axlx_learn_scene_flows を読む（読む鍵の一覧に入り、取り込みで r.axlx_learn_scene_flows を取る）",
+    /_LEARN_NEXT_KEYS = \[[\s\S]{0,400}?axlx_learn_scene_flows/.test(psc) && /r && r\.axlx_learn_scene_flows/.test(psc));
   ok("  window.__axlxLearnSceneFlows に入れる", /__axlxLearnSceneFlows\s*=/.test(psc));
   ok("  window.__axlxLearnStoppedScene に入れる", /__axlxLearnStoppedScene\s*=/.test(psc));
   ok("  window.__axlxLearnSceneMissing に入れる", /__axlxLearnSceneMissing\s*=/.test(psc));

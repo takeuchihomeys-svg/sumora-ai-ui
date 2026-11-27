@@ -131,9 +131,10 @@ ok("page-script: 条件削除のボタンがあれば isResetLabel で押す（v
 ok("page-script: リセットは確かめの窓でも止まらない（押す間だけ confirm を はい）", /window\.confirm = function/.test(ps) && /finally \{ window\.confirm = _oc; \}/.test(ps));
 ok("page-script: 家賃の上限は rentText(…, \"max\")", /rentText\(cond\.rent_max, "max"\)/.test(ps));
 ok("page-script: 家賃の下限は rentText(…, \"min\")", /rentText\(cond\.rent_min, "min"\)/.test(ps));
-ok("page-script: 押す前に _itWaitSearchReady", ps.indexOf("_itWaitSearchReady(function (why, btn, texts)") > 0 && ps.indexOf("_itWaitSearchReady(function") < ps.indexOf("_humanClick(btn); _searched = true;"));
+// _humanClick は今は learnNames の引数付き（_pressP に受ける）。形が変わっただけで「待ち→押す」の順は同じ
+ok("page-script: 押す前に _itWaitSearchReady", ps.indexOf("_itWaitSearchReady(function (why, btn, texts)") > 0 && ps.indexOf("_itWaitSearchReady(function") < ps.indexOf("_pressP = _humanClick(btn, {") && /_pressP = _humanClick\(btn, \{[^}]*\}\); _searched = true;/.test(ps));
 ok("page-script: 押せない時は AXLX_SEARCH_BLOCKED で返す（押さない）", /_safeDone\("AXLX_SEARCH_BLOCKED: " \+ why\.ja\)/.test(ps));
-ok("page-script: 残りの条件の例外を捕まえる（黙って240秒待たない）", /try \{ fillRemainingFields\(cond\); \}\s*catch \(errR\)/.test(ps));
+ok("page-script: 残りの条件の例外を捕まえる（黙って240秒待たない）", /try \{ _remFieldsP = Promise\.resolve\(fillRemainingFields\(cond\) \|\| \[\]\); \}\s*catch \(errR\)/.test(ps) && /catch \(errR\) \{[^\n]*_safeDone\("fill-exception\(remaining\)/.test(ps));
 ok("page-script: 失敗は skip:true", /if \(errMsg\) \{ msg\.error = errMsg; msg\.skip = true; \}/.test(ps));
 ok("page-script: watchdog も skip:true", /error: "watchdog-timeout", skip: true/.test(ps));
 ok("page-script: 返した後の続きは検索を押さない（_dead）", (ps.match(/if \(_dead\) return;/g) || []).length >= 4);
@@ -150,7 +151,12 @@ ok("background: ITANDI は pickItandiTab", /self\.AxlxBatchGuard\.pickItandiTab\
 ok("background: ITANDI のタブを確かめる", /if \(site === "itandi"\) tab = await _ensureItandiTab\(tab, auditRun, customer && customer\.id\);/.test(bg));
 ok("background: 開き直すのは1回（tabs.update が1つ）", (bg.slice(bg.indexOf("async function _ensureItandiTab"), bg.indexOf("async function _webappAutofill")).match(/chrome\.tabs\.update\(/g) || []).length === 1);
 ok("background: だめな時は待ち手を閉じて AXLX_TAB_DEAD", /_endFillDoneWaiter\("itandi", String\(customerId\), "ITANDI のタブが検索の画面でない"\)/.test(bg) && /AXLX_TAB_DEAD: ITANDI のタブが検索の画面になりません/.test(bg));
-ok("background: fill-done の error は飛ばす（page-script側エラー（スキップ））", /if \(fillDone\.error\) \{\n    throw new Error\("page-script側エラー（スキップ）: " \+ fillDone\.error\);/.test(bg));
+// 今は throw の前に次客のためのロック解除・点検の記録（handoff_loop）が入る。error なら必ず throw する形は同じ
+{
+  const i = bg.indexOf("if (fillDone.error) {");
+  const j = i >= 0 ? bg.indexOf('throw new Error("page-script側エラー（スキップ）: " + fillDone.error);', i) : -1;
+  ok("background: fill-done の error は飛ばす（page-script側エラー（スキップ））", i >= 0 && j > i && j - i < 1200 && !/\n  \}\n/.test(bg.slice(i, j)));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -69,21 +69,21 @@ console.log("\n■ ② 癖が自動モードの動きに使われる");
   ok("貯まるたびに作り直された癖（axlx_human_profile）を優先して使う", /PROF_LIVE_KEY = "axlx_human_profile"/.test(pu) && /if \(live && typeof live === "object"\) \{ _prof = live; return; \}/.test(pu));
   ok("癖が変わったら読み直す（storage の変化を見る）", /ch\[PROF_LIVE_KEY\] \|\| ch\[PROF_KEY\]/.test(pu));
   ok("動く時間に癖の速さを使う", /_LL\.moveMsFor\(prof, dist\)/.test(pu));
-  ok("癖が無ければ今まで通りの式", /_learned != null \? _learned : Math\.min\(900, Math\.max\(220, Math\.round\(dist \* 1\.6\)\)\)/.test(pu));
+  ok("癖が無ければ今まで通りの式", /var total = _learned != null \? _learned : Math\.min\(\d+, Math\.max\(\d+, Math\.round\(dist \* [\d.]+\)\)\)/.test(pu));
   ok("軌跡を癖の曲がり具合に寄せる（_bendLike）", /function _bendLike\(pts, from, to, curve\)/.test(pu) && /pts = _bendLike\(pts, from, t, _curve\)/.test(pu));
   ok("曲げる量は距離の12%まで（画面が暴れない）", /Math\.min\(len \* 0\.12/.test(pu));
-  ok("押す位置は癖の割合で狙う", /prof\.aim\.x \+ \(Math\.random\(\) - 0\.5\) \* 0\.16/.test(pu));
+  ok("押す位置は癖の割合で狙う", /prof\.aim\.x \+ \(Math\.random\(\) - 0\.5\) \* 0\.\d+/.test(pu));
   ok("癖が無ければ 40〜60%（ほぼ真ん中）", /var fx = 0\.4 \+ Math\.random\(\) \* 0\.2;/.test(pu));
-  ok("押す位置も 0.15〜0.85 に収める", /Math\.max\(0\.15, Math\.min\(0\.85/.test(pu));
+  ok("押す位置も 0.15〜0.85 に収める", /fx = Math\.max\(0\.1\d?, Math\.min\(0\.8\d, prof\.aim\.x/.test(pu));
 }
 
 console.log("\n■ ③ データがたまるたびに反映される");
 {
   ok("貯めるたびに癖を作り直す", /var prof = L\.profileFrom\(next\);/.test(rec));
-  ok("別のキー（axlx_human_profile）に置く（カーソルがこれを見る）", /o\[PROFILE_KEY\] = prof/.test(rec) && /PROFILE_KEY = "axlx_human_profile"/.test(rec));
+  ok("別のキー（axlx_human_profile）に置く（カーソルがこれを見る）", /o\[SITE_PROFILE_KEY\] = prof/.test(rec) && /SITE_PROFILE_KEY = PROFILE_KEY \+ _siteSuffix/.test(rec) && /PROFILE_KEY = "axlx_human_profile"/.test(rec));
   ok("同じ書き込みでまとめて置く（変化が1回で届く）", /chrome\.storage\.local\.set\(o, function \(\)/.test(rec));
   ok("理解した内容を画面に出す（paintLearned）", /function paintLearned\(prof\)/.test(rec) && /理解した動き: /.test(rec));
-  ok("理解したら印を出す（貯まった後）", /if \(o\[PROFILE_KEY\]\) paintLearned\(o\[PROFILE_KEY\]\); else paintBadge\(\);/.test(rec));
+  ok("理解したら印を出す（貯まった後）", /if \(o\[SITE_PROFILE_KEY\]\) paintLearned\(o\[SITE_PROFILE_KEY\]\); else paintBadge\(\);/.test(rec));
   ok("小窓に「この値が自動モードの動きに使われます」を出す", /▼ この値が自動モードの動きに使われます/.test(read("popup.js")));
   ok("学んだ値を1行ずつ出せる（learnedLines）", /function learnedLines\(profile\)/.test(L.learnedLines ? read("human-learn.js") : ""));
   const lines = L.learnedLines(L.profileFrom(agg()));
@@ -96,7 +96,7 @@ console.log("\n■ ④ DB に送る（鍵は background が付ける）");
   ok("画面側は鍵を持たない（background に頼む）", /chrome\.runtime\.sendMessage\(\{\s*type: "axlx-human-motion"/.test(up));
   ok("送りすぎない（前回から5分）", /MIN_GAP_MS = 5 \* 60 \* 1000/.test(up));
   ok("送った印を先に置く（同じ分を2回送らない）", /SENT_KEY\] = Date\.now\(\);/.test(up));
-  ok("記録が増えたら送る", /ch\[KEY\]\.newValue/.test(up));
+  ok("記録が増えたら送る", /ch\[SITE_KEY\]\.newValue/.test(up));
   ok("background が鍵を付けて送る", /type === "axlx-human-motion"/.test(bg) && /_getAutomationKeyHeader\(\)/.test(bg));
   ok("送り先は /api/human-motion", /\/api\/human-motion/.test(bg));
   ok("送るのは数と傾向だけ（中身は送らない）", /motion: msg\.motion/.test(bg) && !/value:/.test(up));

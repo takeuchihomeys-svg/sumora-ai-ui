@@ -35,7 +35,7 @@ ok("決まり foundation_aim_warm_score_gate", /id: "foundation_aim_warm_score_g
 console.log("\n■ KEEP / RULE / PIN");
 ok("KEEP score_gate", /score_gate/.test(sa));
 ok("KEEP foundation_aim_warm", /foundation_aim_warm/.test(sa));
-ok("RULE score_gate", /RULE_STEP[\s\S]{0,800}score_gate/.test(sa) || /foundation_aim_warm\|score_gate|score_gate\|foundation_aim_warm/.test(sa));
+ok("RULE score_gate", /var RULE_STEP = [^\n]*\|score_gate\|/.test(sa) /* RULE_STEP は1行の長い正規表現（窓の長さに依存せず、その行の中に score_gate がある事を見る） */);
 ok("PIN score_gate", /score_gate/.test(ps) && /foundation_aim_warm/.test(ps));
 
 console.log("\n■ F64 症例");

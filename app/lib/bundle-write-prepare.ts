@@ -10,9 +10,11 @@
 //   先に呼ぶと、過去の行から名前や古い手順が戻る。
 import { stripCustomerNames } from "./bundle-privacy";
 import { buildPlaybook, PLAYBOOK_BUILD_V } from "./action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
+import { rulesReviewedUpToFor } from "./auto-itandi-rules";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { cleanOpenerCheckboxCopies } from "./field-name-aliases";
+import { sanitizeBundleForSite } from "./human-motion-sanitize";
+import { syncSupervisorSceneFlows, syncSupervisorImproveLoop } from "./learn-bundle-preserve";
 
 export type PrepareBundleResult = {
   names_stripped: boolean;
@@ -28,8 +30,11 @@ export type PrepareBundleResult = {
   playbook_kept_newer: boolean;
 };
 
-/** 束を書く形に整える（束を直接書き換える）。 */
-export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareBundleResult {
+/**
+ * 束を書く形に整える（束を直接書き換える）。
+ * site: その束のサイト（'itandi' ならリアプロ専用の手を載せない・2026-11-26）。未指定は従来どおり。
+ */
+export function prepareBundleForWrite(bundle: Record<string, unknown>, site?: string | null): PrepareBundleResult {
   let names_stripped = false;
   try {
     const cleaned = stripCustomerNames(bundle);
@@ -45,6 +50,21 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
     opener_copies_removed = cleanOpenerCheckboxCopies(bundle);
   } catch {
     // 外せなくても束は書く（手順書が mismatch として足りない所に出す）
+  }
+  try {
+    sanitizeBundleForSite(bundle, site);
+  } catch {
+    // サニタイズ失敗時も束の保存は止めない
+  }
+  try {
+    syncSupervisorSceneFlows(bundle, site);
+  } catch {
+    // 同期失敗時も束の保存は止めない
+  }
+  try {
+    syncSupervisorImproveLoop(bundle, site);
+  } catch {
+    // 同期失敗時も束の保存は止めない
   }
   let playbook_ok = false;
   let playbook_ver_bumped = false;
@@ -63,7 +83,7 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
     if (process.env.PLAYBOOK_DOWNGRADE_GUARD !== "off") {
       const hidden = (bundle as { __prev_playbook?: Record<string, unknown> | null }).__prev_playbook;
       const best = pickNewestPlaybook<Record<string, unknown>>([cur ?? null, hidden ?? null].filter(Boolean) as Record<string, unknown>[]);
-      if (best && isPlaybookNewerThanCode(best, { upTo: AUTO_RULES_REVIEWED_UP_TO, build: PLAYBOOK_BUILD_V })) kept = best;
+      if (best && isPlaybookNewerThanCode(best, { upTo: rulesReviewedUpToFor(site), build: PLAYBOOK_BUILD_V })) kept = best;
     }
     try { delete (bundle as { __prev_playbook?: unknown }).__prev_playbook; } catch { /* 列挙されない印なので消えなくても書かれない */ }
     if (kept) {
@@ -71,7 +91,7 @@ export function prepareBundleForWrite(bundle: Record<string, unknown>): PrepareB
       playbook_kept_newer = true;
       playbook_ok = true;
     } else {
-      bundle.playbook = buildPlaybook(bundle as never);
+      bundle.playbook = buildPlaybook(bundle as never, site);
       playbook_ok = true;
       const nextRv = String((bundle.playbook as { rules_v?: string } | null | undefined)?.rules_v ?? "");
       if (nextRv && nextRv !== prevRv) {

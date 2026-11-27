@@ -1,0 +1,58 @@
+#!/bin/sh
+# コミットの前に、リアプロ・ITANDI を混ぜない見張りを回す（2026-11-26）。
+# 有効にする（1回だけ・この PC の設定）: git config core.hooksPath .githooks
+# 止まったら: 出た ✗ を直す。新しい共有ファイルなら tests/chrome-extension/site-split-rules.json に理由を書いて登録する。
+# 無効にする: git config --unset core.hooksPath
+set -e
+echo "[pre-commit] サイト分けの見張り（リアプロ・ITANDI・REINS）"
+node tests/chrome-extension/site-split-guard.test.js
+echo "[pre-commit] 表記の写しが正本（popup-maps.js）と同じか・重複キー0か"
+node tests/chrome-extension/notation-copies-sync.test.js
+echo "[pre-commit] リアプロ詳細地域案内＋単発自動リセットの試験"
+node tests/chrome-extension/realpro-guide-town.test.js
+echo "[pre-commit] サイトの呼び名の正本の試験（app/lib/site-key.ts）"
+npx tsx app/lib/__tests__/site-key.test.ts
+echo "[pre-commit] 学習束・手順書サイト分離・死んだverify・証跡ステップの防衛試験"
+npx tsx app/lib/__tests__/playbook-site-split.test.ts
+npx tsx app/lib/__tests__/auto-rules-verify-exists.test.ts
+npx tsx app/lib/__tests__/playbook-rule-evidence.test.ts
+npx tsx app/lib/__tests__/learn-opens-and-itandi-flow.test.ts
+echo "[pre-commit] ITANDI の決まりはリアプロと分かれている・目印がコードにある（2026-11-27）"
+npx tsx app/lib/__tests__/itandi-rules-separate.test.ts
+echo "[pre-commit] 手順書の抜けの基準・確かめない決まりの理由（増えたら止める）"
+npx tsx app/lib/__tests__/playbook-gap-baseline.test.ts
+echo "[pre-commit] 手順書浄化・ITANDI別名分離・拡張同期・統括ループ同期（2026-11-27）"
+npx tsx app/lib/__tests__/playbook-clean-and-itandi-sync.test.ts
+npx tsx app/lib/__tests__/site-contamination-guard.test.ts
+npx tsx app/lib/__tests__/playbook-and-motion-hardening.test.ts
+npx tsx app/lib/__tests__/reflect-mechanism-hardening.test.ts
+node tests/chrome-extension/head-ttl-served-v2310.test.js
+node tests/chrome-extension/learn-bundle-site-sync.test.js
+node tests/chrome-extension/reflect-pipeline-v28312.test.js
+node tests/chrome-extension/reset-front-visible-v2320.test.js
+node tests/chrome-extension/human-move-arrive-v2321.test.js
+node tests/chrome-extension/sort-pressed-then-list-v2322.test.js
+node tests/chrome-extension/resume-lag-wait-v2324.test.js
+echo "[pre-commit] 枠の待ち表示（2.8.325・待ちは地図から・配線・秒の数え方）"
+node tests/chrome-extension/box-wait-v2325.test.js
+npx tsx app/lib/__tests__/wait-words-from-map.test.ts
+echo "[pre-commit] 流れの地図（分かれ道は全部 客完了→リセットへ合流・手順書は地図から作る・直す前の前提の決まりが書いてある）"
+npx tsx app/lib/__tests__/loop-flow-map.test.ts
+echo "[pre-commit] パネルの言葉は流れの地図から作る（手を足したらパネルも決める・写しが古くない・手書きの古い言葉が残らない・2.8.323）"
+npx tsx app/lib/__tests__/panel-from-flow-map.test.ts
+npx tsx app/lib/__tests__/bulk-panel-playbook-sync.test.ts
+npx tsx app/lib/__tests__/bulk-panel-grasp.test.ts
+npx tsx scripts/gen-panel-words.ts --check
+echo "[pre-commit] 新しい決まりの実機の証拠の判定（2.8.313）"
+npx tsx app/lib/__tests__/new-rules-evidence.test.ts
+echo "[pre-commit] 拡張の試験の出力の読み方（青を赤と数えない・2.8.314）"
+npx tsx app/lib/__tests__/ext-test-parse.test.ts
+STAGED="$(git diff --cached --name-only)"
+if echo "$STAGED" | grep -qE '^(chrome-extension/|tests/chrome-extension/)'; then
+  echo "[pre-commit] 拡張の試験を全部（基準の赤より増えていないか・赤の中の失敗項目も・2.8.313）"
+  npx tsx scripts/ext-test-all.ts
+fi
+if echo "$STAGED" | grep -qE '\.(ts|tsx)$'; then
+  echo "[pre-commit] 型エラーが基準より増えていないか（絶対ルール5・2.8.313）"
+  npx tsx scripts/tsc-gate.ts
+fi

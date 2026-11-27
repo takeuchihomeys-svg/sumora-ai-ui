@@ -36,8 +36,11 @@ t("型にも x/y/zone がある", /x\?: number; y\?: number; zone\?: string/.tes
 
 // ── ② 背景が別の入れ物に入れる ────────────
 t("axlx_learn_screen を作る", /axlx_learn_screen: _screenAim/.test(bg));
-t("3回以上見た欄だけ入れる", /\(Number\(f\.n\) \|\| 0\) < 3\) continue/.test(bg));
-t("押す位置とは別の入れ物（混ぜない）", /_screenAim\[k\] = \{ x:/.test(bg));
+// 2.8.313 退役: 「3回以上見た欄だけ入れる（n<3 は捨てる）」は 2026-11-17 統括Pro「押した位置35%→60%／aim無だらけ」で意図して n≥1 も載せる（thin 印）に変えた
+//   （background.js _extractScreenAndSceneFromBundle のコメント・memory/dept_search_tool.md「axlx_learn_screen: n≥1も載せる（thin）。solid数えは n≥3 のまま」）。代わりに今の規則を固定する
+t("n≥1 から載せ、3回未満は thin 印を付ける（solid 数えは n≥3 のまま）", /\(Number\(ff\.n\) \|\| 0\) < 1\) continue/.test(bg) && /thin: \(Number\(ff\.n\) \|\| 0\) < 3/.test(bg) && /\(Number\(_exCur\.screenAim\[_kSol\]\.n\) \|\| 0\) >= 3\) _scSol\+\+/.test(bg));
+// 変数名は _screenAim[k] から sAim[kk] に変わった（別の入れ物 axlx_learn_screen に入れる点は同じ・押す位置 axlx_learn_points とは混ぜない）
+t("押す位置とは別の入れ物（混ぜない）", /sAim\[kk\] = \{\s*x: Math\.round\(ff\.x \* 100\) \/ 100/.test(bg) && !/axlx_learn_points: _screenAim/.test(bg));
 
 // ── ③ ✅ 画面の位置から**要素を特定して**使う（v2.7.84 で実装）────────────
 t("_screenAimOf がある（読む所）", /function _screenAimOf/.test(ps));
@@ -54,7 +57,9 @@ t("⚠ 名前が合わなければ使わない", /if \(!okName\) return null/.te
 
 // ── ④ 押した記録がある時は今まで通り ────────────
 t("押した記録（n>=2）は今まで通り使う", /var aim = \{ x: v\.x, y: v\.y, n: Number\(v\.n\) \|\| 0 \}/.test(ps));
-t("1回だけの記録は使わない（偶然）", /if \(Number\(v\.n\) < 2\)/.test(ps));
+// 2.8.313 退役: 「1回だけの記録は使わない（n<2）」は 2026-11-16 統括「押した位置28%」で意図して n≥1 から使う形に変えた
+//   （page-script.js _aimOf のコメント「旧は n<2 を捨てていた → n≥1 なら使う」）。代わりに今の下限（記録なし n<1 は使わない・few_times 印）を固定する
+t("記録なし（n<1）は使わない（n=1 は使う・2026-11-16）", /if \(Number\(v\.n\) < 1\) \{[\s\S]{0,400}"few_times:" \+ Number\(v\.n\)/.test(ps));
 
 // ── ⑤ 版 ────────────
 t("版が 2.7.83 以降", manifest.version >= "2.7.83");

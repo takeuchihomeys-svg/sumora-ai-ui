@@ -35,8 +35,9 @@ t("synthetic:true を付ける（実際の座標だと伝える）", /synthetic:
 t("要素の外なら記録しない（0〜1で判定）", /_fx2 >= 0 && _fx2 <= 1/.test(ptr));
 
 // ── ② _pushPoint が自動でも実座標を使う ────────────
-t("synthetic の時は真ん中にしない", /var syn = \(by === "auto"\) && !\(ev && ev\.synthetic === true\)/.test(rec));
-t("座標が無い時だけ真ん中", /\(syn \|\| !hasXY\) \? 0\.5/.test(rec));
+// 2026-11-17（統括Pro）以降: 旧 `syn` 変数は useXY に統合（auto でも実座標があれば使う・0,0 だけ真ん中）
+t("synthetic の時は真ん中にしない（実座標を使う）", /var useXY = hasXY && !zeroish && \(ev\.synthetic === true \|\| by === "human" \|\| by === "auto"\)/.test(rec));
+t("座標が無い時だけ真ん中", /var fx = useXY \? \(\(cxU - r\.left\) \/ r\.width\) : 0\.5/.test(rec) && /var fy = useXY \? \(\(cyU - r\.top\) \/ r\.height\) : 0\.5/.test(rec));
 t("実座標があるか確かめる", /Number\.isFinite\(Number\(ev\.clientX\)\)/.test(rec));
 
 // ── ③ __axlxRecNotePoint を公開 ────────────

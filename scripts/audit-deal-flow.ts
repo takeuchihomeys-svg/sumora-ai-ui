@@ -16,7 +16,7 @@ const arg = (k: string, d = "") => argv.find((a) => a.startsWith(`--${k}=`))?.sl
 
 (async () => {
   const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
-  const cols = ["id", "conversation_id", ...FLOW_STAGES.map((s) => s.key).filter((k) => k !== "estimate_at")].join(", ");
+  const cols = ["id", "conversation_id", "applied_at_estimated", ...FLOW_STAGES.map((s) => s.key).filter((k) => k !== "estimate_at")].join(", "); // #748 ①: 推定の申込は別の型
   const { data, error } = await sb.from("deal_outcomes").select(cols).limit(5000);
   if (error) throw new Error(error.message);
   const deals = ((data ?? []) as unknown as DealRow[]).filter((d) => !isTestConversation(d.conversation_id));

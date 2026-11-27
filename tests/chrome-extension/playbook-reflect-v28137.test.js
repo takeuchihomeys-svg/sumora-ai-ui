@@ -32,14 +32,17 @@ function run(pb) {
   return steps;
 }
 const done = [...doneSrc.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+// 2026-11-26: 手順書は版（rules_up_to）と一連の流れ（flow_series）の印を持つ（2.8.297・2.8.3xx で足した）。古い見本のままだと
+//   「手順書の版が無い＝手順書が古い（playbook_behind）」が余分に出る。見本を今の形（版＝拡張と同じ）に揃える。
 const pbAll = {
-  version: "abcdef0123456789", rules_v: "d30a6a50",
+  version: "abcdef0123456789", rules_v: "d30a6a50", rules_up_to: manifest.version,
   rules: done.map((id) => ({ id })),
+  flow_series: [{ id: "before_clear" }, { id: "after_clear" }],
   scenes: [{ steps: ["a", "b"], detail: [{}, {}] }, { steps: ["c"], detail: [{}] }],
 };
 const s1 = run(pbAll);
 check("手順書があれば playbook_seen", s1.length === 1 && s1[0].k === "playbook_seen", JSON.stringify(s1));
-check("形: v=8桁 rv 決まり=全部/全部 無い=- 手順書に無い=- 場面 手", /^v=abcdef01 rv=d30a6a50 決まり=(\d+)\/\1 無い=- 手順書に無い=- 場面=2 手=3$/.test(s1[0].d), s1[0].d);
+check("形: v=8桁 rv 決まり=全部/全部 無い=- 手順書に無い=- 場面 手 一連 before_clear", /^v=abcdef01 rv=d30a6a50 決まり=(\d+)\/\1 無い=- 手順書に無い=- 場面=2 手=3 一連=2 before_clear=Y$/.test(s1[0].d), s1[0].d);
 check("120文字に収まる（点検記録で切れない）", s1[0].raw.length <= 120, String(s1[0].raw.length));
 
 const pbOld = { ...pbAll, rules: done.slice(0, 3).map((id) => ({ id })).concat([{ id: "future_rule" }]) };

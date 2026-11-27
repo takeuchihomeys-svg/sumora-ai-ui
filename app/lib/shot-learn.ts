@@ -20,6 +20,7 @@
 // ⚠ LLM は「迷った時だけ」呼ぶ（決定論で分かる物は決定論で決める＝費用を抑える）。
 
 import { isAutoMode } from "./press-by";
+import { isAllowedMotionFieldName, isCrossSiteFieldName } from "./human-motion-sanitize";
 
 /** 写真から読んだ1つの欄 */
 export type ShotField = {
@@ -127,11 +128,11 @@ const norm = (s: unknown) => String(s == null ? "" : s).replace(/[\s\u3000]+/g, 
 
 /** 操作がプルダウンと分かっている欄（Vision が button/text と読んでも食い違いにしない） */
 const KNOWN_SELECT_FIELD_RE =
-  /^(rental_cost|update_date|square_meter|structured_date|transportation_id|required_time|分$)/i;
+  /^(rental_cost|update_date|square_meter|structured_date|transportation_id|required_time|分$|賃料|下限賃料|上限賃料|更新日|徒歩|駅徒歩|徒歩分数|分数|築年数|専有面積|表示件数|並べ替え)/i;
 
 /** 記録側が step・写真が button になりやすいラベル（手順ボタン） */
 const STEP_LABEL_FIELD_RE =
-  /確定してリストへ|駅の設定へ進む|沿線の設定へ戻る|沿線・駅絞り込み|所在地絞り込み|沿線を選ぶ|次のページ|最初|最後|前へ|次へ|検索/;
+  /確定してリストへ|駅の設定へ進む|沿線の設定へ戻る|沿線・駅絞り込み|所在地絞り込み|沿線を選ぶ|次のページ|ページ送り|pager|(?:^|左の|右の)次(?:｜|$)|最初|最後|前へ|次へ|検索/;
 
 const PHOTO_UI_KINDS = new Set(["button", "link", "click"]);
 
@@ -174,8 +175,9 @@ function isBenignPhotoKindSplit(kinds: Set<string>, name: string): boolean {
   const ui = ks.filter((k) => PHOTO_UI_KINDS.has(k));
   if (ks.includes("select") && ui.length && lookSelect) return true;
   if (ks.includes("text") && ks.includes("click") && (/required_time|keyword|free_word/i.test(name) || guessKindFromName(name)?.kind === "text")) return true;
-  if ((ks.includes("checkbox") || ks.includes("select")) && ks.some((k) => PHOTO_UI_KINDS.has(k)) && /room_layout/i.test(name)) return true;
-  if (ks.every((k) => PHOTO_UI_KINDS.has(k) || k === "step") && (STEP_LABEL_FIELD_RE.test(name) || ks.includes("step"))) return true;
+  if ((ks.includes("checkbox") || ks.includes("select")) && ks.some((k) => PHOTO_UI_KINDS.has(k)) && /room_layout|(?:^|左の|右の)(?:\d{1,2}[SLDKR]+|ワンルーム|メゾネット)(?:｜|$)/i.test(name)) return true;
+  if (ks.includes("select") && ks.includes("checkbox") && /^(update_date|更新日)$/i.test(name)) return true;
+  if (ks.every((k) => PHOTO_UI_KINDS.has(k) || k === "step" || k === "other") && (STEP_LABEL_FIELD_RE.test(name) || ks.includes("step"))) return true;
   return false;
 }
 
@@ -188,7 +190,7 @@ function isBenignPhotoKindSplit(kinds: Set<string>, name: string): boolean {
  *   これは「クリックが伝わっただけ」の入れ物で、人が押した操作ではない。
  *   入れると「div の次は img」のような**意味の無い順番**を学んでしまう。
  */
-const NON_TARGET_NAMES = /^(div|span|svg|td|tr|th|table|tbody|img|image|a|li|p|ul|i|b|strong|section|header|footer|main|nav|form|body|html|#axlx-[\w-]+|axlx-[\w-]+)$/i;
+const NON_TARGET_NAMES = /^(div|span|svg|td|tr|th|table|tbody|img|image|input|select|textarea|button|iframe|id|a|li|p|ul|i|b|strong|section|header|footer|main|nav|form|body|html|#axlx-[\w-]+|axlx-[\w-]+|[-ー－_・=|/\\*~～]{2,})$/i;
 
 /**
  * ★ 2026-11-15 竹内さん「人が押す欄を自動モードが押していない」→ 統括が指摘:
@@ -243,7 +245,7 @@ export function isLearnableName(name: unknown): boolean {
    *   実測で種類割れ（select/button/link）の弱い所を永久に出した。1つの操作欄ではない。
    */
   if (/[、,]/.test(n) && /区/.test(n)) return false;
-  if (/をクリック|手順テキスト|ドロップダウン\)|展開中/.test(n)) return false;
+  if (/をクリック|手順テキスト|ドロップダウン\)|展開中|\[object\s|路線・駅選択都道府県/i.test(n)) return false;
   return true;
 }
 
@@ -522,7 +524,7 @@ export function learnFromShots(
      */
     mode?: unknown;
   }>,
-  opt: { mode?: "normal" | "all" } = {},
+  opt: { mode?: "normal" | "all"; site?: string | null } = {},
 ): {
   screens: Record<string, {
     n: number;
@@ -560,6 +562,7 @@ export function learnFromShots(
   const sceneAcc: Record<string, Record<string, { n: number; xs: number[]; ys: number[]; kinds: Record<string, number> }>> = {};
   let withOps = 0;
   const preferNormal = opt.mode === "normal";
+  const siteFilter = (opt.site === "realpro" || opt.site === "itandi") ? opt.site : null;
 
   for (const s0 of Array.isArray(shots) ? shots : []) {
     /**
@@ -573,12 +576,20 @@ export function learnFromShots(
      *   ⚠ 自動の録画は**結果の確認**であって手本ではない（P0）。
      */
     if (preferNormal && isAutoMode(s.mode)) continue;
+    // ★ 2026-11-27: 1枚の画像に相手サイト固有の欄（例: itandi行にリアプロのマップ検索・閲覧履歴）が写っていれば、
+    //   その写真に同居していた「徒歩」「検索」「賃料」等ごと別サイト誤記録として丸ごと除外する
+    if (siteFilter) {
+      const rawSl = (s.shot_learn && typeof s.shot_learn === "object" ? (s.shot_learn as { fields?: unknown }).fields : null);
+      if (Array.isArray(rawSl) && rawSl.some((f) => f && typeof f === "object" && isCrossSiteFieldName((f as { name?: unknown }).name, siteFilter))) {
+        continue;
+      }
+    }
     let ops = Array.isArray(s.shot_ops)
       ? (s.shot_ops as unknown[])
         .map((o) => (o && typeof o === "object" ? o as Record<string, unknown> : null))
         .filter((o): o is Record<string, unknown> => !!o)
         .map((o) => ({ f: typeof o.f === "string" ? String(o.f).slice(0, 30) : "" }))
-        .filter((o) => o.f)
+        .filter((o) => o.f && (!siteFilter || isAllowedMotionFieldName(o.f, siteFilter)))
       : [];
     /**
      * 2026-11-14 竹内さん「データベースの写真から学習する」:
@@ -591,14 +602,14 @@ export function learnFromShots(
      */
     if (!ops.length) {
       const fo = Array.isArray(s.field_order) ? (s.field_order as unknown[]) : [];
-      const names = fo.map((x) => norm(x)).filter((x) => x && isLearnableName(x));
+      const names = fo.map((x) => norm(x)).filter((x) => x && isLearnableName(x) && (!siteFilter || isAllowedMotionFieldName(x, siteFilter)));
       if (names.length) {
         ops = names.slice(0, 60).map((f) => ({ f }));
       } else {
         const pf = (s.point_fields && typeof s.point_fields === "object" && !Array.isArray(s.point_fields))
           ? (s.point_fields as Record<string, unknown>) : null;
         if (pf) {
-          const keys = Object.keys(pf).filter((k) => isLearnableName(k)).slice(0, 60);
+          const keys = Object.keys(pf).filter((k) => isLearnableName(k) && (!siteFilter || isAllowedMotionFieldName(k, siteFilter))).slice(0, 60);
           if (keys.length) ops = keys.map((f) => ({ f }));
         }
       }
@@ -617,7 +628,7 @@ export function learnFromShots(
           y: typeof f.y === "number" && f.y >= 0 && f.y <= 1 ? f.y : null,
           zone: typeof f.zone === "string" ? String(f.zone).slice(0, 10) : null,
         }))
-        .filter((f) => f.name && f.kind);
+        .filter((f) => f.name && f.kind && isAllowedMotionFieldName(f.name, siteFilter));
     })();
 
     const slObj = (s.shot_learn && typeof s.shot_learn === "object" ? s.shot_learn as Record<string, unknown> : null);
@@ -1009,16 +1020,13 @@ export function findWeakPoints(
   // ① 写真の中で同じ名前が違う種類
   const seen = new Map<string, Set<string>>();
   for (const f of fields) {
+    if (NON_TARGET_NAMES.test(f.name) && f.name.length > 1) continue;
+    if (/\[object\s|^#\[object\s|路線・駅選択都道府県|#_r_|css-|itandi-bb-ui/i.test(f.name)) continue;
     if (!seen.has(f.name)) seen.set(f.name, new Set());
     seen.get(f.name)!.add(f.kind);
   }
   for (const [name, kinds] of seen) {
     if (kinds.size > 1) {
-      /**
-       * ★ 2026-11-16: select/text だけの割れで、操作上プルダウンと分かる欄は**弱い所にしない**。
-       *   実測: rental_cost1/2・update_date は click→change なのに Vision が text と誤読 →
-       *   統括が「種類割れ」を永久に次手にして、本当の穴（完走・手の形・束反映）が後ろに下がった。
-       */
       const ks = [...kinds];
       if (isBenignPhotoKindSplit(kinds, name)) continue;
       out.push({ kind: "kind_conflict_in_photo", name, why: "同じ欄が写真の中で違う種類に見えた（" + ks.join("/") + "）", next: "次の写真でも同じ欄を読んで、多い方を採る" });
@@ -1026,6 +1034,8 @@ export function findWeakPoints(
   }
   // ② 種類が分からない欄
   for (const [name, v] of Object.entries(points || {})) {
+    if (NON_TARGET_NAMES.test(name) && name.length > 1) continue;
+    if (/\[object\s|^#\[object\s|路線・駅選択都道府県|#_r_|css-|itandi-bb-ui|^[-ー－_・=|/\\*~～]{2,}$/i.test(name)) continue;
     /**
      * 2026-11-13 竹内さん「今弱い部分学習する」:
      *   `other`（押す対象ではない飾り・入れ物・拡張の帯）は**学ぶ対象ではない**ので弱い所から外す。

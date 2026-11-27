@@ -58,7 +58,8 @@ ok("「休憩中（N秒）」を画面に出す", /waitingFor: "休憩中（"/.t
 ok("自動モードの時だけ（通常・スタッフでは休まない）", /if \(_autoModeOn && self\.AxlxHumanWait && self\.AxlxHumanWait\.restDue\)/.test(bg));
 
 console.log("\n■ ⑤ 細部: 検索を押す前に全体を見直す間");
-ok("page-script: 検索の直前に 1〜2.2秒の見直し", /var _lookMs = humanRand\(1000, 2200\);/.test(read("page-script.js")));
+// 2.8.313: 見直しの長さは 2.8.263（竹内さん「検索ボタン押してから実検索までラグが大きい」）で 1〜2.2秒 → 0.4〜1.0秒に短縮（見直しの間そのものは残っている。page-script.js の同所コメント）
+ok("page-script: 検索の直前に 9〜12秒の見直し（2.8.317 竹内さん「10秒ほどたって検索」。2.8.263 の 0.4〜1.0秒は短すぎた）", /var _lookMs = _searchReviewMs\(\);/.test(read("page-script.js")) && /function _searchReviewMs\(\)[\s\S]{0,400}12000/.test(read("page-script.js")));
 ok("見直しは1回だけ（無限に待たない）", /if \(!window\._axSearchLookedOver\)/.test(read("page-script.js")));
 ok("点検に search_look を残す", /_auditStepP\('search_look'/.test(read("page-script.js")));
 

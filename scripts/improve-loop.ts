@@ -98,7 +98,7 @@ async function reflectBundle() {
   const pr = await inheritLinkFoundations(sb, b, "all", { lookback: 20, minSolid: 30 });
   if (!pr.safe_to_write) return `束の書き込み拒否 ${pr.why}`;
   const { prepareBundleForWrite } = await import("../app/lib/bundle-write-prepare");
-  prepareBundleForWrite(b);
+  prepareBundleForWrite(b, "all");
   const { error: werr } = await sb.from("human_learn_profile").insert({
     scope: "all",
     source_rows: all.source.rows,

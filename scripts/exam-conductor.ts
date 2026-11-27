@@ -88,6 +88,9 @@ import { recordExamWeaknesses } from "../app/lib/brain-weaknesses-server";
 import { NO_LINE_TEST_CONVERSATIONS } from "../app/lib/test-conversations";
 import { worthGate, loadOffPass } from "./lib/exam-worth";
 import { nightZeroCostDue, nightZeroCostSteps } from "./lib/exam-night-jobs";
+import { smokeDue, smokeProblemOf, smokeVerdictOf, smokeHoldWhy, SMOKE_MARK_FILE, type SmokeMark } from "./lib/exam-night-smoke";
+import { runReachSplit, runReachOn } from "./lib/exam-preflight-reach";
+import { dictSelect, examDictionaryMode } from "./lib/exam-dictionary";
 export { cheapNow, maxExamsNow } from "./lib/exam-conductor-core";
 
 const args = process.argv.slice(2);
@@ -208,6 +211,8 @@ async function gate(j?: ExamJob): Promise<{ ok: boolean; why: string }> {
   if (j?.nightOnly) { const h = new Date(Date.now() + 9 * 3600_000).getUTCHours(); if (h >= 9 && h < 22) return { ok: false, why: "夜だけの依頼（JST 22〜9）" }; }
   // 2026-11-26 作業員L（統括役の決め・昼の試験が晩の関所の外で $161）: DeepSeek の試験は昼は流さない（tsc・読むだけ・OpenAI の試験・--day-ok は流す）
   { const dh = examDayHoldWhy(j, new Date(), process.env); if (dh) return { ok: false, why: dh }; }
+  // 2026-11-26 作業員L（台帳 #799 ①）: この晩の煙の1問でブレインの呼び出しが届かなかった印があれば、試験の依頼を流さない（tsc・読むだけは流す）
+  { const sh = smokeHoldWhy(j, readJson<SmokeMark | null>(join(MARKS, SMOKE_MARK_FILE), null), Date.now(), process.env); if (sh) return { ok: false, why: sh }; }
   // 2026-11-10 作業員8（D3 漏れの番人）: 近い番の答えの漏れの印があれば試験を止める（exam-near-resolve が置く・確かめて消すまで）
   if (existsSync(join(ROOT, LEAK_STOP_FILE)) && (process.env.EXAM_NEAR_LEAK_GUARD ?? "").trim().toLowerCase() !== "off") {
     if (!leakNoted) { leakNoted = true; appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: new Date().toISOString(), to: "main", owner: j?.owner ?? "?", label: j?.label ?? "", msg: `漏れの番人: exam-queue/${LEAK_STOP_FILE} がある＝試験を止めた（近い番の答えに元の番）` }) + "\n"); log(`  📣 知らせる: to=main 漏れの番人で試験を止めた（exam-queue/${LEAK_STOP_FILE}）`); }
@@ -475,6 +480,9 @@ async function addJob(): Promise<void> {
           job.only = ids.join(",");
           log(`  積む前の関所: 材料0の問題 ${gate.drop.join(",")} を外した（残り ${ids.length}問・--force で外さない）`);
         }
+        // 2026-11-27 作業員L（台帳 #803 試験の辞書・竹内さん 11/27）: 辞書（<exam-cache>/exam-dictionary.json・scripts/build-exam-dictionary.ts）で、
+        //   材料が写しに無い問題・前に効かなかった問題・揺れの大きい問題・試験できない（先に写し）スイッチを出す。EXAM_DICTIONARY: 既定 shadow＝1行だけ・on＝外す（--force で外さない）・off
+        { const dm = examDictionaryMode(); if (dm !== "off" && ids.length) { try { const { loadExamDictionary } = await import("./build-exam-dictionary"); const dict = loadExamDictionary(); if (dict) { const ds = dictSelect(dict, onSw, ids, job.guards ?? []); log(`  ${ds.line}（${dm === "on" ? "外す" : "記録だけ"}）`); if (dm === "on" && !flag("force")) { const drop = new Set([...ds.dropNoMaterial, ...ds.dropNone]); if (drop.size && drop.size < ids.length) { for (let k = ids.length - 1; k >= 0; k--) if (drop.has(ids[k])) ids.splice(k, 1); job.only = ids.join(","); } /* 統括役の決め①: 前の on で届かなかった問題は守り（1回）に */ if (ds.dropNoReach.length) job.guards = [...new Set([...(job.guards ?? []), ...ds.dropNoReach.filter((x) => ids.includes(x))])]; } } } catch (e) { log(`  試験の辞書を読めない（止めない）: ${String(e instanceof Error ? e.message : e).slice(0, 100)}`); } } }
         // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」・統括役の頼み）: 問題を自動で絞る（scripts/lib/exam-narrow.ts・既定 on・EXAM_NARROW=off／--no-narrow で止める）。
         //   残すのは 材料が入る問題・前の回が無い問題・今の off で外れている問題（守りはこの後に足す）。材料の対応表に無いスイッチが on の時は絞らない
         if (examNarrowOn() && !flag("no-narrow") && !flag("force") && ids.length) {
@@ -586,6 +594,8 @@ async function addJob(): Promise<void> {
         // 2026-11-24 作業員L（竹内さん「試験にお金がもったいない」）: 守りは使い回せる基準のある物だけ・1問まで（EXAM_GUARDS_REUSE_ONLY=off で今まで通り）
         const g = fitGuardsToCap(trimGuardsToReusable(g0), { capUsd: job.capUsd ?? null, baseUsd, unitUsd: unit });
         if (g.length) { job.guards = g.map((x) => x.id); ids.push(...job.guards); job.only = ids.join(","); }
+        // 2026-11-27 作業員L（統括役の決め・q203 は17回とも不合格＝守りの意味がない）: 試験の辞書で「一度も合格していない」守りを出す（既定は記録だけ・EXAM_GUARD_SKIP_NEVER_PASSED=on で外す）
+        try { const ed = await import("./lib/exam-dictionary"); const { loadExamDictionary } = await import("./build-exam-dictionary"); const np = ed.guardSkipNeverPassed(loadExamDictionary(), g.map((x) => x.id)); if (np.length) { log(`  守りに一度も合格していない問題: ${np.join(",")}（${ed.guardSkipNeverPassedOn() ? "外した" : "記録だけ"}）`); if (ed.guardSkipNeverPassedOn()) { for (let k = g.length - 1; k >= 0; k--) if (np.includes(g[k].id)) g.splice(k, 1); } } } catch { /* 辞書が無ければ見ない */ }
         log(`  ${guardLine(g, unit)}${g.length < g0.length ? `（上限 $${job.capUsd} に合わせて ${g0.length}→${g.length}問）` : ""}${!cards.length ? "（問題の札が無い＝守りを選べない・exam-near-resolve が夜に札を写す）" : ""}`);
       } catch (e) { log(`  守りを選べない: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
     }
@@ -1037,6 +1047,44 @@ async function runJob(j: ExamJob & { file: string }): Promise<void> {
     }
     // brain-exam: ③ 問題ごとの回数（揺れる問題は増やす）
     const ids = j.only.split(",").filter(Boolean);
+    // 2026-11-26 作業員L（台帳 #799 ②・統括役の頼み）: 流す時の関所。効く問題ごとに on のスイッチの要る材料が前の回の写しに入るかを決まった計算で見て、
+    //   入らない問題は守り（1回）に回す・効く問題が全部入らない時は流さない（費用0・scripts/lib/exam-preflight-reach.runReachSplit・止める EXAM_RUN_REACH=off）
+    if (ids.length && !j.dig && runReachOn(process.env)) {
+      try {
+        const onSw = Object.entries((j.env ?? {}) as Record<string, string>).filter(([, v]) => String(v).trim().toLowerCase() === "on").map(([k]) => k);
+        const sp = runReachSplit(preflightReachOf(onSw, ids, readPriorLedger(resultsDirOf(j.cwd), new Set(ids))), ids, j.guards ?? []);
+        if (sp.line) log(`  ${sp.line}`);
+        if (sp.stop) { finishStop(j, `流す前に止めた（費用0）: ${sp.line}。材料の入る問題で積み直す（止める EXAM_RUN_REACH=off）`); return; }
+        if (sp.toGuard.length) j.guards = [...(j.guards ?? []), ...sp.toGuard];
+      } catch (e) { log(`  流す時の関所を見られない（止めない）: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`); }
+    }
+    // 2026-11-26 作業員L（台帳 #799 ①・統括役の頼み・11/25 の晩は場面の網が brain_full を全部止めたまま晩の組が流れた）: 晩の最初の試験の依頼の前に、
+    //   その依頼の1問を1回だけ（判定なし・前と比べない）流し、ブレインの呼び出しが1回も届かなければこの晩の試験を止めて印を置く（毎朝の1枚に ⚠・止める EXAM_NIGHT_SMOKE=off）
+    {
+      const smFile = join(MARKS, SMOKE_MARK_FILE);
+      const sd = smokeDue(j, readJson<SmokeMark | null>(smFile, null), Date.now(), process.env);
+      const pid = sd.due && !j.dig ? smokeProblemOf(ids, j.guards ?? []) : null;
+      if (pid) {
+        const sl = `smoke-${sd.key}-${pid}`;
+        const so = join(RES, `${sl}.out.log`);
+        log(`  晩の煙の1問: ${pid}（${j.label} の env・1回・判定なし・前と比べない）`);
+        const sr = runTsx(j.cwd, ["scripts/brain-exam.ts", `--label=${sl}`, "--conv=auto", "--repeat=1", `--stage=${j.stage}`, `--only=${pid}`, "--no-judge"], { ...jobBaseEnv(j), ...j.env, ...(businessHoursLane() ? { EXAM_CONCURRENCY: "1" } : {}) }, so); cur = sr.child;
+        const kt = setTimeout(() => killTree(sr.child.pid), 15 * 60_000);
+        const sc = await sr.done; clearTimeout(kt);
+        const v = smokeVerdictOf(existsSync(so) ? readFileSync(so, "utf8") : "");
+        const mk: SmokeMark = { key: sd.key, at: at(), ok: v.ok, why: v.why + (sc !== 0 && v.ok !== false ? `・終わりの番号 ${sc}` : ""), brainCalls: v.brainCalls, blocked: v.blocked, label: sl, job: j.label, problem: pid };
+        try { mkdirSync(MARKS, { recursive: true }); writeFileSync(smFile, JSON.stringify(mk, null, 1)); } catch { /* 印を置けなくても続ける */ }
+        await cleanupRun(j.cwd, sl, so);
+        log(`  晩の煙の1問: ${v.ok === false ? "⛔ 止める" : v.ok ? "通った" : "⚠ 分からない（止めない）"}・${mk.why}`);
+        if (v.ok === false) {
+          requeueJob(j);
+          const msg = `晩の煙の1問（${pid}・${j.label} の env）でブレインの呼び出しが届かない＝この晩の試験を止めた: ${v.why}。直して conductor-marks/${SMOKE_MARK_FILE} を消すと流れる`;
+          appendFileSync(join(RES, "notify.jsonl"), JSON.stringify({ at: at(), to: "main", owner: j.owner, label: j.label, msg }) + "\n");
+          log(`  📣 知らせる: to=main ${msg}`);
+          return;
+        }
+      }
+    }
     const rp = jobRepsPlan(j, ids);
     const maxRep = Math.max(j.repeat, ...Object.values(rp.reps));
     const repsFile = join(RES, `${j.label}.reps.json`);

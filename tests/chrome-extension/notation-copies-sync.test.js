@@ -1,0 +1,222 @@
+// tests/chrome-extension/notation-copies-sync.test.js — 表記の写しが正本（popup-maps.js）と同じかを見張る（2026-11-26）
+//
+// 竹内さん「表記のところリアプロと itandi で違う部分もあるのでちゃんと把握しておけ」→ 実測で、
+//   一括・自動の経路が使う resolution-core.js の表が正本の半分しか無く、能勢電鉄・近鉄信貴線などが
+//   ITANDI・REINS に出なかった。写しを正本に揃えたので、そのずれが再び入らないように止める。
+//
+// 見る物（正本 = chrome-extension/popup-maps.js の const）:
+//   ・resolution-core.js の var: STATION_WARD_MAP / STATION_LINE_MAP / LINE_STATION_ORDER /
+//     ITANDI_LINE_MAP_FILL / LINE_ROUTE_MAP / LINE_ALIAS_MAP / REINS_LINE_MAP
+//   ・popup.js の注記用の const ITANDI_LINE_MAP（手順書の表示だけに使う・ITANDI_LINE_MAP_FILL と同じでなければならない）
+// 直し方: 正本を直したら、写しも同じ内容に直す（表の本体 { ... } を丸ごと写す）。
+// 実行: node tests/chrome-extension/notation-copies-sync.test.js
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const DIR = path.join(__dirname, "..", "..", "chrome-extension");
+const read = (f) => fs.readFileSync(path.join(DIR, f), "utf8");
+let pass = 0, fail = 0;
+const t = (name, ok, extra) => {
+  if (ok) { pass++; console.log(`  ✓ ${name}`); }
+  else { fail++; console.log(`  ✗ ${name}${extra ? "\n      " + extra : ""}`); }
+};
+
+// 名前の直後の { ... } を評価して取り出す（const / var / 関数の中のインデント付きも可）
+function grab(src, re) {
+  const m = re.exec(src);
+  if (!m) return null;
+  const open = m.index + m[0].length - 1;
+  let d = 0;
+  for (let k = open; k < src.length; k++) {
+    if (src[k] === "{") d++;
+    else if (src[k] === "}") {
+      d--;
+      if (d === 0) return vm.runInNewContext("(" + src.slice(open, k + 1) + ")", {});
+    }
+  }
+  return null;
+}
+function diffKeys(a, b) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  const out = [];
+  for (const k of keys) {
+    const x = JSON.stringify(a[k]), y = JSON.stringify(b[k]);
+    if (x !== y) out.push(`${k}: 正本=${x ?? "(無し)"} 写し=${y ?? "(無し)"}`);
+  }
+  return out;
+}
+
+// 同一オブジェクト内の重複キー（後勝ちで先行エントリが黙って消えるバグ）を検出する
+function findDupKeys(src, re) {
+  const m = re.exec(src);
+  if (!m) return { found: false, dups: [] };
+  const open = m.index + m[0].length - 1;
+  let d = 0, inStr = null, esc = false, prevSig = "{";
+  const seen = new Set();
+  const dups = [];
+  for (let k = open; k < src.length; k++) {
+    const ch = src[k];
+    if (inStr) {
+      let end = k;
+      while (end < src.length) {
+        const c = src[end];
+        if (esc) { esc = false; end++; continue; }
+        if (c === "\\") { esc = true; end++; continue; }
+        if (c === inStr) break;
+        end++;
+      }
+      const literal = src.slice(k - 1, end + 1);
+      // トップレベル (d === 1) で { または , の直後の "key": だけを対象にする
+      if (d === 1 && (prevSig === "{" || prevSig === ",")) {
+        let j = end + 1;
+        while (j < src.length && /\s/.test(src[j])) j++;
+        if (src[j] === ":") {
+          let key;
+          try { key = JSON.parse(literal); } catch (_) { key = literal; }
+          if (seen.has(key)) dups.push(key);
+          else seen.add(key);
+        }
+      }
+      inStr = null;
+      prevSig = "str";
+      k = end;
+      continue;
+    }
+    if (ch === "/" && src[k + 1] === "/") {
+      const nl = src.indexOf("\n", k);
+      if (nl < 0) break;
+      k = nl;
+      continue;
+    }
+    if (ch === "/" && src[k + 1] === "*") {
+      const ce = src.indexOf("*/", k + 2);
+      if (ce < 0) break;
+      k = ce + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === "{" || ch === "[") { d++; prevSig = ch; continue; }
+    if (ch === "}" || ch === "]") {
+      d--;
+      prevSig = ch;
+      if (d === 0) break;
+      continue;
+    }
+    if (!/\s/.test(ch)) prevSig = ch;
+  }
+  return { found: true, dups };
+}
+
+const pm = read("popup-maps.js");
+const rc = read("resolution-core.js");
+const pj = read("popup.js");
+
+console.log("■ resolution-core.js の表は正本と同じか（一括・自動の経路）");
+for (const name of ["STATION_WARD_MAP", "STATION_LINE_MAP", "LINE_STATION_ORDER", "ITANDI_LINE_MAP_FILL", "LINE_ROUTE_MAP", "LINE_ALIAS_MAP", "REINS_LINE_MAP", "WARD_CODE_MAP", "NEIGHBORHOOD_WARD_MAP"]) {
+  const canon = grab(pm, new RegExp("const " + name + "\\s*=\\s*\\{"));
+  const copy = grab(rc, new RegExp("var " + name + "\\s*=\\s*\\{"));
+  if (!canon || !copy) { t(`${name} が両方に読める`, false, `正本=${!!canon} 写し=${!!copy}`); continue; }
+  const d = diffKeys(canon, copy);
+  t(`${name}（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      ") + (d.length > 8 ? `\n      …ほか ${d.length - 8} 件` : ""));
+}
+
+console.log("■ popup.js の注記用 ITANDI 表は正本と同じか");
+{
+  const canon = grab(pm, /const ITANDI_LINE_MAP_FILL\s*=\s*\{/);
+  const copy = grab(pj, /const ITANDI_LINE_MAP\s*=\s*\{/);
+  if (!canon || !copy) t("popup.js の ITANDI_LINE_MAP が読める", false);
+  else {
+    const d = diffKeys(canon, copy);
+    t(`popup.js ITANDI_LINE_MAP（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.join("\n      "));
+  }
+}
+
+console.log("■ 写しの中身の約束（ずれやすい所）");
+{
+  const rcRoute = grab(rc, /var LINE_ROUTE_MAP\s*=\s*\{/) || {};
+  t("能勢電鉄妙見線・日生線に路線番号（リアプロ 6676）が付く", rcRoute["能勢電鉄妙見線"] === "6676" && rcRoute["能勢電鉄日生線"] === "6676");
+  const rcItandi = grab(rc, /var ITANDI_LINE_MAP_FILL\s*=\s*\{/) || {};
+  t("近鉄信貴線・西信貴ケーブル線の ITANDI 名が正本どおり", rcItandi["近鉄信貴線"] === "近鉄信貴線" && rcItandi["近鉄西信貴ケーブル線"] === "近鉄西信貴鋼索線(西信貴ケーブル)");
+}
+
+// 2026-11-26（竹内さん「抜けを仕組みで止める」）: 正本の外にあった写しも見張る。
+//   ・リアプロの路線番号→名前（ROUTE_LINE_MAP）: page-script.js と realpro-guide-plan.js → 正本 LINE_ROUTE_MAP の逆引き
+//   ・ITANDI の駅の読み替え（ITANDI_STATION_ALIAS_MAP）: itandi-page-script.js と itandi-guide-plan.js → 互いに同じ
+//   ・サーバー側の ITANDI_LINE_MAP（app/lib/station-line-maps.ts）→ 正本 ITANDI_LINE_MAP_FILL
+console.log("■ 正本の外の写し（リアプロ・ITANDI の経路・サーバー側）");
+{
+  const inv = {};
+  const route = grab(pm, /const LINE_ROUTE_MAP\s*=\s*\{/) || {};
+  for (const [name, id] of Object.entries(route)) if (!(id in inv)) inv[id] = name;
+  const rpage = grab(read("page-script.js"), /var ROUTE_LINE_MAP\s*=\s*\{/);
+  const rguide = grab(read("realpro-guide-plan.js"), /var ROUTE_LINE_MAP\s*=\s*\{/);
+  for (const [label, src] of [["page-script.js", rpage], ["realpro-guide-plan.js", rguide]]) {
+    if (!src) { t(`ROUTE_LINE_MAP（${label}）が読める`, false); continue; }
+    const d = diffKeys(inv, src);
+    t(`ROUTE_LINE_MAP（${label}・${Object.keys(src).length}件）が正本の路線番号と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+  const ipage = grab(read("itandi-page-script.js"), /var ITANDI_STATION_ALIAS_MAP\s*=\s*\{/);
+  const iguide = grab(read("itandi-guide-plan.js"), /var ITANDI_STATION_ALIAS_MAP\s*=\s*\{/);
+  if (!ipage || !iguide) t("ITANDI_STATION_ALIAS_MAP が両方に読める", false);
+  else {
+    const d = diffKeys(ipage, iguide);
+    t(`ITANDI_STATION_ALIAS_MAP（${Object.keys(ipage).length}件）が itandi-page-script と itandi-guide-plan で同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+  const appSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "lib", "station-line-maps.ts"), "utf8");
+  const appIt = grab(appSrc, /const ITANDI_LINE_MAP\s*(:[^=]*)?=\s*\{/);
+  const canonIt = grab(pm, /const ITANDI_LINE_MAP_FILL\s*=\s*\{/);
+  if (!appIt || !canonIt) t("app/lib の ITANDI_LINE_MAP が読める", false, `読めた=${!!appIt}`);
+  else {
+    const d = diffKeys(canonIt, appIt);
+    t(`サーバー側 ITANDI_LINE_MAP（${Object.keys(appIt).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+}
+
+console.log("■ 同一オブジェクト内の重複キー禁止（後勝ち消失を防ぐ）");
+{
+  const mapNames = [
+    "STATION_WARD_MAP", "NEIGHBORHOOD_WARD_MAP", "STATION_LINE_MAP",
+    "LINE_STATION_ORDER", "WARD_CODE_MAP", "ITANDI_LINE_MAP_FILL",
+    "LINE_ROUTE_MAP", "LINE_ALIAS_MAP", "REINS_LINE_MAP",
+  ];
+  for (const [label, src, decl] of [["popup-maps.js", pm, "const"], ["resolution-core.js", rc, "var"]]) {
+    for (const name of mapNames) {
+      const r = findDupKeys(src, new RegExp(decl + " " + name + "\\s*=\\s*\\{"));
+      t(`${label} ${name} に重複キーが無い`, r.found && r.dups.length === 0, r.found ? `重複: ${r.dups.join(", ")}` : "定義が見つからない");
+    }
+  }
+  // 回帰確認: 吹田は JR東海道本線と阪急千里線の両方を保つ
+  const canonSt = grab(pm, /const STATION_LINE_MAP\s*=\s*\{/) || {};
+  const rcSt = grab(rc, /var STATION_LINE_MAP\s*=\s*\{/) || {};
+  t("吹田に東海道本線・阪急電鉄千里線の両方が残っている",
+    Array.isArray(canonSt["吹田"]) && canonSt["吹田"].includes("東海道本線") && canonSt["吹田"].includes("阪急電鉄千里線") &&
+    JSON.stringify(canonSt["吹田"]) === JSON.stringify(rcSt["吹田"]),
+    `正本=${JSON.stringify(canonSt["吹田"])} 写し=${JSON.stringify(rcSt["吹田"])}`);
+}
+
+console.log("■ サーバー API の同期（seed-maps / resolve-search-conditions）");
+{
+  const seedSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "seed-maps", "route.ts"), "utf8");
+  t("seed-maps/route.ts が @/app/lib/station-line-maps から ITANDI/REINS 表を共有している",
+    /from\s+["']@\/app\/lib\/station-line-maps["']/.test(seedSrc));
+  for (const name of ["STATION_WARD_MAP", "STATION_LINE_MAP", "NEIGHBORHOOD_WARD_MAP", "LINE_STATION_ORDER"]) {
+    const canon = grab(pm, new RegExp("const " + name + "\\s*=\\s*\\{"));
+    const copy = grab(seedSrc, new RegExp("const " + name + "\\s*(?::[^=]+)?=\\s*\\{"));
+    if (!canon || !copy) { t(`seed-maps ${name} が読める`, false, `正本=${!!canon} 写し=${!!copy}`); continue; }
+    const d = diffKeys(canon, copy);
+    t(`seed-maps ${name}（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      ") + (d.length > 8 ? `\n      …ほか ${d.length - 8} 件` : ""));
+  }
+
+  const rscSrc = fs.readFileSync(path.join(__dirname, "..", "..", "app", "api", "resolve-search-conditions", "route.ts"), "utf8");
+  for (const name of ["WARD_CODE_MAP", "LINE_ROUTE_MAP", "LINE_ALIAS_MAP"]) {
+    const canon = grab(pm, new RegExp("const " + name + "\\s*=\\s*\\{"));
+    const copy = grab(rscSrc, new RegExp("const " + name + "\\s*(?::[^=]+)?=\\s*\\{"));
+    if (!canon || !copy) { t(`resolve-search-conditions ${name} が読める`, false, `正本=${!!canon} 写し=${!!copy}`); continue; }
+    const d = diffKeys(canon, copy);
+    t(`resolve-search-conditions ${name}（${Object.keys(canon).length}件）が正本と同じ`, d.length === 0, d.slice(0, 8).join("\n      "));
+  }
+}
+
+console.log(`\n${pass} OK / ${fail} NG`);
+if (fail) process.exit(1);

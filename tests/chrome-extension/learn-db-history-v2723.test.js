@@ -30,7 +30,8 @@ console.log("■ ① 保管できたかを返す（黙って捨てない）");
 
 console.log("\n■ ② 入れてから消す（失敗しても前の束が残る）");
 {
-  const seg = prof.slice(prof.indexOf("// DB にも残す"), prof.indexOf("return bundle;") + 20);
+  // 2.8.313: 「消す書き込み拒否」の枝（wipeBlocked・2026-11-17）が先に return bundle; するので、最初の return までではなく、この関数の終わり（GET の手前）までを見る
+  const seg = prof.slice(prof.indexOf("// DB にも残す"), prof.indexOf("export async function GET"));
   const insPos = seg.indexOf(".insert(");
   const delPos = seg.indexOf(".delete()");
   ok("insert が先（消すのが後）", insPos > 0 && delPos > insPos, { insPos, delPos });

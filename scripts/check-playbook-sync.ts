@@ -14,7 +14,11 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { autoRulesVersion, AUTO_RULES_REVIEWED_UP_TO, AUTO_RULES } from "../app/lib/auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "../app/lib/action-playbook";
+import { fetchPlaybookReflect } from "../app/lib/playbook-reflect-server";
 import { cmpVer } from "../app/lib/playbook-freshness";
+import { diffGaps } from "../app/lib/playbook-gap-baseline";
+import { ITANDI_AUTO_RULES, ITANDI_RULES_REVIEWED_UP_TO, checkItandiRulesInCode, itandiRulesVersion, rulesReviewedUpToFor, rulesVersionFor } from "../app/lib/auto-itandi-rules";
+import { gapReportFor } from "./playbook-gap-audit";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -43,6 +47,17 @@ async function main() {
   const pageV = (readText("chrome-extension/page-script.js").match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1] || "?";
   say(`  決まり ${code.rules}件 rules_v=${code.rv} build_v=${code.build} 見直し上限=${code.upTo}`);
   say(`  manifest=${manifestV} page-script=${pageV}`);
+  // 2026-11-27: ITANDI の決まりは ITANDI だけの一覧（auto-itandi-rules.ts）。目印・混ざりをコードで確かめる
+  const itIssues = checkItandiRulesInCode({
+    itandiPage: readText("chrome-extension/itandi-page-script.js"),
+    itandiBulk: readText("chrome-extension/itandi-bulk-dl.js"),
+    manifestVersion: manifestV,
+    searchAudit: readText("chrome-extension/search-audit.js"),
+  });
+  const itPageV = (readText("chrome-extension/itandi-page-script.js").match(/_AXLX_ITANDI_PAGE_VER\s*=\s*"([^"]+)"/) || [])[1] || "?";
+  say(`  ITANDI の決まり ${ITANDI_AUTO_RULES.length}件 rules_v=${itandiRulesVersion().slice(0, 8)} 見直し上限=${ITANDI_RULES_REVIEWED_UP_TO} itandi-page-script=${itPageV}`);
+  if (itIssues.length) { for (const m of itIssues) say(`  ${NG} ${m}`); bad.push(...itIssues); }
+  else say(`  ${OK} ITANDI の決まりの目印・版・リアルタイム点検は全部コードにある（リアプロの決まりとの混ざり無し）`);
   if (manifestV === pageV && pageV === code.upTo) say(`  ${OK} 版の結び（manifest == page-script == 見直し上限）`);
   else { say(`  ${NG} 版の結びが切れている`); bad.push("コード内の版が揃っていない（manifest / page-script / AUTO_RULES_REVIEWED_UP_TO）"); }
 
@@ -54,11 +69,15 @@ async function main() {
     const dirty = git(["status", "--porcelain", "--", ...RELEASE_PATHS]).out.split("\n").filter(Boolean);
     if (dirty.length) { say(`  ${NG} 未コミットの変更 ${dirty.length}件（拡張・決まり・束の API）`); dirty.slice(0, 5).forEach((l) => say(`      ${l.trim()}`)); bad.push(`反映に関わる未コミットの変更が ${dirty.length}件ある（コミットしないと本番にも DB にも出ない）`); }
     else say(`  ${OK} 反映に関わる場所に未コミットは無い`);
-    const ahead = git(["log", "--oneline", "origin/main..HEAD", "--", ...RELEASE_PATHS]);
-    if (!ahead.ok) { say(`  ${WA} main と比べられない（origin/main を取れない）`); warn.push("origin/main と比べられなかった"); }
+    // 2026-11-27: ハッシュではなく中身（パッチ）で比べる（git cherry）。同じ変更を別のハッシュで入れた時の誤報を防ぐ
+    const cherry = git(["cherry", "origin/main", "HEAD"]);
+    if (!cherry.ok) { say(`  ${WA} main と比べられない（origin/main を取れない）`); warn.push("origin/main と比べられなかった"); }
     else {
-      const n = ahead.out ? ahead.out.split("\n").length : 0;
-      if (n) { say(`  ${NG} main に入っていないコミット ${n}件（反映に関わる場所）`); ahead.out.split("\n").slice(0, 4).forEach((l) => say(`      ${l.slice(0, 90)}`)); bad.push(`main に未反映のコミットが ${n}件ある（Vercel は main だけをデプロイする）`); }
+      const notInMain = cherry.out.split("\n").filter((l) => l.startsWith("+")).map((l) => l.slice(2).trim());
+      const touching = notInMain.filter((h) => git(["diff-tree", "--no-commit-id", "--name-only", "-r", h]).out
+        .split("\n").some((f) => RELEASE_PATHS.some((p) => f.startsWith(p))));
+      const n = touching.length;
+      if (n) { say(`  ${NG} main に入っていないコミット ${n}件（反映に関わる場所）`); touching.slice(0, 4).forEach((h) => say(`      ${git(["log", "-1", "--format=%h %s", h]).out.slice(0, 90)}`)); bad.push(`main に未反映のコミットが ${n}件ある（Vercel は main だけをデプロイする）`); }
       else say(`  ${OK} 反映に関わる場所は main に入っている`);
     }
   }
@@ -77,9 +96,12 @@ async function main() {
       if (!rows.length) { say(`  ${WA} ${scope}: 行なし`); continue; }
       const top = rows[0];
       // 2.8.302: 見直しの印（rules_up_to）も比べる（前は表示だけで ✅ になっていた）
-      const topOk = top.rules_v === code.rv && Number(top.build_v) === code.build && top.up_to === code.upTo;
+      // 2026-11-27: 決まりの版は scope（サイト）ごと。itandi は ITANDI の版と比べる（リアプロの版と混ぜない）
+      const rvScope = rulesVersionFor(scope);
+      const upToScope = rulesReviewedUpToFor(scope);
+      const topOk = top.rules_v === rvScope && Number(top.build_v) === code.build && top.up_to === upToScope;
       say(`  ${topOk ? OK : NG} ${scope} 最新 id=${top.id} ${top.created_at.slice(0, 16)} build_v=${top.build_v ?? "-"} rules_v=${(top.rules_v ?? "-").slice(0, 8)} 見直し=${top.up_to ?? "なし"}${topOk ? "" : "  ← コードと違う（attach が必要／本番が古い）"}`);
-      if (!topOk) bad.push(`${scope}: DB の手順書がコードと違う（id=${top.id}・build_v=${top.build_v}・rules_v=${(top.rules_v ?? "-").slice(0, 8)}→コード ${code.build}/${code.rv.slice(0, 8)}）`);
+      if (!topOk) bad.push(`${scope}: DB の手順書がコードと違う（id=${top.id}・build_v=${top.build_v}・rules_v=${(top.rules_v ?? "-").slice(0, 8)}→コード ${code.build}/${rvScope.slice(0, 8)}）`);
       // 戻り: 新しい行が1つ前（古い行）より古い手順書になっていないか
       for (let i = 0; i < rows.length - 1; i++) {
         const nw = rows[i], ol = rows[i + 1];
@@ -93,36 +115,50 @@ async function main() {
     }
   }
 
-  say("\n■ ③ 本番のコード（軽い版確認 1回・読んだ印は付けない）");
+  say("\n■ ③ 本番のコード（サイト別の軽い版確認・読んだ印は付けない）");
   if (noProd) say("  （--no-prod で飛ばした）");
   else {
-    try {
-      const r = await fetch(`${PROD}/api/human-learn-profile?touch=0&scope=realpro`, { cache: "no-store", signal: AbortSignal.timeout(25000) });
-      const j = (await r.json()) as Record<string, unknown>;
-      const srvUp = j.server_rules_up_to != null ? String(j.server_rules_up_to) : "";
-      const srvRv = j.server_rules_v != null ? String(j.server_rules_v) : "";
-      const pbUp = j.playbook_rules_up_to != null ? String(j.playbook_rules_up_to) : "";
-      say(`  HTTP ${r.status} 本番コードの見直し=${srvUp || "（返さない＝2.8.297 より前のコード）"} rules_v=${srvRv ? srvRv.slice(0, 8) : "-"} 返した手順書の rules_v=${String(j.playbook_rules_v ?? "-").slice(0, 8)} 手順書の見直し=${pbUp || "なし"}`);
-      if (!srvUp) { say(`  ${NG} 本番に最新のコードが載っていない（作り直しのたび古い手順書へ戻る）`); bad.push("本番のコードが古い（server_rules_up_to を返さない）＝デプロイが必要"); }
-      else if (cmpVer(srvUp, code.upTo) < 0) { say(`  ${NG} 本番コード ${srvUp} < 手元 ${code.upTo}`); bad.push(`本番のコードが手元より古い（${srvUp}→${code.upTo}）＝デプロイが必要`); }
-      else say(`  ${OK} 本番のコードは手元と同じ以上`);
-    } catch (e) {
-      say(`  ${WA} 本番を読めない（${e instanceof Error ? e.message : String(e)}）`);
-      warn.push("本番を読めなかった");
+    for (const ps of ["realpro", "itandi"] as const) {
+      try {
+        const expectedUp = rulesReviewedUpToFor(ps);
+        const expectedRv = rulesVersionFor(ps);
+        const r = await fetch(`${PROD}/api/human-learn-profile?touch=0&scope=${ps}`, { cache: "no-store", signal: AbortSignal.timeout(25000) });
+        const j = (await r.json()) as Record<string, unknown>;
+        const srvUp = j.server_rules_up_to != null ? String(j.server_rules_up_to) : "";
+        const srvRv = j.server_rules_v != null ? String(j.server_rules_v) : "";
+        const pbUp = j.playbook_rules_up_to != null ? String(j.playbook_rules_up_to) : "";
+        const pbRv = j.playbook_rules_v != null ? String(j.playbook_rules_v) : "";
+        say(`  [${ps}] HTTP ${r.status} 本番見直し=${srvUp || "（未返却）"} srv_rules_v=${srvRv ? srvRv.slice(0, 8) : "-"} 返却pb_v=${pbRv ? pbRv.slice(0, 8) : "-"} pb見直し=${pbUp || "なし"}`);
+        if (!srvUp) {
+          say(`  ${NG} [${ps}] 本番に最新のコードが載っていない（server_rules_up_to 未返却）`);
+          bad.push(`${ps}: 本番のコードが古い（server_rules_up_to を返さない）＝デプロイが必要`);
+        } else if (cmpVer(srvUp, expectedUp) < 0 || (srvRv && srvRv !== expectedRv)) {
+          say(`  ${NG} [${ps}] 本番コード ${srvUp}/${srvRv.slice(0, 8)} != 手元 ${expectedUp}/${expectedRv.slice(0, 8)}`);
+          bad.push(`${ps}: 本番のコードが手元より古い（${srvUp}→${expectedUp}）＝デプロイが必要`);
+        } else {
+          say(`  ${OK} [${ps}] 本番のコードは手元と同じ以上`);
+        }
+      } catch (e) {
+        say(`  ${WA} [${ps}] 本番を読めない（${e instanceof Error ? e.message : String(e)}）`);
+        warn.push(`${ps}: 本番を読めなかった`);
+      }
     }
   }
 
-  say("\n■ ④ 拡張が実際に読んだ印（最新の点検記録 6件）");
+  say("\n■ ④ 拡張が実際に読んだ印（サイト別の最新点検記録 各4件）");
   if (URL_ && KEY) {
     const sb = createClient(URL_, KEY);
-    let res = await sb.from("search_audits").select("id, created_at, steps").order("id", { ascending: false }).limit(6);
-    if (res.error) res = (await sb.from("search_audits").select("id, steps").order("id", { ascending: false }).limit(6)) as typeof res;
-    if (res.error) { say(`  ${WA} 読めない（${res.error.message}）`); warn.push("点検記録を読めなかった"); }
-    else {
-      for (const a of (res.data ?? []) as unknown as Array<{ id: number; created_at?: string; steps?: Array<{ k: string; d: string | null; n?: number }> }>) {
+    for (const auditSite of ["realpro", "itandi"] as const) {
+      say(`  --- site=${auditSite} ---`);
+      let res = await sb.from("search_audits").select("id, created_at, mode, ext_version, steps").eq("site", auditSite).order("id", { ascending: false }).limit(4);
+      if (res.error) res = (await sb.from("search_audits").select("id, steps").eq("site", auditSite).order("id", { ascending: false }).limit(4)) as typeof res;
+      if (res.error) { say(`  ${WA} ${auditSite} 読めない（${res.error.message}）`); warn.push(`${auditSite}: 点検記録を読めなかった`); continue; }
+      const rows = (res.data ?? []) as unknown as Array<{ id: number; created_at?: string; mode?: string; ext_version?: string; steps?: Array<{ k: string; d: string | null; n?: number }> }>;
+      if (!rows.length) { say(`  ${WA} ${auditSite}: 点検記録なし`); continue; }
+      for (const a of rows) {
         const st = Array.isArray(a.steps) ? a.steps : [];
         const find = (k: string) => st.filter((x) => x.k === k);
-        const ver = find("page:page_ver")[0]?.d ?? "-";
+        const ver = find("page:page_ver")[0]?.d ?? (a.ext_version || "-");
         const seen = find("page:playbook_seen")[0]?.d ?? null;
         const behind = find("page:playbook_behind")[0]?.d ?? null;
         const srvBehind = find("server_behind")[0]?.d ?? null;
@@ -130,32 +166,129 @@ async function main() {
         const rbf = find("reset_before_fill").length;
         const collapsed = st.filter((x) => (x.n || 0) > 1).length;
         const flag = behind || srvBehind || none ? NG : seen ? OK : WA;
-        say(`  ${flag} #${a.id} ${a.created_at ? a.created_at.slice(5, 16) + " " : ""}ver=${String(ver).slice(0, 12)} 段=${st.length}${collapsed ? `(まとめ${collapsed})` : ""} playbook_seen=${seen ? "あり " + String(seen).slice(0, 40) : "なし"}${behind ? `\n      ${NG} playbook_behind: ${behind}` : ""}${srvBehind ? `\n      ${NG} server_behind: ${srvBehind}` : ""}${none ? `\n      ${NG} playbook_none（手順書が届いていない）` : ""} reset_before_fill=${rbf}`);
+        say(`  ${flag} #${a.id} ${a.created_at ? a.created_at.slice(5, 16) + " " : ""}[${a.mode || "?"}] ver=${String(ver).slice(0, 12)} 段=${st.length}${collapsed ? `(まとめ${collapsed})` : ""} playbook_seen=${seen ? "あり " + String(seen).slice(0, 48) : "なし"}${behind ? `\n      ${NG} playbook_behind: ${behind}` : ""}${srvBehind ? `\n      ${NG} server_behind: ${srvBehind}` : ""}${none ? `\n      ${NG} playbook_none（手順書が届いていない）` : ""} reset_before_fill=${rbf}`);
       }
-      say("  ※ playbook_seen が「なし」＝入力前に手順書を読んだ印が無い（古い拡張・上限で落ちた・自動入力を通っていない）");
+    }
+    say("  ※ playbook_seen が「なし」＝入力前に手順書を読んだ印が無い（古い拡張・上限で落ちた・自動入力を通っていない）");
+  }
+
+  // 2026-11-26 ⑤ 拡張が「実際に動いた版」。realpro・itandi 別／staff（他PC）を分離してメイン自動版も見る
+  say("\n■ ⑤ 拡張が実際に動いた版（サイト別 search_audits.ext_version・人の検索は除く）");
+  if (URL_ && KEY) {
+    const sb = createClient(URL_, KEY);
+    for (const auditSite of ["realpro", "itandi"] as const) {
+      const { data, error } = await sb.from("search_audits").select("id, created_at, ext_version, run_id, mode")
+        .eq("site", auditSite).not("run_id", "like", "human_*").not("ext_version", "is", null)
+        .order("created_at", { ascending: false }).limit(20);
+      if (error) { say(`  ${WA} ${auditSite}: 読めない（${error.message}）`); warn.push(`${auditSite}: 拡張の版を読めなかった`); continue; }
+      const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string; mode?: string }>;
+      if (!rows.length) { say(`  ${WA} ${auditSite}: 自動の点検記録が無い`); warn.push(`${auditSite}: 自動の点検記録が無く、拡張の版を確かめられない`); continue; }
+      const mainAuto = rows.filter((r) => r.mode !== "brain_staff");
+      const staffAuto = rows.filter((r) => r.mode === "brain_staff");
+      const top = mainAuto[0] ?? rows[0];
+      const expected = rulesReviewedUpToFor(auditSite);
+      const hours = Math.round((Date.now() - new Date(top.created_at).getTime()) / 3600000);
+      const lag = cmpVer(top.ext_version, expected) < 0;
+      say(`  ${lag ? NG : OK} [${auditSite}] メイン自動=${top.ext_version}（#${top.id}・${top.mode || "?"}・${top.created_at.slice(5, 16)}・${hours}時間前）／手元=${expected}${staffAuto[0] ? `（別PC staff=${staffAuto[0].ext_version} #${staffAuto[0].id}）` : ""}`);
+      if (lag) bad.push(`${auditSite} の拡張が古いまま（最後に動いたメイン自動 ${top.ext_version} < 手元 ${expected}）＝ chrome://extensions で再読み込み → ${auditSite} のタブを開き直す → 自動を1回回す`);
     }
   }
 
-  // 2026-11-26 ⑤ 拡張が「実際に動いた版」。④ は playbook_seen を見るだけで、拡張の版の古さ（再読込の忘れ）を名指ししていなかった。
-  //   実測 2026-11-26: 手元 2.8.303 に対し、最後に自動を回した拡張は 2.8.295＝8版ぶん再読込されずに残っていた（Chrome の「パッケージ化されていない拡張」は自動で入れ替わらない）
-  say("\n■ ⑤ 拡張が実際に動いた版（点検記録 search_audits.ext_version・人の検索は除く）");
-  if (URL_ && KEY) {
-    const sb = createClient(URL_, KEY);
-    const { data, error } = await sb.from("search_audits").select("id, created_at, ext_version, run_id")
-      .eq("site", "realpro").not("run_id", "like", "human_*").not("ext_version", "is", null)
-      .order("created_at", { ascending: false }).limit(5);
-    if (error) { say(`  ${WA} 読めない（${error.message}）`); warn.push("拡張の版を読めなかった"); }
-    else {
-      const rows = (data ?? []) as unknown as Array<{ id: number; created_at: string; ext_version: string }>;
-      if (!rows.length) { say(`  ${WA} 自動の点検記録が無い`); warn.push("自動の点検記録が無く、拡張の版を確かめられない"); }
-      else {
-        const top = rows[0];
-        const hours = Math.round((Date.now() - new Date(top.created_at).getTime()) / 3600000);
-        const lag = cmpVer(top.ext_version, code.upTo) < 0;
-        say(`  ${lag ? NG : OK} 最後に自動を回した拡張=${top.ext_version}（#${top.id}・${top.created_at.slice(5, 16)}・${hours}時間前）／手元=${code.upTo}`);
-        if (lag) bad.push(`拡張が古いまま（最後に動いた版 ${top.ext_version} < 手元 ${code.upTo}）＝ chrome://extensions で再読み込み → リアプロのタブを開き直す → 自動を1回回す（それまで「反映済み」とは言えない）`);
-      }
+  // ⑥ 手順書の抜け（2026-11-27 竹内さん「手順書ぬけのないように」）: 受け入れた抜けの基準と比べ、増えた抜けを止める
+  say("\n■ ⑥ 手順書の抜け（基準と比べる・増えたら止める）");
+  const gapBasePath = path.join(process.cwd(), "memory", "playbook_gaps_baseline.json");
+  let gapBase: { sites?: Record<string, string[]> } | null = null;
+  try { gapBase = JSON.parse(fs.readFileSync(gapBasePath, "utf8")); } catch { gapBase = null; }
+  if (!gapBase) {
+    say(`  ${WA} 基準が無い（npx tsx scripts/playbook-gap-audit.ts --write-baseline で作る）`);
+    warn.push("手順書の抜けの基準が無い");
+  } else if (URL_ && KEY) {
+    const sbGap = createClient(URL_, KEY);
+    for (const site of ["realpro", "itandi"]) {
+      const { data, error } = await sbGap.from("human_learn_profile").select("id, scope, created_at, bundle")
+        .eq("scope", site).order("created_at", { ascending: false }).limit(1);
+      if (error) { say(`  ${WA} ${site}: 読めない（${error.message}）`); warn.push(`${site} の抜けを読めなかった`); continue; }
+      const row = ((data ?? []) as unknown as Array<{ id: number; scope: string; created_at: string; bundle: Record<string, unknown> }>)[0] ?? null;
+      const rep = gapReportFor(site, row);
+      if (!rep.fresh) { say(`  ${WA} ${site}: 束の行が無い`); warn.push(`${site} の束の行が無い`); continue; }
+      const d = diffGaps(rep.fresh.gaps, gapBase.sites?.[site] ?? []);
+      say(`  ${d.added.length ? NG : OK} ${site}: 受け入れ済み ${d.kept}件・新しい抜け ${d.added.length}件・直った ${d.removed.length}件`);
+      for (const t of d.added) say(`     ${NG} 新しい抜け: ${t}`);
+      if (d.added.length) bad.push(`${site} に新しい手順書の抜け ${d.added.length}件（${d.added.slice(0, 2).join(" ／ ")}）：直す、または理由を書いて基準に加える（竹内さんの確認）`);
+      if (d.removed.length) warn.push(`${site}: 基準の抜けが ${d.removed.length}件 直っている（基準から外す＝ playbook-gap-audit --write-baseline）`);
+      if (rep.fresh.problems.length) bad.push(`${site} の手順書に問題 ${rep.fresh.problems.length}件（${rep.fresh.problems[0].slice(0, 60)}）`);
     }
+  } else {
+    say(`  ${WA} DB が読めないので抜けは見ていない`);
+    warn.push("手順書の抜けを DB で見ていない（環境変数が無い）");
+  }
+
+  // ⑦ 2026-11-27 反映仕組みの自己点検（サーバー・統括・拡張の配管が抜けていないかを決定論で監視）
+  say("\n■ ⑦ 反映仕組みの自己点検（CDNバイパス・サイト分離・統括同期・SW耐性・ITANDI配管）");
+  const mechChecks: Array<[string, boolean]> = [
+    ["human-learn-profile-guard: cacheHeaders('none') & bundleVersionParam", (() => {
+      const s = readText("app/lib/human-learn-profile-guard.ts");
+      return s.includes(`"none"`) && s.includes("bundleVersionParam");
+    })()],
+    ["human-learn-profile/route.ts: 版不一致/強制時は no-store & touch=0 に bundle_v", (() => {
+      const s = readText("app/api/human-learn-profile/route.ts");
+      return s.includes("actualBundleV") && s.includes(`cacheHeaders("none")`) && s.includes("bundle_v");
+    })()],
+    ["learn-bundle-preserve: 統括 自動モード完成度・学習完成 の再算定同期", (() => {
+      const s = readText("app/lib/learn-bundle-preserve.ts");
+      return s.includes("自動モード完成度") && s.includes("学習完成（期間・土台・つながり・一連）") && s.includes("measureAutoCompletion");
+    })()],
+    ["learn-refresh-gate.js: projectLearnStorageForSite & buildBundleFetchUrl & ITANDIルール欠検知", (() => {
+      const s = readText("chrome-extension/learn-refresh-gate.js");
+      return s.includes("projectLearnStorageForSite") && s.includes("buildBundleFetchUrl") && s.includes("pb.rules.length < 1");
+    })()],
+    ["background.js: サイト別 _headCheckAtBySite・?v=URL・即時永続・SW見張り・extVer強制更新", (() => {
+      const s = readText("chrome-extension/background.js");
+      return s.includes("_headCheckAtBySite") && s.includes("buildBundleFetchUrl") && s.includes("_auditPersistNow")
+        && s.includes("p.extVer !== ver") && s.includes("superseded_by_new_bulk") && s.includes("batch_done_sw_watchdog");
+    })()],
+    ["content.js: _realproLearnView・site=realpro・extVer・PUSH_KEYS末尾axlx_learn_gaps", (() => {
+      const s = readText("chrome-extension/content.js");
+      return s.includes("_realproLearnView") && s.includes(`site: "realpro"`) && s.includes("extVer") && /"axlx_learn_gaps",?\s*\]/.test(s);
+    })()],
+    ["itandi-content.js: _itandiLearnView・refresh/auto-linked中継・bootLearnIfNeeded・extVer", (() => {
+      const s = readText("chrome-extension/itandi-content.js");
+      return s.includes("_itandiLearnView") && s.includes("axlx-page-learn-refresh") && s.includes("axlx-page-learn-auto-linked")
+        && s.includes("bootLearnIfNeeded") && s.includes("extVer");
+    })()],
+    ["page-script.js: _startResetAfterReflect(ゲート完了後リセット)・notifyDone時clearClickQueue", (() => {
+      const s = readText("chrome-extension/page-script.js");
+      return s.includes("_startResetAfterReflect") && s.includes(`if (typeof clearClickQueue === "function") clearClickQueue();`);
+    })()],
+    ["itandi-page-script.js: _itEnsureLearnReflectedForFill・_itSerialType(直列数値入力)・学習位置aim", (() => {
+      const s = readText("chrome-extension/itandi-page-script.js");
+      return s.includes("_itEnsureLearnReflectedForFill") && s.includes("_itSerialType") && s.includes("_itLearnPosOf(names)");
+    })()],
+  ];
+  for (const [label, okFlag] of mechChecks) {
+    say(`  ${okFlag ? OK : NG} ${label}`);
+    if (!okFlag) bad.push(`反映仕組みが欠落: ${label}`);
+  }
+
+  // ⑧ 2026-11-27(2.8.313) 新しい決まりが実機の自動で本当に確かめられたか（効いたと言えるか）
+  say("\n■ ⑧ 新しい決まりの実機の証拠（直近の版で入った決まり・リアプロ・直近20回の自動）");
+  if (URL_ && KEY) {
+    try {
+      const rep = await fetchPlaybookReflect(process.env, { scope: "realpro", runs: 20 });
+      if (!rep.new_rules.length) say(`  ${WA} 新しい決まりが無い（since が読めない）`);
+      for (const n of rep.new_rules) {
+        const mark = n.state === "verified" ? OK : n.state === "ng" ? NG : WA;
+        say(`  ${mark} ${n.id}（${n.since}〜）${n.state}: ${n.why}`);
+        if (n.state === "ng") bad.push(`新しい決まり ${n.id} が実機で守れていない（${n.why}）`);
+      }
+      const waiting = rep.new_rules.filter((n) => n.state === "waiting_ext" || n.state === "no_scene");
+      if (waiting.length) warn.push(`新しい決まり ${waiting.length}件が実機で未確認（${waiting.slice(0, 4).map((n) => n.id).join("・")}${waiting.length > 4 ? "…" : ""}）＝「効いた」とはまだ言えない`);
+    } catch (e) {
+      say(`  ${WA} 読めない（${e instanceof Error ? e.message : String(e)}）`);
+      warn.push("新しい決まりの実機の証拠を読めなかった");
+    }
+  } else {
+    say(`  ${WA} DB が読めないので見ていない`);
   }
 
   say("\n■ 結論");

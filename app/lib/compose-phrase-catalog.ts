@@ -87,6 +87,7 @@ export const PHRASE_CATALOG_VERSION = `phrase-catalog@${PHRASE_CATALOG_BUILT}`;
 //   長さ＝竹内さんの場面×主の役目ごとの文の数（中央値と真ん中の半分）・絵文字＝場面ごとの1通の数と種類（😊 😌 🌟 ✨ だけ・feedback_emoji_allowlist）・
 //   期日の言葉＝材料（事実・資料・お客様の今の文・こちらの直近の送信）にある物だけ（無ければ期日を書かない＝下書きから消した型 deadline_promise と同じ線）。
 //   締めの種類は COMPOSE_CLOSING_TABLE（compose-value-slots）の行が持つ（ここでは重ねない）
+// ⛔ 退役（2026-11-27 統括役の決め・台帳 #112 dropped・#816）: 既定 off のまま。理由＝代わりあり（言葉づかいは #806 お客様のカルテ customer-karte の「言葉づかい」に寄せる）・試験の記録なし。コードを消すのは後でまとめて
 export function composeFormSlotsOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.COMPOSE_FORM_SLOTS ?? "").trim().toLowerCase() === "on";
 }

@@ -7,8 +7,8 @@
 //   判定は auto-procedure-rules.ts の純関数（judgePlaybookReflect／judgeRulesOnAudit）。統括Pro と点検スクリプトが同じ物を使う。
 
 import {
-  AUTO_RULES, checkRulesInCode, judgePlaybookReflect, judgeRulesOnAudit, parsePlaybookSeen,
-  type AuditStep, type PlaybookSeen,
+  AUTO_RULES, checkRulesInCode, judgePlaybookReflect, judgeRulesOnAudit, newRulesEvidence, parsePlaybookSeen,
+  type AuditStep, type NewRuleEvidence, type PlaybookSeen,
 } from "./auto-procedure-rules";
 import { PLAYBOOK_BUILD_V } from "./action-playbook";
 
@@ -28,6 +28,8 @@ export type PlaybookReflectReport = {
   }>;
   /** 決まりごとの合計（ok/ng/no_data の回数） */
   per_rule: Array<{ id: string; ok: number; ng: number; no_data: number; last_ng: string | null }>;
+  /** 直近の版で入った決まりが、新しい版の自動で本当に確かめられたか（2.8.313・「確かめられていない」を見える形にする） */
+  new_rules: NewRuleEvidence[];
 };
 
 async function rest<T>(env: Env, q: string): Promise<T> {
@@ -100,6 +102,7 @@ export async function fetchPlaybookReflect(env: Env, opts: { scope?: string; run
     reflect,
     runs,
     per_rule: [...per.values()],
+    new_rules: newRulesEvidence(audits.map((a) => ({ ext_version: a.ext_version ?? null, steps: Array.isArray(a.steps) ? a.steps : [] }))),
   };
 }
 
@@ -109,10 +112,12 @@ export async function fetchPlaybookReflect(env: Env, opts: { scope?: string; run
  */
 export function playbookReflectNote(rep: PlaybookReflectReport): string {
   const ng = rep.per_rule.filter((p) => p.ng > 0).map((p) => `${p.id} ${p.ng}回`);
+  const unver = rep.new_rules.filter((n) => n.state === "waiting_ext" || n.state === "no_scene").map((n) => `${n.id}（${n.state === "waiting_ext" ? "新しい版の自動が未" : "場面が未出"}）`);
   return [
     `【最優先・手順書】手順書の反映（${rep.scope}・束 ${rep.bundle_id ?? "無"}）: ${rep.reflect.ok ? "揃っている" : "揃っていない"}`,
     ...rep.reflect.facts,
     ...(rep.reflect.why.length ? [`揃っていない理由: ${rep.reflect.why.join("／")}`] : []),
     `直近の自動 ${rep.runs.length}回の決まり: 守れていない ${ng.length ? ng.join("・") : "無し"}（確かめられない決まりは数えない）`,
+    ...(unver.length ? [`新しい決まりで実機の確認が未だ: ${unver.join("・")}（「効いた」とは言えない）`] : []),
   ].join("／");
 }

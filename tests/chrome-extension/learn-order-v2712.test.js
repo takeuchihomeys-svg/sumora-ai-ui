@@ -122,7 +122,8 @@ console.log("\n■ ⑤ 繋がっている（自動モードの入力順）");
   ok("  学んだ順が無ければ今まで通り（元の並び）", /if \(!next\) return items;/.test(ps) || /return \(r && Array\.isArray\(r\.items\)/.test(ps));
   ok("  学んだ順を storage から読む", /axlx_learn_next/.test(ps));
   ok("  検索ごとにカーソル出発点を変える", /_resetHumanPointerForRun/.test(ps));
-  ok("  揺らぎを強めに渡す", /wobble:\s*0\.55/.test(ps));
+  // 2.8.313: 0.55 → 0.72 に強めた（page-script の orderByLearned 呼び出し）。「強め＝0.55 以上」を見る形に
+  ok("  揺らぎを強めに渡す", (function () { var m = ps.match(/orderByLearned\([^\n]*\bwobble:\s*(0?\.\d+)/); return !!m && parseFloat(m[1]) >= 0.55; })());
   /**
    * 2026-11-14 竹内さん「最新の学びが反映されるようになっているのか」:
    *   1時間ごと → **5分ごと**に短くした（学んだ直後から最大1時間反映されなかった）。

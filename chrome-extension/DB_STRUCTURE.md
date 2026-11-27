@@ -51,12 +51,22 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 | sent_properties | 送った物件 | 共有 | **site**（11/10 足した・merge-pdfs の共有の行と AIX で送った行が入れる・LINE の画像の読み取り vision は NULL） |
 | chrome_extension_feedback | 拡張からの声 | 両方 | site |
 
+## リアプロ・ITANDI・REINS を混ぜない決まりと見張り（2026-11-26・必ず守る）
+- **箱**: サイトの名前が付いたファイルは、そのサイトだけを扱う（`realpro-*.js`・`itandi-*.js`・`reins-*.js`・`app/lib`・`app/api` の同じ名前）。違う方の名前を使わない。
+- **両方を扱う共有ファイル**は、どのサイトの値がどこで切り替わるか（`site` の値・サイトごとの列）を理由に書いて登録する。登録されていない新しい共有ファイルは止まる。
+- **見張りの正本**: `tests/chrome-extension/site-split-rules.json`（名前の一覧・箱の決まり・登録の理由）と `tests/chrome-extension/site-split-guard.test.js`（`ext-test-all` が毎回回す）。`node tests/chrome-extension/site-split-guard.test.js --report` で今の一覧を出す。
+- **新しい名前（地図・画面の名前）を足す時**: 先に `site-split-rules.json` の名前の一覧に入れる（どちらのサイトの物か）。両方の名前が1ファイルに入ったら、見張りが「登録してください」と止める。
+- 注釈（`//`・`*` の行）は数えない。行の途中の注釈は残る。
+- **サイトの呼び名は `app/lib/site-key.ts` だけで変える**（`siteKeyOf`＝realpro・realnetpro・リアプロ→realpro、itandi、reins・レインズ。`commandSiteKeyOf`＝拡張の呼び名 realnetpro）。他の所で `=== "realnetpro"` と比べない（見張り ④）。試験: `npx tsx app/lib/__tests__/site-key.test.ts`。
+- **コミットの前に自動で回る**: `.githooks/pre-commit`（見張りの試験＋site-key の試験）。この PC では `git config core.hooksPath .githooks` を1回だけ設定済み（取り消しは `git config --unset core.hooksPath`）。TypeScript の型チェック（`npx tsc --noEmit`）は既存のエラーがあるので、フックには入れていない（CLAUDE.md の型チェックは別途）。
+- 今の結果（2026-11-26）: 箱の違反 0・両方を扱う共有ファイル 6（登録済み）・サイト名の直接比べ 4（登録済み・理由付き）。（2026-11-27 に `app/lib/human-motion-sanitize.ts` を追加し共有ファイル 7 に更新・箱の違反 0 を維持）
+
 ## リアプロと ITANDI で混ざっている所（直す候補）
-1. ~~**`site` の値が2通り**~~ → 11/10 DB で揃えた（migration `ext_db_site_runs_views_1110`）。本番の値は automation_commands.sites と extension_devices.current_site だけ `realnetpro`、他の11の表は realpro/itandi/reins で揃っていた。DB の関数 `ext_site_key()`（realnetpro・リアプロ→realpro）と、site の列がある10表の trigger `trg_site_norm`（入る時に揃える・拒まない）を足した。拡張との指示のやり取り（sites の `realnetpro`）は変えない。サーバーの揃える関数4か所（search-audit-check.ts・screen-watch-server.ts・search-update-days-server.ts・search-widen-chain.ts pickupSiteOf）は残っている。
-2. **一括検索・自動の便では ITANDI もリアプロの更新日を使う**: cron と automation の payload は `rp_update_days` しか持たない（v2.5.76 で列を分けたのは popup だけ）。
+1. ~~**`site` の値が2通り**~~ → 11/10 DB で揃えた（migration `ext_db_site_runs_views_1110`）。本番の値は automation_commands.sites と extension_devices.current_site だけ `realnetpro`、他の11の表は realpro/itandi/reins で揃っていた。DB の関数 `ext_site_key()`（realnetpro・リアプロ→realpro）と、site の列がある10表の trigger `trg_site_norm`（入る時に揃える・拒まない）を足した。拡張との指示のやり取り（sites の `realnetpro`）は変えない。→ 2026-11-26 に直した: サーバーの揃える関数（search-audit-check・screen-watch-server・search-update-days-server・search-widen-chain・human-motion・extension-live-server・sheet-layout・search-condition-drift・search-update-days）を `app/lib/site-key.ts`（唯一の正本）へ集めた。サイトの名前を直接比べる残りは見張り（site-split-guard ④）で理由付きの4か所だけ。
+2. ~~**一括検索・自動の便では ITANDI もリアプロの更新日を使う**~~ → 直っている（2026-11-26 に裏付けを確認）: 手の一括は `background.js` 6264〜（`_bulkItDays` に `itandi_update_days` を使う）・自動便は `auto-run.js` の `optsForSite`（207）／`optsForSiteRecord`（273）が ITANDI の回だけ `itandi_update_days` を `rp_update_days` の位置へ写す（読む側の itandi-page-script.js は `cond.rp_update_days` のまま＝写しの仕組み）。payload に `itandi_update_days` が無い古い命令は今まで通りリアプロの値に落ちる。
 3. **`line_stations` はリアプロの内部名だけ**: ITANDI の駅の順番は持っていない。
-4. **`station_map.itandi_lines` はリアプロの路線名から変換して作った物**。`reins_line` は最初の1本だけ。~~スタッフの手直し（station-map の POST）はリアプロの列しか直さない。~~ → 11/10 直した: POST はリアプロの路線が来たら `app/lib/station-line-maps.ts` の `deriveSiteLines` で ITANDI・REINS も作り直す（表に無い路線の列は前の値を残し warning で返す）。既存の行は 767行中 344行が表と違う（空を埋める 317・上書き 19・リアプロの列が表に無い名前 8）＝書き換えは未実施（統括役の判断待ち・`scripts/audit-station-map-site-lines.ts`）。
-5. **対応表の写しが5か所以上**: popup-maps.js（正本）・resolution-core.js・popup.js の中・seed-maps・token-resolve・DB（station_map・line_meta）。11/10: token-resolve の写しは `app/lib/station-line-maps.ts` に移し、正本とのずれをテストで見張る（他の写しはまだ）。
+4. **`station_map.itandi_lines` はリアプロの路線名から変換して作った物**。`reins_line` は最初の1本だけ。~~スタッフの手直し（station-map の POST）はリアプロの列しか直さない。~~ → 11/10 直した: POST はリアプロの路線が来たら `app/lib/station-line-maps.ts` の `deriveSiteLines` で ITANDI・REINS も作り直す（表に無い路線の列は前の値を残し warning で返す）。既存の行は 2026-11-26 の再計測で 778行中 337行が表と違う（ITANDI: 空を埋める 305・名前のずれ 20・表に無い 12＝触らない／REINS: 空を埋める 315・ずれ 3）。読む道具: `scripts/audit-station-map-site-lines.ts`。書く道具: `scripts/apply-station-map-site-lines.ts`（既定は dry-run・`--mode=fill` は空だけ・`--mode=fill-and-fix` はずれも直す・`--apply` には `--backup-dir` が要る・22時以降に書く）。**2026-11-26 22:19 に `--mode=fill` で書いた**（ITANDI 305・REINS 315 の空の列を埋めた＝317行・控え `C:\Users\Admin\Desktop\station-map-backup-2026-11-26\`）。書いた後の読み直し: ITANDI のずれ 20 行・REINS のずれ 3 行は今も残す（竹内さんの選択は「空を埋めるだけ」）。対応が無い 12 行は触らない。
+5. **対応表の写しが5か所以上**: popup-maps.js（正本）・resolution-core.js・popup.js の中・seed-maps・token-resolve・DB（station_map・line_meta）。11/10: token-resolve の写しは `app/lib/station-line-maps.ts` に移し、正本とのずれをテストで見張る（他の写しはまだ）。2026-11-26: サイトの呼び名の変換は `app/lib/site-key.ts` に一本化（見張り ④ で直接比べを止める）。対応表の写し（popup-maps.js ほか）はまだ一本化していない。
 6. ~~**token-resolve の AI への例が対応表と違う**（阪急神戸線の名前）。~~ → 11/10 直した（例を表から作る）。
 7. **memory の記録とコードの食い違い**（REINS の阪急神戸線・宝塚線・京都線: memory は「〜本線」・コードと DB は「阪急神戸線」）。search_audits に reins の行が無く画面の表記が分からない → 竹内さんに確認中・決まるまで変えない。
 8. ~~**sent_properties に site が無い**~~ → 11/10 列を足した。新しい行は merge-pdfs（source=line_group）と AIX で送った行（aix:property_send）に入る。古い行は pickup_id がある 507 行だけ、22時以降に pickups.site から埋め戻す。line_group の古い行は property_url も NULL なので埋めない。
@@ -69,9 +79,31 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 - chrome.storage / localStorage: モード・今のお客様・一括検索の状態・送付の状態・誤送の防止（axlx_search_for）・案内（リアプロ／ITANDI で別のキー）・一時調整（tempAdj_<id>・DB に残らない）
 - chrome.storage.session `axlx_auto_next_page`（2.8.104）: 自動が「次」を押す前に置く続きの印（頁・回数・累計・お客さん・時刻）。`td.pager` が読み直した後の `start()` Case E が読んで消す。2分で無効
 - chrome.storage.session `axlx_fill_busy`（2.8.106 で中身を足した）: 条件の入力中の印。`{ at, customerId?, why? }`。background が一括で次のお客さんを始める直前に `why:"batch_customer_start"` で置き、同時に前の `axlx_pending_auto_send`・`axlx_auto_next_page` を消す。bulk-dl の Case C は「検索した印（pending.ts）より入力開始（busy.at）が新しい」「お客さんが違う」時は押さない（`customer-handoff.js` の `pendingFlagBlockReason`）
+- 2026-11-27（2.8.313・DB の列・表・API は増やしていない）: 拡張の中だけの変更＝リセットで空と確かめた直後は客切替でも「前客の場所の全部外し（強制）」の旗を立てない（`_resetCleanSkipsForcePlace`・audit 段 `page:reset_clean_no_force_place`・決まり `reset_clean_no_force_place`）。手順書側は `learn-flow-steps.ts` の場面ごとの間（`gap_ms`）で 0.15 秒未満（`MIN_REAL_GAP_MS`）を数えない。`task_change_api_every` の旧い文（毎回 force）を 2.8.309 の決まりに合わせて直した。送る値・列は変わらない。
+- 2026-11-27（2.8.312・`PLAYBOOK_BUILD_V = 19`・DB の列・表は増やしていない）:
+  - **CDN 版付きキャッシュバイパス（`human-learn-profile`）**: `?touch=0` が `bundle_v`（`${generated_at}_${rules_v}_${build_v}`）を返し、拡張（`buildBundleFetchUrl`）は取得 URL に `&v=<bundle_v>` を付けて送信。本体 GET で `forceFresh` / `playbookRefreshed` または `?v=` と実束 `actualBundleV` が不一致の時は `Cache-Control: no-store, no-cache, must-revalidate` を返す。
+  - **統括の自己矛盾同期（`syncSupervisorImproveLoop`）**: `shots.learned` 継承後に `自動モード完成度`（`measureAutoCompletion` で `evidence`/`today`/`agenda` 再算定）と `学習完成（期間・土台・つながり・一連）` を実測へ同期。
+  - **拡張内のサイト別学習キー完全隔離＆SW耐性**: `chrome.storage.local` の学習キー（`axlx_learn_*__realpro` / `axlx_learn_*__itandi`）へ独立保存し、`projectLearnStorageForSite` で他サイト共有フォールバックを遮断（`_headCheckAtBySite`・`content.js` / `itandi-content.js` / `pointer-ui.js` もサイト別化）。`search-audit.js` の `_auditPersistNow`（即時永続＋`adopt` 復元 `restored: true`）、`background.js` の `superseded_by_new_bulk`・90秒SWウォッチドッグ・`axlx-set-fill-customer` 4秒タイムアウト・`extVer !== ver` 旧タブ強制リロード、リアプロ（ゲート完了後リセット・`notifyDone` キュー掃除）・ITANDI（`_itEnsureLearnReflectedForFill`・`_itSerialType`・学習位置 `aim`）を実装し、`check-playbook-sync.ts` ⑦ の 9項目検査で継続監視。
 - 2.8.206: 手順書反映の抜け防止。`attach`／`prepareBundleForWrite` が `generated_at` を上げる・`read_count=0`。light API が `playbook_rules_v` を返す。拡張が rules_v ずれで強制取込。土台 **F63**（DB=コード∧seen rv=コード∧read≥1）。列は増やしていない
 - 2.8.205: 手順書穴の土台。決まり `continuous_customer_loop`（AUTO_RULES）を束へ attach（rv **e0b8837b**・39件）。`customer_think` 失敗時も stamp。checkRulesInCode が `background.js` も見る。weak-find の連続客は列 `ext_version`（`extension_version` は誤り）。列は増やしていない
 - 2.8.204: 連続客細分化強化。`handoff_atom_send`／`handoff_atom_post_send`／`handoff_atom_ready`／流れ地図に `send_or_pdf`・`post_send_clear`。台帳12細原子＋`planHandoffStrengthen`。土台 **F61（DB計測）**・**F62（細分化）**。`scripts/handoff-loop-strengthen.ts`（列は増やしていない）
+- 2026-11-27（2.8.319・PLAYBOOK_BUILD_V = 26・DB の列・表は増やしていない）: 手順書の一覧の手に「全部送付済み→次へ／次頁も全部送付済み→客完了／0件→客完了／客完了→リセットして次客へ」を足した。search_audits.steps に新しい印 dl:list_flow_announce（パネルで言った言葉）・dl:list_flow_wait_reason（物件取得が始まらない理由）・dl:zero_count0_finish（0件で終えた・今まで点検に残らなかった）が残る。送る値・API は変えていない。
+- 2026-11-27（PLAYBOOK_BUILD_V = 30・DB の列・表は増やしていない）: 手順書の③の末尾と④の文に、並べ替え完了（高→低を押した・読み直した一覧は物件取得・パネルは物件取得最中）を載せた。送る値・API は変えていない。
+- 2026-11-28（2.8.329 に追加・PLAYBOOK_BUILD_V 37→38・DB の列・表・API は増やしていない）: search_audits.steps に新しい印。頁の番号の読み方 `dl:pager_read`（番号・今の頁・元・葉の形・次の onclick）・カーソルを動かさなかった `page:move_target_gone`・駅の画面で汎用の字を押さなかった `page:station_line_text_skip`。駅の手の把握に `page:station_select_ok`／`page:station_per_line_ok`／`page:station_name_absent`／`page:station_line_stuck` を残す段へ。送る条件（intended）: 希望エリアが「〇〇沿線（A〜B）」の時、`route_ids` はその線だけ・`station_names` は A〜B の全駅（線の名前の切れ端を駅に入れない）。popup.js と resolution-core.js の両方。
+- 2026-11-27（2.8.329・PLAYBOOK_BUILD_V = 37 のまま・DB の列・表・API は増やしていない）: search_audits.steps に新しい印。リセットの遅れの確かめ `reset_press_late_check`（返事・確かめた回数・秒・結果・各回の理由）・枠の言葉 `dl:panel_text`・読み直し後の枠の戻し `dl:box_live_restore`・重さの計測 `dl:perf_nav`（返事待ち・受取・組立・load）／`dl:perf_loaf`（最初の60秒の長い描画をファイルごとに）／`dl:perf_loaf_prev`（前の頁を離れるまで）。拡張の中だけの置き場: sessionStorage `axlx_reset_fired`（押した瞬間の印・読み直しを越える）・`axlx_now_since`（いまの手の始まり）・`axlx_perf_prev`、chrome.storage.session `axlx_box_live`（枠の待ち・押した行・リセットの位置）。
+- 2026-11-27（2.8.328・PLAYBOOK_BUILD_V = 35・DB の列・表・送る値は増やしていない）: search_audits.steps に押したことの把握の印が残る。押した `page:press_ok_<種類>`／`page:press_ng_<種類>`・入力の終わり `page:press_sum`・確定 `page:confirm_press_*`・所在地 `page:area_open_ok`・一覧 `dl:press_next_moved`／`dl:press_pdf_sum`。並べ替えは画面で確かめず時間差で認める `dl:press_sort_effect_ok`（押してからN秒）／`dl:press_ng_sort_effect`（12秒より短い・時刻不明）。町・管理費・構造は選んだ後に印を読む `page:cond_pick_idle`→`page:cond_effect_ok`（1回選び直した時は前に `page:cond_effect_retry`）／付かない `page:press_ng_cond_effect`（止めずに次へ）。入力前リセットの重なりは `reset_before_fill_join`（同時に来た2本目以降は1本目の結果を使う）・`reset_before_fill_dup_skip`（一括の最中に手動の入口から来た物は断る）。同じ段（k）・同じ本文（d）が2秒以内に続いた時は1行にまとめて `n`（回数）・`to`（最後の時刻）を付ける（押す・失敗・完了・リセットの段と送付の数え `dl:send_bar_` 以外はまとめない＝1回ずつ数える）。
+- 2026-11-27（2.8.326・DB の列・表・送る値は増やしていない）: 押した結果（リセット）は背景から枠へ `axlx-bulk-press`（what・result・detail）で送るだけ。点検の段は既存の reset_press・reset_settled のまま。
+- 2026-11-27（2.8.325・DB の列・表・送る値は増やしていない）: 枠の待ちは拡張の中だけ（送る値・API は変えていない）。background が `axlx-bulk-wait`（id・ms）をタブへ送るのはリセット後の待ち（reset_settle）だけ。点検は既存の印（sort_lag_grace・sort_done・search_to_sort）で見る。
+- 2026-11-27（2.8.324・DB の列・表・送る値は増やしていない）: 読み直し後の猶予（15〜20秒）は search_audits.steps の dl:sort_lag_grace（「読み直し後の猶予」）で見える。その後に dl:sort_done pressed_resume が来る。押し→物件取得の間が15秒を切ったら猶予が効いていない。
+- 2026-11-27（2.8.323・DB の列・表・送る値は増やしていない）: パネルの言葉を流れの地図（loop-flow-map.ts の panel）から作る形にした。search_audits.steps の dl:list_flow_announce に sort_pressed（高→低を押した直後に物件取得の言葉へ）が残る。送る値・API は変えていない。
+- 2026-11-27（2.8.322・PLAYBOOK_BUILD_V = 29・DB の列・表は増やしていない）: search_audits.steps に dl:sort_pressed（高→低を押した）・dl:sort_done の pressed_resume（読み直し後に④へ進んだ）・dl:sort_skip_done（押したあと並べ替えを始めなかった）が残る。送る値・API は変えていない。sort_pressed のあと sort_done が無ければ、また④に進んでいない。
+- 2026-11-27（2.8.321・PLAYBOOK_BUILD_V = 28・DB の列・表は増やしていない）: search_audits.steps に新しい印 page:move_retry（カーソルが着く前に止まったので動かし直した）・page:press_no_arrive（3回動かしても着かないまま押した）・page:press_no_cursor_ui（見えるカーソル無しで押した）が残る。KEEP_STEP に入れたので間引きで消えない。送る値・API は変えていない。press_no_arrive の件数で「カーソル無しで押した」を数える。
+- 2026-11-27（2.8.320・PLAYBOOK_BUILD_V = 27・DB の列・表は増やしていない）: search_audits.steps に新しい印 reset_vis（リセットを押す前にリアプロのタブが見えていたか）・reset_front（背面なら前に出した後の見え方）・page:reset_press_start／page:reset_press_queued／page:reset_press_slow／page:reset_press_cancel（押す処理の途中。ページ側の点検に頼らず背景が移す）が残る。KEEP_STEP に tab_front／tab_hidden／window_restore を足した。送る値・API は変えていない。
+- 2026-11-27（2.8.318・PLAYBOOK_BUILD_V = 25・DB の列・表は増やしていない）: 次客の条件を読み直せなかった（3回・または一覧に居ない）時は、古い条件で検索せず、そのお客さんを飛ばす。search_audits.steps の customer_api_reload の本文が「API読み直し失敗→このお客さんは飛ばす（古い条件では検索しない・…）」になった。知らせは AXLX_API_RELOAD_FAILED（検索できなかった扱い）。送る値・API は変えていない。customer_api_reload を見て、飛ばした客を数える。
+- 2026-11-27（2.8.317・`PLAYBOOK_BUILD_V = 24`・DB の列・表は増やしていない）: リセット／検索／並べ替えの流れを簡素に。`search_audits.steps` の新しい段 `reset_settled`（リセットを押して30〜34秒待った＝空とみなす）・`customer_api_reload`（次の客の条件を API から毎回読み直した・最大3回）・`page:search_review_wait`（検索を押す前の見直し 9〜12秒）・`dl:sort_mouse_retry`（マウス移動の取り消しを1回だけやり直し）。`reset_before_fill` の本文に `見送り=この一括の最初の客はリセットしない`／`前客のリセットが済んでいる`。旧い段 `reset_shot`／`reset_not_empty`／`reset_count_same`／`lag_grace_after_reset` はもう出さない（過去の記録を読む時だけ）。送る値・API は変えていない。
+- 2026-11-27（2.8.310・`PLAYBOOK_BUILD_V = 18`・DB の列・表は増やしていない）:
+  - **単発自動のリセットリロード耐性**: `popup.js`（`underbar.js` 内 `iframe`）からリアプロ「リセット」後にタブが再読込されても自動入力が途切れないよう、リセット前に `axlx_pending_auto_send`・`axlx_score_data` を保存し、`axlx-reset-before-fill` の `autoFillAfter` を受けた `background.js` がリロード完了後に `axlx-set-fill-customer` + `axlx-realnetpro-autofill` を直接再送する。
+  - **学習データの増分送信とサーバー側浄化（`human_motion` / `human_learn_profile`）**: `human-learn-record.js` はローカル累計と今回の保存窓増分（`_sessionPoints` / `_sessionAutoPoints`、`n <= 200`）を分離し、`U(uploadDelta)` で増分だけを送信。`human-learn-upload.js` と `app/api/human-motion/route.ts` でもサイト別許可欄名（`isAllowedMotionFieldName`）チェックと `point_fields[k].n` 上限（拡張 200 / サーバー 500）を強制し、`0.5,0.5` 爆発ポイント・ゴミ名（`input`/`iframe`/`id`/`-----`）・他サイト混入を遮断。`prepareBundleForWrite` が保存前に `sanitizeBundleForSite(bundle, site)` と `syncSupervisorSceneFlows(bundle, site)` を実行し、`PLAYBOOK_BUILD_V = 18` で手順書の押す位置・`印刷用PDF` 判定・統括同期を整えた。
 - 2.8.302: 手を止める停止の長さは 4〜11秒（中央 6.5秒・毎回ちがう）。`page:fill_pause` / `page:fill_resume` の秒は小数2桁（例「6.42秒」）。手の動きの drift に `maxMs`（既定 6000・停止だけ 11000）。DB の列・表は増やしていない。過去の監査（2.8.300 以前）の停止の秒は、ばらつき無しの固定（2.8.300）か予定（2.8.299）なので、実際の長さとして読まない。
 - 2.8.300: 手を止める停止の `page:fill_pause` の秒数は最大6秒（実際に止まる長さ＝手の動きの上限）。2.8.299 までの「8〜25秒」の記録は予定で、実際は約6秒だった（過去の監査を読む時の注意）。
 - 2.8.299: 人の間（わざとの待ち）を見張りに分からせる（DB の列・表は増やしていない）。`search_audits.steps` の `page:fill_pause` の本文が「N秒（わざと止める・人の間＝止まりではない）」、`page:fill_resume` が「わざと止めた後に再開 予定N秒・実際M秒」に変わった。`page:fill_pause_force` は「予定を15秒超えた（本物の止まり）」。`silence_watch_tick` の `q=` の末尾に `/iw種類`（fill_pause／hesitate／gap／-）。ページの中だけの印 `window.__axlxIntentWait`（DB へは送らない）。
@@ -174,3 +206,65 @@ sent_properties（送った物件・site の列なし・LINE と共有）→ 重
 5. 👑 の点の内訳・AIX への受け渡しは画面の中だけ（残すかは竹内さんに確認）
 
 詳しい行番号つきの調べは、統括役のセッションの記録にある（作業員の報告 11/10）。
+
+## 表記の違い（リアプロ・ITANDI・REINS）— 2026-11-26 実測
+正本は `chrome-extension/popup-maps.js`（駅→路線 `STATION_LINE_MAP`・リアプロの番号 `LINE_ROUTE_MAP`・ITANDI `ITANDI_LINE_MAP_FILL`・REINS `REINS_LINE_MAP`）。3サイトは別の表記。同じ路線でもサイトごとに違い、**REINS が realpro と同じ場合もある**（大阪環状線）ので、見た目で判断しない。
+
+| リアプロ（内部名） | ITANDI（ラベル） | REINS（沿線名） |
+|---|---|---|
+| 大阪市高速軌道御堂筋線 | 高速電気軌道第1号線(大阪メトロ御堂筋線) | 大阪メトロ御堂筋線 |
+| 大阪市高速軌道長堀鶴見緑地線 | 高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線) | 大阪メトロ長堀鶴見線（※REINS の画面は未確認） |
+| 大阪環状線 | **大阪環状線**（JR を付けない・2026-11-26 画面で確認） | 大阪環状線（realpro と同じ） |
+| JR東西線 | JR東西線 | **東西線** |
+| 東海道本線 | **2本**: JR東海道本線(京都～大阪)(JR京都線) と JR東海道本線(大阪～神戸)(JR神戸線(大阪～神戸)) | **未決**: 東海道本線 か 東海道線（下の「未決」） |
+| 阪急電鉄神戸線 | 阪急神戸本線 | 阪急神戸線（11/10 竹内さん決定） |
+| 阪急電鉄京都線 | 阪急京都本線 | 阪急京都線 |
+| 南海電鉄南海本線 | 南海本線 | 南海本線 |
+| 南海電鉄泉北線 | 南海泉北線(泉北線) | 南海泉北線 |
+| 近鉄難波・奈良線 | **2本**: 近鉄難波線 と 近鉄奈良線 | 近鉄奈良線 |
+| 関西本線 | JR関西本線(加茂～ＪＲ難波)(大和路線) | 関西線 |
+| 能勢電鉄妙見線／日生線 | 能勢電鉄妙見線／能勢電鉄日生線 | 能勢電鉄（2本とも同じ） |
+| 水間鉄道水間線 | 水間鉄道水間線 | 水間鉄道 |
+| 大阪モノレール本線 | 大阪モノレール線 | 大阪モノレール本線 |
+| 近鉄西信貴ケーブル線 | 近鉄西信貴鋼索線(西信貴ケーブル) | （REINS の表は無し） |
+
+**読み方のルール（今ある仕組み）**
+- ITANDI の路線の照合（`itandi-page-script.js` の `textMatch`）は「ラベルが検索語を含む」で当たる。ITANDI の一覧の表示は「大阪環状線」（2026-11-26 竹内さんのスクリーンショットで確認）なので、完全一致で当たる。「神戸線」と「神戸本線」は含まないので当たらない。
+- 駅の路線を確かめる時は、リアプロ名→ITANDI名→REINS名の順に表で通す。直接の文字の比べは禁止（見張り ④）。
+
+**見つかったずれ（2026-11-26・読むだけで確かめた）**
+1. **一括・自動の経路が使う写し `resolution-core.js` が正本と違っていた → 2026-11-26 に正本と同じに揃えた**（`resolveConditionsLocal`＝background の `_resolveLocalFirst`）。見張り: `tests/chrome-extension/notation-copies-sync.test.js`（`ext-test-all` が回す）。揃える前の状態（参考）:
+   - 駅→路線の表: 正本 658 駅のうち写しは 306 駅だけ（352 駅が欠け・DB の学習データ `station_map` に路線があるのは 325 駅・DB に行が無いのは 4 駅: 能勢電平野・妙見線平野・津田・高槻市）。
+   - 11 駅で路線が違った（例: 中津・難波・大日・岸里玉出・森ノ宮・塚口・南茨木・淡路・今宮戎・三国ヶ丘・桜井）。写しが DB より優先されるので DB の値は使われなかった。
+   - 能勢電鉄妙見線・日生線が `LINE_ROUTE_MAP` に無く、能勢の駅は路線の番号も ITANDI・REINS の路線も出なかった（揃えた後、絹延橋は 6676・ITANDI「能勢電鉄妙見線」・REINS「能勢電鉄」を確認）。
+   - 短縮名 `LINE_ALIAS_MAP` 25 件→9 件、駅の順番 `LINE_STATION_ORDER` の阪急京都線 11 駅→28 駅、駅→区 `STATION_WARD_MAP` 8 駅 が無かった。
+   - 版（manifest の版）は上げていない。拡張の再読み込みで反映される。
+2. **`popup.js` の ITANDI 注記用の写し → 2026-11-26 に揃えた**（手順書の「itandiの路線名」表示だけに使う・検索の条件には使わない）。揃える前は東海道本線が京都線だけ・近鉄難波・奈良線が1つの文字列だった。
+3. **東海道本線の粗さ**: 正本は京都線と神戸線の2本を全部の駅に入れる。京都線だけの駅（高槻・茨木・島本・摂津富田・JR総持寺・東淀川・千里丘・岸辺・JR千里丘）や神戸線だけの駅（甲子園口・立花・塚本）にも2本入っている（DB の ITANDI 列・空埋めの前から）。11/10 に千里丘・岸辺・JR千里丘だけ京都線の1本に直した。
+4. **REINS の東海道（一部解決）**: 2026-11-26 の空埋めで REINS 列に `東海道本線` を入れた11行は、竹内さんの決定（「空に戻す」）で空に戻した（`reins_tokaido_revert_before_*.json` が戻す前の控え）。茨城は空埋めより前から `東海道本線` だった（触っていない）。千里丘・岸辺・JR千里丘は `東海道線`（11/10 の時のまま）。**ただし REINS の画面の表記（東海道本線か東海道線か）は未確認**。正本 `REINS_LINE_MAP` の `東海道本線` は、写しを揃えたので一括の経路でも出るようになった（以前は出なかった）。
+5. **近鉄信貴線・近鉄西信貴ケーブル線は一括・自動の経路で ITANDI・REINS に出ない**（写しを揃えても）: `resolution-core.js` の `resolveConditionsLocal` は、リアプロの路線番号（route_id）が付く路線だけを ITANDI・REINS の路線に回す（`if (id)` の所）。信貴線はリアプロに路線番号が無い（正本の `LINE_ROUTE_MAP` に無い）ので、ITANDI・REINS にも回らない。popup の経路は正本の表を直接引くので、そちらでは出る見込み（コードを読んだ確認・実機は未確認）。一括と個別で結果が違う可能性がある。直すなら「路線番号が無くても ITANDI・REINS は回す」に変え5. **DB の ITANDI 列の 大阪環状線**（17 行）: 2026-11-26 解決。ITANDI の一覧の表示は「大阪環状線」（JR なし）。正本・写し（popup-maps・resolution-core・popup.js・app/lib/station-line-maps.ts）を「大阪環状線」に揃えた。DB の 17 行は書き換え無し（もう一致）。11/10 の「触らない」の理由は記録に無い。る（決定の行は設計知見 2026-11-26）。
+6. 駅名 `茨城`（DB の token・東海道本線）は `茨木` の打ち間違いの可能性がある（未確認）。
+
+**2026-11-26 に決めて直したこと（竹内さん）**
+- REINS の東海道本線 11 行を空に戻した（控えあり）。
+- 写し（`resolution-core.js` の 7 表・`popup.js` の注記用の表）を正本に揃えた。見張り `notation-copies-sync.test.js`。`ext-test-all` は新しい赤 0（基準の赤 115 は変えず）。版は上げていない（拡張の再読み込みで反映）。
+
+**2026-11-26 深夜の決定（竹内さん）: レインズは使わない**
+- 実測（直近30日）: search_audits はリアプロ 596 件・ITANDI 84 件・レインズ 0 件。property_pickups の site=reins は 0 件。automation_commands（直近30日 1000 件まで）に reins を含む物は 0 件。
+- REINS の項目（上の表の REINS 列・4・A・下の REINS 関係）は**対象外**。見張り（site-split-rules）・写しの試験・拡張の `reins-*.js` 3本・manifest の reins の一覧は、まだ残している（止めるか消すかは未決・下の「未決」）。
+
+- **2026-11-27 同期と仕組み化**:
+  - `popup-maps.js`（正本）・`resolution-core.js` 内の重複キー 6件（`吹田` の JR東海道本線消失バグ含む・`三国ヶ丘`・`南港口`・`山之内`・`苅田`・`西宮原`）を解消し、`tests/chrome-extension/notation-copies-sync.test.js` に全マップ重複キー 0 検査を追加。
+  - `app/api/seed-maps/route.ts`（`STATION_WARD_MAP` / `STATION_LINE_MAP` / `NEIGHBORHOOD_WARD_MAP` / `LINE_STATION_ORDER`＋`@/app/lib/station-line-maps` import）および `app/api/resolve-search-conditions/route.ts`（`LINE_ROUTE_MAP` / `LINE_ALIAS_MAP`）を正本へ同期し、`notation-copies-sync.test.js` の監視対象に追加。
+  - `.githooks/pre-commit` に `realpro-guide-town.test.js`（詳細地域案内＋単発自動 `_resetBeforeFill`）・`playbook-site-split.test.ts`・`auto-rules-verify-exists.test.ts`・`playbook-rule-evidence.test.ts`・`learn-opens-and-itandi-flow.test.ts` を追加。
+  - **2.8.311 / 作り方19 手順書浄化・ITANDI 独立・監査同期**:
+    - `app/lib/itandi-field-aliases.ts` を新設し、`ITANDI` の `compactBundle` / `buildPlaybook` / `inheritLinkFoundations` がリアプロ別名表 `field-name-aliases.ts` を混ぜない構造に分離。`app/lib/auto-itandi-rules.ts` に独立版 `ITANDI_RULES_REVIEWED_UP_TO` を分離。
+    - `app/api/human-learn-profile/route.ts` の `?refresh=1&scope=realpro|itandi` 対象スコープ修正＋`?touch=0` の `rulesReviewedUpToFor(scope)` 統一。
+    - `chrome-extension/itandi-page-script.js` が `axlx_learn_playbook__itandi` / `axlx_learn_bundle__itandi` を読み、`search_audits.steps` に `page:page_ver`, `page:playbook_seen`, `page:playbook_none`, `page:playbook_behind` と途中保存（`itandi-content.js` `axlx-guide-live-flush` → `background.js` `axlx-audit-live-step` `site: "itandi"`）を送る経路を追加。`search-audit.js` で `dl:send_bar_show` を畳み込み、`background.js` で反対側サイト更新検知・`perSite.realpro` 混載上書き停止・ITANDI フォールバック `postMessage("axlx-itandi-fill-exec")` ＆ `customerId` 伝播を修正。
+    - `learn-supervisor.ts`（`read_count` / `auto_after` 実値伝播）＆ `learn-bundle-preserve.ts` `syncSupervisorImproveLoop`（`shots.learned` 引き継ぎ後の `改善までの一連` 同期）を実装し、`pre-commit` に `playbook-clean-and-itandi-sync.test.ts` 等を追加。
+
+**未決（竹内さんの判断が要る）**
+- A. （レインズは使わないので取り下げ）REINS の東海道本線の表記。
+- B. 近鉄信貴線・西信貴ケーブル線を一括の経路で ITANDI に回すか（上の 5）。ITANDI 向けのロジックの変更になる。
+- C. 東海道本線を駅ごとに京都線／神戸線へ振り分けるか（ITANDI のみ・正本の表の作り直し）。
+- D. レインズの拡張（`reins-*.js` 3本・manifest の reins の一覧・見張りの REINS の箱）を止めるか消すか。

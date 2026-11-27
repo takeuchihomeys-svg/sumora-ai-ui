@@ -915,7 +915,7 @@ export async function learnFromWeakShots(
         candidates.push({
           scope: site,
           source_rows: sub.length,
-          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs, null, null, sceneMetaSite)) as unknown as Record<string, unknown>,
+          bundle: compactBundle(buildHumanLearnBundle(sub as never, nowMs, null, null, { ...(sceneMetaSite ?? {}), site }), { site }) as unknown as Record<string, unknown>,
         });
       }
       const rows: Array<{ scope: string; source_rows: number; bundle: Record<string, unknown> }> = [];
@@ -934,7 +934,7 @@ export async function learnFromWeakShots(
       } else {
         /** ★ 2026-11-20: 書く前に名前を外し手順書を付ける（API と同じ処理・bundle-write-prepare） */
         const { prepareBundleForWrite } = await import("./bundle-write-prepare");
-        for (const r of rows) prepareBundleForWrite(r.bundle);
+        for (const r of rows) prepareBundleForWrite(r.bundle, r.scope); // 2026-11-26: サイトを渡す
         const ins = await supabase.from("human_learn_profile").insert(rows);
         out.refreshed = !ins.error;
         if (ins.error) out.errors.push("束の作り直し: " + String(ins.error.message).slice(0, 100));

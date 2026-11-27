@@ -39,6 +39,8 @@ import { matchImageToPressed, whatSupervisorCanSay } from "./image-point-match";
 import { buildLinkPipeline } from "./bundle-reflect";
 import { buildImproveLoop } from "./improve-loop";
 import { mergeAliasPositions, fieldHasPosition, expandAliasPoints, expandAliasLearnedFields } from "./field-name-aliases";
+import { expandItandiAliasPoints, expandItandiLearnedFields, itandiAliasesOf } from "./itandi-field-aliases";
+import { isAllowedMotionFieldName } from "./human-motion-sanitize";
 
 export type MotionRow = {
   created_at?: string | null;
@@ -466,8 +468,13 @@ export function learnNextPress(
 }
 
 /** 要素ごとの押した位置をまとめる（回数の多い実測に寄せる） */
-export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, PointStat> {
+export function learnPoints(
+  rows: ReadonlyArray<MotionRow>,
+  opt: { site?: string | null } = {},
+): Record<string, PointStat> {
   const out: Record<string, PointStat> = {};
+  const explCenter = new Set<string>();
+  const siteFilter = opt.site ?? null;
   /**
    * 自動が押した位置（by:"auto"）は人の位置が無い欄の代わりにだけ使う。
    *   ⚠ 自動は束の位置を狙って押すので、回数で人の位置を上書きさせると自分の押し方を学び直す輪になる。
@@ -476,57 +483,63 @@ export function learnPoints(rows: ReadonlyArray<MotionRow>): Record<string, Poin
   for (const row of rows) {
     const f = row.point_fields;
     if (!f || typeof f !== "object") continue;
+    const rowSite = typeof row.site === "string" ? row.site : siteFilter;
     for (const [name, v] of Object.entries(f as Record<string, unknown>)) {
       if (!v || typeof v !== "object") continue;
-      /**
-       * 2026-11-14 竹内さん「ゴミデータが入らないようになっているか」:
-       *   押す対象でない入れ物（`div`・`img`・`td` など）は**学ばない**。
-       */
       if (!isLearnableName(name)) continue;
+      if (!isAllowedMotionFieldName(name, siteFilter ?? rowSite)) continue;
       const r = v as Record<string, unknown>;
-      const x = frac(r.x), y = frac(r.y), n = num(r.n) ?? 0;
-      if (x == null || y == null || n <= 0) continue;
+      const x = frac(r.x), y = frac(r.y), rawN = num(r.n) ?? 0;
+      if (x == null || y == null || rawN <= 0) continue;
+      // ★ 2026-11-27 修正: 過去の累計再送バグ（8,700万・685万@0.5,0.5）が1行だけで本物の実測位置を上書きしないよう、
+      //   1行からの実効票は上限500（action-playbook/sanitize と統一）に抑え、かつ異常爆発の中心点(rawN>500 かつ 0.5,0.5)は本物の実測位置より劣後させる。
+      const isExplodedCenter = rawN > 500 && x === 0.5 && y === 0.5;
+      const effN = isExplodedCenter ? 1 : Math.min(rawN, 500);
       const key = String(name).slice(0, 30);
       const old = out[key];
-      // 2026-11-13 竹内さん「どこがダウンドロップでどこが入力する部分か」: 要素の種類も残す
+      const oldExpl = explCenter.has(key);
       const w =
         typeof r.w === "string" ? r.w.slice(0, 10)
         : (typeof r.wk === "string" ? r.wk.slice(0, 10) : null);
       const isAuto = pointBy(r) === "auto";
       const oldAuto = autoOnly.has(key);
       if (old && isAuto && !oldAuto) continue;
-      // 回数の多い方（新しい実測）を採る。同じ回数なら新しい行を採る（後の行）。人の位置は自動の位置より先
-      if (!old || (oldAuto && !isAuto) || n >= old.n) {
-        const next: PointStat = { x, y, n };
+      if (old && !oldExpl && isExplodedCenter) continue;
+      // 本物の実測（非爆発・人）を優先し、同格なら票の多い方（または後の行）を採る
+      if (!old || (oldExpl && !isExplodedCenter) || (oldAuto && !isAuto) || effN >= old.n) {
+        const next: PointStat = { x, y, n: effN };
         const wUse = w || old?.w;
         if (wUse) next.w = wUse;
         out[key] = next;
         if (isAuto) autoOnly.add(key); else autoOnly.delete(key);
+        if (isExplodedCenter) explCenter.add(key); else explCenter.delete(key);
       }
     }
   }
   /** shot_ops の x/y で point_fields が薄い欄を補う（2026-11-18・録画 click の相対位置） */
   for (const row of rows) {
-  const ops = Array.isArray((row as { shot_ops?: unknown }).shot_ops)
-    ? ((row as { shot_ops: Array<Record<string, unknown>> }).shot_ops)
-    : [];
+    const rowSite = typeof row.site === "string" ? row.site : siteFilter;
+    const ops = Array.isArray((row as { shot_ops?: unknown }).shot_ops)
+      ? ((row as { shot_ops: Array<Record<string, unknown>> }).shot_ops)
+      : [];
     for (const o of ops) {
       if (!o || typeof o !== "object") continue;
       const k = String(o.k ?? "");
       if (k !== "click" && k !== "tap") continue;
       const name = String(o.f ?? "").slice(0, 30);
-      if (!name || !isLearnableName(name)) continue;
+      if (!name || !isLearnableName(name) || !isAllowedMotionFieldName(name, siteFilter ?? rowSite)) continue;
       const x = frac(o.x);
       const y = frac(o.y);
       if (x == null || y == null) continue;
       const wOp = typeof o.w === "string" ? o.w.slice(0, 10) : null;
       const cur = out[name];
-      if (!cur || typeof cur.x !== "number" || typeof cur.y !== "number") {
+      if (!cur || explCenter.has(name) || typeof cur.x !== "number" || typeof cur.y !== "number") {
         out[name] = {
           x, y,
-          n: Math.max(cur?.n || 0, 1),
+          n: explCenter.has(name) ? 1 : Math.max(cur?.n || 0, 1),
           ...(wOp ? { w: wOp } : cur?.w ? { w: cur.w } : {}),
         };
+        explCenter.delete(name);
       }
     }
   }
@@ -646,23 +659,46 @@ export function withGuessedOpens(
   return out;
 }
 
-export function learnOpens(rows: ReadonlyArray<MotionRow>): Record<string, { opens: string; n: number; stage?: string }> {  const acc: Record<string, { opens: Record<string, number>; n: number; stage: string | null }> = {};
+export function learnOpens(rows: ReadonlyArray<MotionRow>): Record<string, { opens: string; n: number; stage?: string }> {
+  const acc: Record<string, { opens: Record<string, number>; n: number; stage: string | null }> = {};
   for (const row of rows) {
-    const v = (row as unknown as Record<string, unknown>).opens;
-    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-    for (const [name, raw] of Object.entries(v as Record<string, unknown>)) {
-      if (!isLearnableName(name)) continue;
-      const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-      const kind = String(r.opens ?? "").trim();
-      const n = num(r.n) ?? 0;
-      if (!kind || n <= 0) continue;
-      const key = String(name).slice(0, 30);
-      const cur = acc[key] || { opens: {}, n: 0, stage: null };
-      cur.opens[kind] = (cur.opens[kind] || 0) + n;
-      cur.n += n;
-      const st = typeof r.stage === "string" ? r.stage.slice(0, 10) : null;
-      if (st) cur.stage = st;
-      acc[key] = cur;
+    const rawRow = row as unknown as Record<string, unknown>;
+    const v = rawRow.opens;
+    let hasRowOpens = false;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [name, raw] of Object.entries(v as Record<string, unknown>)) {
+        if (!isLearnableName(name)) continue;
+        const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+        const kind = String(r.opens ?? "").trim();
+        const n = num(r.n) ?? 0;
+        if (!kind || n <= 0) continue;
+        hasRowOpens = true;
+        const key = String(name).slice(0, 30);
+        const cur = acc[key] || { opens: {}, n: 0, stage: null };
+        cur.opens[kind] = (cur.opens[kind] || 0) + n;
+        cur.n += n;
+        const st = typeof r.stage === "string" ? r.stage.slice(0, 10) : null;
+        if (st) cur.stage = st;
+        acc[key] = cur;
+      }
+    }
+    // 2026-11-27: mergeAggregate が opens を落としていた時期でも shot_ops[].opened に実測が入っている行がある。
+    //   "none" 以外で実測できているものは補完材料として拾う（行に row.opens がある時は重複計上しない）。
+    if (!hasRowOpens && Array.isArray(rawRow.shot_ops)) {
+      for (const op of rawRow.shot_ops) {
+        if (!op || typeof op !== "object") continue;
+        const x = op as Record<string, unknown>;
+        const name = typeof x.f === "string" ? x.f.trim() : "";
+        const kind = typeof x.opened === "string" ? x.opened.trim() : "";
+        if (!name || !kind || kind === "none") continue;
+        if (!/^(modal|options|form|result|modal_close)$/.test(kind)) continue;
+        if (!isLearnableName(name)) continue;
+        const key = name.slice(0, 30);
+        const cur = acc[key] || { opens: {}, n: 0, stage: null };
+        cur.opens[kind] = (cur.opens[kind] || 0) + 1;
+        cur.n += 1;
+        acc[key] = cur;
+      }
     }
   }
   const out: Record<string, { opens: string; n: number; stage?: string }> = {};
@@ -769,6 +805,7 @@ export function buildBundleShotsSummary(
   },
   shotBytes: ReturnType<typeof shotBytesFromRows>,
   withOpsFallback = 0,
+  siteFilter: string | null = null,
 ): NonNullable<HumanLearnBundle["shots"]> | undefined {
   const screenKeys = Object.keys(shotLearn.screens);
   const hasPhoto =
@@ -796,7 +833,7 @@ export function buildBundleShotsSummary(
                 ...(typeof rec.zone === "string" && rec.zone ? { zone: String(rec.zone).slice(0, 10) } : {}),
               };
             });
-            return [screen, mergeAliasPositions(mapped)];
+            return [screen, siteFilter === "itandi" ? expandItandiLearnedFields(mapped) : mergeAliasPositions(mapped)];
           }),
         )
       : undefined;
@@ -941,6 +978,7 @@ export function buildHumanLearnBundle(
    *   F29〜F32 などの点検圧縮形。呼ぶ側（profile）が DB から渡す。
    */
   foundation_audit?: import("./learn-foundation-audit").FoundationForSupervisor | null;
+  site?: string | null;
   } | null = null,
   /**
    * 2026-11-14 竹内さん「統括の部分ちゃんと改善されるようになっているのか」:
@@ -950,6 +988,11 @@ export function buildHumanLearnBundle(
   prevAdvice: import("./learn-supervisor").SupervisorInput["prev"] = null,
 ): HumanLearnBundle {
   const list = Array.isArray(rows) ? rows : [];
+  const rawSites = Array.from(new Set(list.map((r) => String(r.site || "").trim().toLowerCase()).filter(Boolean)));
+  const effectiveSite: "realpro" | "itandi" | null =
+    (sceneMeta?.site === "realpro" || sceneMeta?.site === "itandi")
+      ? sceneMeta.site
+      : (rawSites.length === 1 && (rawSites[0] === "realpro" || rawSites[0] === "itandi") ? rawSites[0] : null);
   // ① 押す順番（写真ごとの並びから）
   /**
    * 2026-11-13 竹内さん「ほかに抜けている箇所はあるのか。原因見つけて改善する」:
@@ -990,7 +1033,7 @@ export function buildHumanLearnBundle(
   const next = learnNextPress(seqs, { min: 2 });
 
   // ② 押した位置
-  const points = learnPoints(list);
+  const points = learnPoints(list, { site: effectiveSite });
   const cursor_hand = learnCursorHand(list);
 
   // ②' 押したら何が開くか（2026-11-14）
@@ -1245,7 +1288,7 @@ export function buildHumanLearnBundle(
         url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, created_at: x.created_at,
         point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode,
       };
-    }), { mode: "normal" })
+    }), { mode: "normal", site: effectiveSite })
     : { screens: {}, total: 0, withOps: 0 };
 
   /**
@@ -1341,7 +1384,7 @@ export function buildHumanLearnBundle(
           url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn,
           point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode,
         };
-      }), { mode: "normal" });
+      }), { mode: "normal", site: effectiveSite });
       const out: Record<string, { n: number; steps: Array<{ from: string; to: string; n: number }> }> = {};
       for (const [sc, v] of Object.entries(lf.screens)) out[sc] = { n: v.n, steps: v.steps.slice(0, 12) };
       return out;
@@ -1812,7 +1855,7 @@ export function buildHumanLearnBundle(
         if (!fields.length) return [];
         const haveXy = new Set<string>();
         for (const s of Object.values(shotLearn.screens)) {
-          const merged = mergeAliasPositions((s.fields ?? []).map((f) => {
+          const baseList = (s.fields ?? []).map((f) => {
             const rec = f as { name?: unknown; x?: unknown; y?: unknown; n?: unknown; kind?: unknown; zone?: unknown };
             return {
               name: String(rec.name ?? ""),
@@ -1822,7 +1865,8 @@ export function buildHumanLearnBundle(
               ...(typeof rec.y === "number" ? { y: rec.y } : {}),
               ...(typeof rec.zone === "string" ? { zone: rec.zone } : {}),
             };
-          }));
+          });
+          const merged = effectiveSite === "itandi" ? expandItandiLearnedFields(baseList) : mergeAliasPositions(baseList);
           for (const f of merged) {
             const name = String(f.name ?? "").trim();
             if (!name) continue;
@@ -1835,7 +1879,9 @@ export function buildHumanLearnBundle(
           const p = v as { x?: unknown; y?: unknown };
           if (typeof p?.x === "number" && typeof p?.y === "number") haveXy.add(k);
         }
-        return fields.filter((f) => !fieldHasPosition(f, haveXy)).slice(0, 12);
+        return fields
+          .filter((f) => !(effectiveSite === "itandi" ? itandiAliasesOf(f).some((a) => haveXy.has(a)) : fieldHasPosition(f, haveXy)))
+          .slice(0, 12);
       } catch (_) { return []; }
     })(),
     /**
@@ -1993,7 +2039,7 @@ export function buildHumanLearnBundle(
     if (!sub.length) continue;
     const subNext = by_mode[siteName] ? null : null;   // （モード別とは別軸・下で計算）
     void subNext;
-    const sPoints = learnPoints(sub);
+    const sPoints = learnPoints(sub, { site: siteName });
     const sOpens = learnOpens(sub);
     /** 写真として学べる行（操作の並び・押した欄・順番がある物）だけを、型の合う形にそろえる */
     const sShotRows: Array<{ url?: unknown; shot_ops?: unknown; shot_learn?: unknown; point_fields?: unknown; field_order?: unknown; mode?: unknown }> = [];
@@ -2006,7 +2052,7 @@ export function buildHumanLearnBundle(
       if (!hasMat) continue;
       sShotRows.push({ url: x.url, shot_ops: x.shot_ops, shot_learn: x.shot_learn, point_fields: x.point_fields, field_order: x.field_order, mode: x.mode ?? r.mode });
     }
-    const sShots = learnFromShots(sShotRows, { mode: "normal" });
+    const sShots = learnFromShots(sShotRows, { mode: "normal", site: siteName });
     /** 一連の動きの数（`sequencesOf` は1行ずつ受け取る） */
     let sSeqN = 0;
     for (const r of sub) {
@@ -2324,7 +2370,7 @@ export function buildHumanLearnBundle(
       })(),
     } as SupervisorInput);
   }
-  const bundleShots = buildBundleShotsSummary(shotLearn, shotBytes, withOps);
+  const bundleShots = buildBundleShotsSummary(shotLearn, shotBytes, withOps, effectiveSite);
   const bundle: HumanLearnBundle = {
     v: 1,
     generated_at: new Date(nowMs).toISOString(),
@@ -2773,16 +2819,28 @@ export function describeBundle(b: HumanLearnBundle): string[] {
 }
 
 /** 拡張が読む形に小さくする（DB から返す時・storage に置く時） */
-export function compactBundle(b: HumanLearnBundle): HumanLearnBundle {
+export function compactBundle(
+  b: HumanLearnBundle,
+  opt: { site?: string | null } = {},
+): HumanLearnBundle {
+  const sites = Array.isArray(b.source?.sites)
+    ? b.source.sites.map((s) => String(s || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+  const siteFilter: "realpro" | "itandi" | null =
+    (opt.site === "realpro" || opt.site === "itandi")
+      ? opt.site
+      : (sites.length === 1 && (sites[0] === "realpro" || sites[0] === "itandi") ? sites[0] : null);
+
   const next: Record<string, NextStat> = {};
   Object.entries(b.next).slice(0, 120).forEach(([k, v]) => { next[k] = v; });
   /**
    * ★ 自動強化徹底: 別名キーにも位置を複製してから上位を残す
-   *   （拡張は名前の完全一致だけ見る・沿線を選ぶ／route_id[] など）
+   *   （拡張は名前の完全一致だけ見る・2026-11-27: ITANDI は ITANDI 専用別名だけを使いリアプロと混ぜない）
    */
-  const expandedPts = expandAliasPoints(b.points);
+  const expandedPts = siteFilter === "itandi" ? expandItandiAliasPoints(b.points) : expandAliasPoints(b.points);
   const points: Record<string, PointStat> = {};
   Object.entries(expandedPts)
+    .filter(([k]) => isLearnableName(k) && isAllowedMotionFieldName(k, siteFilter))
     .sort((a, c) => c[1].n - a[1].n)
     .slice(0, 160)
     .forEach(([k, v]) => { points[k] = v; });
@@ -2795,10 +2853,18 @@ export function compactBundle(b: HumanLearnBundle): HumanLearnBundle {
           ? Object.fromEntries(
               Object.entries(b.shots.learned).map(([screen, list]) => {
                 // 2026-11-18: 旧は 60 で切っていた → 上位40＋3回以上の欄（上限300）へ（keepLearnedFields）
-                const merged = keepLearnedFields(expandAliasLearnedFields(mergeAliasPositions(list as never)));
+                const rawList = Array.isArray(list) ? list : [];
+                const filteredList = siteFilter
+                  ? rawList.filter((item) => isAllowedMotionFieldName((item as { name?: unknown } | null)?.name, siteFilter))
+                  : rawList;
+                const merged = keepLearnedFields(
+                  siteFilter === "itandi"
+                    ? expandItandiLearnedFields(filteredList as never)
+                    : expandAliasLearnedFields(mergeAliasPositions(filteredList as never)),
+                );
                 // FieldWithPos.name は optional → 束の型（name必須）へ揃える
                 const normalized = merged
-                  .filter((f) => typeof f?.name === "string" && f.name)
+                  .filter((f) => typeof f?.name === "string" && f.name && isAllowedMotionFieldName(f.name, siteFilter))
                   .map((f) => ({
                     name: String(f.name),
                     kind: String(f.kind || "unknown"),

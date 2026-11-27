@@ -16,9 +16,10 @@ const ps = read("page-script.js");
 
 console.log("■ ① プルダウンは押して開いて選ぶ");
 ok("chooseSelectLikeHuman がある", /function chooseSelectLikeHuman\(el, val, opts\)/.test(ps));
-ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, function \(\) \{ return chooseSelectLikeHuman\(el, val, \{ forceOpen: true, aim: _aim \}\); \}/.test(ps));
+ok("queueSelVal が chooseSelectLikeHuman を使う", /_enqueueWithEl\(el, function \(\) \{[\s\S]{0,1800}return chooseSelectLikeHuman\(el, val, \{ forceOpen: true, aim: _aim(, slow: [^}]*)? \}\);\s*\},/.test(ps));
 // 2026-11-11 竹内さん「徒歩の部分もまずおして展開された中の徒歩をおすながれ。時間差も人間が押すように」
-ok("徒歩（移動手段）は待ちを長くする", /_isTransport \? 1400 : 900/.test(ps) && /_isTransport \? 2600 : 1600/.test(ps));
+// 2.8.313: 徒歩（移動手段・分数）は _isWalkLike（既定 900/1600 より長い 1600/3000）、賃料系は更に長い（1800/3400）
+ok("徒歩（移動手段）は待ちを長くする", /var _isWalkLike = _isTransport \|\| name === "required_time";/.test(ps) && /_isWalkLike \? 1600 : \(_isRentLike \? 1800 : 900\)/.test(ps) && /_isWalkLike \? 3000 : \(_isRentLike \? 3400 : 1600\)/.test(ps));
   /**
    * 2026-11-14 竹内さん「駅からの移動手段のところ 徒歩をプルダウンで選択するところできていなかった」:
    *   文字での照合を **完全一致 → 先頭一致 → 含む** の3段にし、
@@ -51,7 +52,7 @@ ok("押す前に狙いを定める間（90〜250ms）", /var aim = 90 \+ Math\.f
 //   押した瞬間にカーソルを縮めて戻す（見た目の反応）に変えた。次の間はキューが空ける。
 ok("押した後に反応を見せる（カーソルの縮み・二重に待たない）", /if \(P && P\.tap\) P\.tap\(\);/.test(ps) && !/setTimeout\(function \(\) \{\}, 120/.test(ps));
 ok("押す座標は真ん中固定でない（30〜70%）", /var fx = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps) && /var fy = 0\.30 \+ Math\.random\(\) \* 0\.40;/.test(ps));
-ok("キューも押した後に間を置いてから次へ（ボタンの意味で変える）", /var settle = _afterClickGapMs\(item\.el\);/.test(ps) && /function _afterClickGapMs\(el\)/.test(ps));
+ok("キューも押した後に間を置いてから次へ（ボタンの意味で変える）", /var settle = [^\n]*: _afterClickGapMs\(item\.el\)\);/.test(ps) && /function _afterClickGapMs\(el\)/.test(ps));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

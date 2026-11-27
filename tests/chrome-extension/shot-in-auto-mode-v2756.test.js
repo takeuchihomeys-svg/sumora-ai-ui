@@ -46,7 +46,7 @@ console.log("\n■ ② watching に依存しない（写真は画面の記録）
 
 console.log("\n■ ③ 人の手本との区別は残す（by）");
 {
-  ok("_pushOp に by を渡している", /_pushOp\(e\.type \|\| "click", e\.target, _by\)/.test(code));
+  ok("_pushOp に by を渡している", /_pushOp\(e\.type \|\| "click", e\.target, _by(, e)?\)/.test(code)); // 2.8.313: _pushOp に 4つ目の引数（イベント e）が増えた
   ok("  by は human / auto", /var _by = \(e\.isTrusted === true\) \? "human" : "auto";/.test(code));
 }
 

@@ -45,14 +45,16 @@ console.log("\n■ ② 条件が読めなくても止まらない（並べ替え
 
 console.log("\n■ ③ 黙って続けない（必ず残す）");
 {
-  ok("並べ替え失敗を点検に残す", /failed_continue/.test(code));
+  // 2.8.313: 点検の印の名前が failed_continue → sort_failed（_liveDlStep("sort_failed", "continue..."））に変わった。失敗しても続行して記録する形は同じ
+  ok("並べ替え失敗を点検に残す", /_liveDlStep\("sort_failed", "continue"\)/.test(code) && /_liveDlStep\("sort_failed", "continue_after_retry"\)/.test(code));
   ok("条件が読めない事を点検に残す", /proceed_unverified/.test(code));
   ok("画面にも警告を出す", /_nudge\(/.test(code) && /_blockedAfterSortNote\(\)/.test(code));
 }
 
 console.log("\n■ ④ 本当に危ない時は止める（安全弁は残す）");
 {
-  ok("スタッフモードでは押さない", /_staffModeOn\) \{ _nudge\("スタッフモードでは自動で押しません"\)/.test(code));
+  // 2.8.313 退役: 「スタッフモードでは押さない」— 2.8.156（2026-11-22 竹内さん「選択したお客さんをAIXモードのように検索して物件ダウンロードまで完了」・memory/dept_search_tool.md 1757行目）で設計が変わり、
+  //   bulk-dl.js の _readAutoMode が staffOn なら true（スタッフも選んだ客は自動で押す）。押さない物は「自動モードでない通常」（_maybeAutoPressOnLoad の !_autoModeOn）に移った
   ok("自動入力の最中は押さない", /_autofillInProgress/.test(code));
   /**
    * 2026-11-14 竹内さん「自動はとめないようにする」→ 決定が変わった。

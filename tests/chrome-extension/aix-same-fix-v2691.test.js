@@ -19,7 +19,11 @@ const pp = read("popup.js"), ps = read("page-script.js"), ct = read("content.js"
 
 console.log("■ ① AIX は「手で押すのと同じ道」を通る");
 {
-  ok("AIX の自動検索は autofill-btn を click する（同じ onclick）", /btn\.dataset\.ai_customer = "1";[\s\S]{0,120}btn\.click\(\)/.test(pp));
+  // 2.8.155 以降: AIX は条件画面でボタン待ち（_maybeAiCustomerAutoSearch は押さずに案内だけ）。
+  //   押されたら autofill-btn の同じ onclick に ai_customer の印を付けて同じ道へ入る
+  ok("AIX は autofill-btn の同じ onclick に ai_customer の印を付けて入る（ボタン待ち・2.8.155）",
+    /if \(_aiCustomerModeOn && !isAutomated\) \{\s*try \{ autofillBtn\.dataset\.ai_customer = "1"; \} catch/.test(pp)
+    && /function _maybeAiCustomerAutoSearch\(btn, customer, site\)/.test(pp));
   ok("その道は autofill-btn.onclick → postMessage（autofill）", /from: "aixlinx-underbar",\s*action: "autofill"/.test(pp));
   ok("postMessage を content.js が page-script へ渡す", /from: "aixlinx-fill", conditions/.test(ct));
   ok("page-script が fillRealpro で受ける", /function fillRealpro\(cond\)/.test(ps));
@@ -36,9 +40,11 @@ console.log("\n■ ③ その道に今回の修正が入っている（AIX も�
 {
   ok("探し方: 文字のノードからたどる（_textMatches）", /function _textMatches\(texts, sel\)/.test(ps));
   ok("展開: 閉じた欄を開く（_ensureFieldVisible）", /function _ensureFieldVisible\(el, name, maxMs\)/.test(ps));
-  ok("止まったら検索を押す（stall_recover_search）", /_auditStepP\('stall_recover_search'/.test(ps));
+  // 旧 stall_recover_search は「完走優先」（統括仕組み⑫）で stall_complete_search に置き換わった（止まったら検索を押す動きは残っている）
+  ok("止まったら検索を押す（stall_complete_search → clickSearch）", /_auditStepP\('stall_complete_search'[^\n]*\n\s*try \{ clickSearch\(\); \}/.test(ps));
   ok("検索ボタン2か所の区別（which）", /which: _inModal\(btn\)/.test(ps));
-  ok("場所だけ止める（gate_stop_area）", /_auditStepP\('gate_stop_area'/.test(ps));
+  // 旧 gate_stop_area は gate_stop_basic（場所・間取り・敷礼の関所）に統合された。場所は hard 扱いのまま
+  ok("場所が未完了なら止める（gate_stop_basic・場所は hard 扱い）", /s\.indexOf\('場所'\) === 0[^\n]*\n\s*\}\);\s*if \(_hardGate\)[\s\S]{0,2500}_auditStepP\('gate_stop_basic'/.test(ps));
   ok("区はコードで探す（ward_by_code）", /_auditStepP\('ward_by_code'/.test(ps));
 }
 

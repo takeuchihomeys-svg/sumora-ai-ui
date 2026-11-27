@@ -70,12 +70,13 @@ console.log("\n■ ①b insert 経路は手順書と名前の除去（prepareBun
   ok("insert 全経路が prepareBundleForWrite を通す（古い手順書の写しを書かない）", offenders.length === 0, offenders.slice(0, 8).join(" / "));
   const route = readFileSync(join(root, "app/api/human-learn-profile/route.ts"), "utf8");
   const iCarry = route.indexOf("carryLearnedShots(supabase, scope, bundle)");
-  const iPrep = route.indexOf("prepareBundleForWrite(bundle as unknown as Record<string, unknown>)");
+  // 引数（scope＝サイト）を渡すようになった（2026-11-26）ので、閉じ括弧の前までで探す
+  const iPrep = route.indexOf("prepareBundleForWrite(bundle as unknown as Record<string, unknown>");
   const iIns = route.indexOf('from("human_learn_profile").insert({\n      scope,') >= 0
     ? route.indexOf('from("human_learn_profile").insert({\n      scope,')
     : route.indexOf('from("human_learn_profile").insert({\r\n      scope,');
   ok("API: 押す位置を継いだ後に手順書を作り、その後に書く", iCarry > 0 && iPrep > iCarry && iIns > iPrep, `carry=${iCarry} prep=${iPrep} insert=${iIns}`);
-  const iRefreshPrep = route.indexOf("prepareBundleForWrite(b);");
+  const iRefreshPrep = route.indexOf('prepareBundleForWrite(b, "all");');
   const iRefreshIns = route.indexOf('scope: "all", source_rows: rows.length, bundle: b');
   ok("API refresh=1 も手順書を作ってから書く", iRefreshPrep > 0 && iRefreshIns > iRefreshPrep);
   ok("API: 渡す時に古い手順書をその場で作り直す（refreshPlaybookIfStale）", /refreshPlaybookIfStale\(row\.bundle/.test(route) && /bundle: servedBundle,/.test(route));

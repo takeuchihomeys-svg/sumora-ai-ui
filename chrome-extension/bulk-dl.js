@@ -630,6 +630,75 @@
       }, 60000);
     } catch (_) {}
   })();
+  /**
+   * ★ 2.8.329 竹内さん「次のお客さん検索押したところで重すぎてかたまっている…重い部分をなおせたらかなり実用的になる」
+   *   → 選択「計測してから削る」。#1677 は検索を押して56秒たっても古い一覧のままだったが、その1分の止まりは計3.8秒だけで、
+   *   リアプロの返事待ちか拡張の処理かが分からなかった。動きは変えずに次を点検に残す:
+   *   ① dl:perf_nav … この頁の読み込みの内訳（サーバーの返事待ち・受け取り・組み立て・load）
+   *   ② dl:perf_loaf … 画面が止まった長い描画（long-animation-frame）を、原因のスクリプトのファイルごとに足し上げた上位（最初の60秒）
+   *   ③ dl:perf_loaf_prev … 前の頁（検索を押した頁）を離れるまでの同じ集計（pagehide で sessionStorage に置き、次の頁が出す）
+   */
+  (function _axlxLoafProbe() {
+    try {
+      if (window.__axlxLoafOn || typeof PerformanceObserver !== "function") return;
+      window.__axlxLoafOn = true;
+      var agg = {};
+      var frames = 0, blockSum = 0, layoutSum = 0;
+      var t0 = Date.now();
+      var fileOf = function (u) {
+        var s = String(u || "");
+        if (!s) return "不明";
+        if (/^chrome-extension:/.test(s)) return "拡張:" + s.split("/").pop().split("?")[0].slice(0, 28);
+        try { var x = new URL(s); return "頁:" + (x.pathname.split("/").pop() || x.host).slice(0, 24); } catch (_) { return s.slice(0, 24); }
+      };
+      try {
+        new PerformanceObserver(function (list) {
+          list.getEntries().forEach(function (e) {
+            frames++;
+            blockSum += Number(e.blockingDuration || 0);
+            var sc = e.scripts || [];
+            if (!sc.length) { agg["描画・配置"] = (agg["描画・配置"] || 0) + Number(e.duration || 0); return; }
+            sc.forEach(function (s) {
+              var k = fileOf(s.sourceURL);
+              agg[k] = (agg[k] || 0) + Number(s.duration || 0);
+              layoutSum += Number(s.forcedStyleAndLayoutDuration || 0);
+            });
+          });
+        }).observe({ type: "long-animation-frame", buffered: true });
+      } catch (_) { return; }
+      var summary = function () {
+        var top = Object.keys(agg).map(function (k) { return [k, agg[k]]; })
+          .sort(function (a, b) { return b[1] - a[1]; }).slice(0, 4)
+          .map(function (p) { return p[0] + "=" + Math.round(p[1]); }).join(" ");
+        return "止" + frames + "回 塞" + Math.round(blockSum) + "ms 配置" + Math.round(layoutSum) + "ms " + top;
+      };
+      var pageKind = function () {
+        return (String(location.pathname || "").split("/").pop() + String(location.search || "")).slice(0, 18) || "頁";
+      };
+      try {
+        var prev = JSON.parse(sessionStorage.getItem("axlx_perf_prev") || "null");
+        sessionStorage.removeItem("axlx_perf_prev");
+        if (prev && Date.now() - Number(prev.at || 0) < 5 * 60000) {
+          setTimeout(function () { try { _liveDlStep("perf_loaf_prev", (String(prev.kind || "") + " " + Math.round(Number(prev.ms || 0) / 1000) + "秒 " + String(prev.sum || "")).slice(0, 80)); } catch (_) {} }, 3000);
+        }
+      } catch (_) {}
+      window.addEventListener("pagehide", function () {
+        try { sessionStorage.setItem("axlx_perf_prev", JSON.stringify({ at: Date.now(), kind: pageKind(), ms: Date.now() - t0, sum: summary() })); } catch (_) {}
+      });
+      var navOnce = function () {
+        try {
+          var n = performance.getEntriesByType("navigation")[0];
+          if (!n) return;
+          var r = function (v) { return Math.max(0, Math.round(Number(v) || 0)); };
+          _liveDlStep("perf_nav", (pageKind() + " 返事待ち" + r(n.responseStart - n.requestStart) + "ms 受取" + r(n.responseEnd - n.responseStart)
+            + "ms 組立" + r(n.domContentLoadedEventEnd - n.responseEnd) + "ms load" + r(n.loadEventEnd) + "ms 全" + r(n.duration) + "ms").slice(0, 80));
+        } catch (_) {}
+      };
+      if (document.readyState === "complete") setTimeout(navOnce, 1500);
+      else window.addEventListener("load", function () { setTimeout(navOnce, 1500); });
+      setTimeout(function () { try { _liveDlStep("perf_loaf", (pageKind() + " 60秒 " + summary()).slice(0, 80)); } catch (_) {} }, 60000);
+    } catch (_) {}
+  })();
   function _liveDlStep(k, d, cid) {
     try { _perfC.live++; } catch (_) {}
     try { _tmark(k, d, cid); } catch (_) {}
@@ -913,9 +982,12 @@
     var done = typeof cb === "function" ? cb : function () {};
     if (_playbookCache !== null) { done(_playbookCache === false ? null : _playbookCache); return; }
     try {
-      chrome.storage.local.get(["axlx_learn_playbook"], function (r) {
-        _playbookCache = (r && r.axlx_learn_playbook && typeof r.axlx_learn_playbook === "object")
-          ? r.axlx_learn_playbook : false;
+      chrome.storage.local.get(["axlx_learn_playbook__realpro", "axlx_learn_playbook", "axlx_learn_for_site"], function (r) {
+        var raw = (r && r.axlx_learn_playbook__realpro && typeof r.axlx_learn_playbook__realpro === "object")
+          ? r.axlx_learn_playbook__realpro
+          : (r && r.axlx_learn_for_site !== "itandi" && r.axlx_learn_playbook && typeof r.axlx_learn_playbook === "object")
+            ? r.axlx_learn_playbook : null;
+        _playbookCache = raw || false;
         done(_playbookCache === false ? null : _playbookCache);
       });
     } catch (_) { _playbookCache = false; done(null); }
@@ -1017,10 +1089,22 @@
    * ★ 2.8.218 DB#1600: TreeWalker＋div.under 明示／巨大表でも葉テキストから掴む。
    *   「とぶ」＝見出し0のまま sort_failed:continue→PDF。見出しを掴めるまで aim＋葉探索を尽くす。
    */
+  /**
+   * ★ 2.8.315 実測 #1659（2026-11-27 竹内さん「並べ替えの場所を手順書で把握できていない／マウスが変な動き」）:
+   *   旧は文字だけで「並べ替え」を探し、**拡張自身のパネルの行（𝑅.さん／並べ替え最中（1/2）・17字）**が
+   *   本物の見出し（143字の塊）より短いため先に掴まれ、そこへカーソルを置いて AD が出ず（sort_no_ad）→ 数十秒やり直しになった。
+   *   → 拡張自身の画面（お客様パネル・一括バー・案内・偽カーソル。id が aixlinx- / axlx- で始まる物）の中は、
+   *     並べ替え・AD・高→低を探す対象から外す。
+   */
+  function _isOwnUiEl(el) {
+    try {
+      return !!(el && el.closest && el.closest("[id^='aixlinx-'], [id^='axlx-']"));
+    } catch (_) { return false; }
+  }
   function _findSortHeadEl() {
     try {
       var vis = function (el) {
-        try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
+        try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
       };
       var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
       var re = /並[べび]替え|並び順|並替/;
@@ -1234,7 +1318,7 @@
       var ax = aim.x * (window.innerWidth || 1);
       var ay = aim.y * (window.innerHeight || 1);
       var vis = function (el) {
-        try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
+        try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; }
       };
       var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
       var re = /並[べび]替え|並び順/;
@@ -1345,6 +1429,14 @@
       var pst = typeof _readPagerState === "function" ? _readPagerState() : null;
       if (pst) onlyOne = !!pst.onlyOnePage;
       next = !onlyOne && !!(typeof _findNextPageEl === "function" && _findNextPageEl());
+      var _prKey = String(location.search || "") + "|" + (pst ? pst.nums.join(",") : "");
+      if (pst && window.__axlxPagerReadKey !== _prKey) {
+        window.__axlxPagerReadKey = _prKey;
+        _liveDlStep("pager_read", ("番号[" + pst.nums.join(",") + "] 今" + (pst.currentKnown ? pst.current : "?")
+          + (pst.onlyOnePage ? " 1頁のみ" : (pst.hasNextUsable ? " 次有" : " 次無"))
+          + " 元=" + pst.source + " 葉=" + (pst.cells || []).join(" ")
+          + " 次oc=" + String(pst.nextOnclick || "-")).slice(0, 160));
+      }
     } catch (_) { next = false; }
     try {
       var p = new URLSearchParams(location.search || "");
@@ -1411,7 +1503,7 @@
           list_start: "並べ替えor物件取得",
           before_next: "次ページを押す",
           after_next: "一覧照合→物件取得",
-          handoff: "前客の選択を1つずつ外す",
+          handoff: "リセットで空にして次のお客さんへ",
         };
         var _listDone = {
           list_start: "一覧の手順×画面照合完了",
@@ -1542,8 +1634,8 @@
       var now = Date.now();
       if (_supCache !== null && now - _supAt < 30000) { cb(_supCache); return; }
       _supAt = now;
-      chrome.storage.local.get([_SUP_KEY], function (r) {
-        _supCache = (r && r[_SUP_KEY]) || {};
+      chrome.storage.local.get(["axlx_learn_supervisor__realpro", _SUP_KEY, "axlx_learn_for_site"], function (r) {
+        _supCache = (r && r.axlx_learn_supervisor__realpro) || (r && r.axlx_learn_for_site !== "itandi" ? r[_SUP_KEY] : null) || {};
         cb(_supCache);
       });
     } catch (_) { cb({}); }
@@ -2191,14 +2283,31 @@
    *   ⚠ 30秒未満にしない。上限は 36秒（人の間として少しだけ揺らす）。
    *   ⚠ 起点は「検索の確認（screenOk）」の時刻。_waitMsFromSearchConfirm が残りを引く。
    */
-  var SORT_AFTER_SEARCH_MIN_MS = 30000;
-  var SORT_AFTER_SEARCH_MAX_MS = 36000;
+  /**
+   * ★ 2.8.317 竹内さん「検索後かたまるので、ここは早すぎたら追いつけない。並べ替えは検索確認から40〜50秒あけてバグらないように」:
+   *   30〜36秒 → 40〜50秒（起点は同じ・検索確認の時刻）。⚠ 40秒未満にしない・上限は50秒。
+   */
+  var SORT_AFTER_SEARCH_MIN_MS = 40000;
+  var SORT_AFTER_SEARCH_MAX_MS = 50000;
   function _humanWaitAfterSearchMs() {
     var H = (typeof self !== "undefined" ? self : window).AxlxHumanWait;
-    var base = H && H.logNormalDelay ? H.logNormalDelay(32000, 0.05) : (SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 4000));
+    var base = H && H.logNormalDelay ? H.logNormalDelay(45000, 0.05) : (SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 10000));
     if (base < SORT_AFTER_SEARCH_MIN_MS) base = SORT_AFTER_SEARCH_MIN_MS + Math.floor(Math.random() * 1500);
     if (base > SORT_AFTER_SEARCH_MAX_MS) base = SORT_AFTER_SEARCH_MAX_MS;
     return Math.round(base);
+  }
+  /**
+   * ★ 2.8.316 竹内さん「並べ替えやリセットや検索のあとなどはラグあるので時間猶予いれる」:
+   *   並べ替え・リセットの押した後は、画面の描き直し（ラグ）が続く。次の段（一覧の取得・次の入力）を
+   *   画面が追いつく前に始めると、押し損ね・読み違いが起きる（#1659：並べ替えが終わった直後に一覧を取り始めた）。
+   *   → 押した後に猶予を置く（毎回揺らす）。
+   *   ★ 2.8.317 竹内さん「押した後の猶予も15秒～と猶予いれる」: 5〜9秒 → 15〜20秒。リセット後の猶予は廃止（リセットは押す→30〜34秒待つだけ）。
+   *   ⚠ 猶予は人の間。固定の数字の待ちにしない（_lagGraceMs を通す）。
+   */
+  var LAG_GRACE_MIN_MS = 15000;
+  var LAG_GRACE_MAX_MS = 20000;
+  function _lagGraceMs() {
+    return LAG_GRACE_MIN_MS + Math.floor(Math.random() * (LAG_GRACE_MAX_MS - LAG_GRACE_MIN_MS));
   }
   /**
    * ★ 2.8.207 竹内さん「検索押したと確認 → そのあと1秒以上空けて並べ替え」:
@@ -2378,6 +2487,7 @@
     }
     _stampSortFlowAtom("zero_count0", true, "0棟0戸×3 " + String(why || "").slice(0, 20));
     try { _liveDlStep("zero_count0_finish", "0棟0戸 cid=" + String(cid).slice(0, 8)); } catch (_) {}
+    try { _announcePhase("done", "zero_count0"); } catch (_) {}
     if (_sortCursorTimer) { try { clearTimeout(_sortCursorTimer); } catch (_) {} _sortCursorTimer = null; }
     _autoSendArmed = false;
     _pendingAutoSendDispatched = true;
@@ -2389,6 +2499,8 @@
   function _scheduleSortCursorAfterSearch(why) {
     try {
       if (_sortCursorScheduled || _autoPdfRun) return false;
+      // ★ 2.8.328 #1673: 並べ替え済み（押した・読み直し後の続き・物件取得が始まった）の一覧で、新しい行の道から並べ替えをもう一度始めていた
+      if (_sortRecognizedDone("schedule:" + String(why || ""))) return false;
       // ★ 2.8.264: 検索の移動中は行の読み直しもしない（死にゆく古い一覧を重く読まない）
       if (_isNavPending()) {
         try { _pageDisplayedAfterThisSearch(why || "schedule"); } catch (_) {}
@@ -2481,6 +2593,7 @@
       // ★ 2.8.295 邪魔しない窓: 待ち＋並べ替え＋読み直し＋押し始めまで（押し始めで外す）
       try { _quietPageSet("sort", wait + 120000); } catch (_) {}
       _stampSortFlowAtom("sort_wait", true, wait + "ms_from_confirm");
+      _setBulkWaitById("search_to_sort", wait);
       try {
         _liveDlStep(
           "sort_cursor_wait",
@@ -2586,8 +2699,77 @@
       return false;
     }
   }
+  /**
+   * ★ 2.8.322 竹内さん「並べ替えしたあとにつまっている・④の物件取得・完了を把握できていない」:
+   *   高→低を押すとリアプロはページを読み直す。押したあとの待ち（lag）は読み直しで消える。
+   *   読み直し後のページは「押した」を非同期でしか知らず、その前に「検索前だから押さない」で戻っていた。
+   *   パネルは押す前の「並べ替え最中」のまま。
+   *   → 押した瞬間に sessionStorage へ同期で残す。読み直し後（URL が ad 順、またはアドレスが変わった）は
+   *     並べ替えをもう一度せず、④物件取得へ進む。同じページの待ちの間（まだ読み直していない）はここでは始めない。
+   */
+  var _sortResumeStarted = false;
+  /** ★ 2.8.324: 読み直し後の猶予（15〜20秒）を待っている間の印（二重に待たない） */
+  var _sortResumeWaiting = false;
+  function _readSortPressedSync() {
+    try {
+      var o = JSON.parse(sessionStorage.getItem("axlx_sort_pressed_sync") || "null");
+      if (!o || !o.at) return null;
+      if (Date.now() - Number(o.at) > 3 * 60 * 1000) return null;
+      return o;
+    } catch (_) { return null; }
+  }
+  /**
+   * ★ 2.8.328 竹内さん「並べ替えのところは押したのが残らないなら、前後の手順と時間差をちゃんとあけて、時間差で並べ替えしたということの認識にすればよい」:
+   *   高→低は押すとページが読み直され、URL に出ない並べ替えもある＝画面から「効いた」を確かめきれない。
+   *   → 押した時刻（同じページ: _sortPressedAt／読み直し後: axlx_sort_pressed_sync.at）から猶予をあけて④へ入る所で
+   *     「時間差で並べ替え完了」と認識する（press_sort_effect_ok）。AD高／AD未は参考に残すだけ（止めない）。
+   *   認識した後は同じ一覧で並べ替えを始めない（_sortRecognizedDone）。
+   */
+  var _sortPressedAt = 0;
+  var _sortRecognizedNoted = false;
+  var SORT_MIN_GAP_MS = 12000; // 押してから④までの最小の時間差（猶予 15〜20秒の下限より少し短く・これより短い時は⚠を残す）
+  function _sortTimeRecognized(via, pressedAt) {
+    if (_sortRecognizedNoted) return;
+    _sortRecognizedNoted = true;
+    try {
+      var at = Number(pressedAt) || 0;
+      var gap = at ? Date.now() - at : -1;
+      var adHi = false;
+      try { adHi = !!(_screenListNow() || {}).adHi; } catch (_) { adHi = false; }
+      var info = "via=" + String(via || "-").slice(0, 16) + " 押してから" + (gap >= 0 ? Math.round(gap / 1000) + "秒" : "不明") + " " + (adHi ? "AD高" : "AD未");
+      if (gap >= SORT_MIN_GAP_MS) {
+        _liveDlStep("press_sort_effect_ok", "時間差で並べ替え完了と認識 " + info);
+        _setPressNote("sort", "effect_ok", Math.round(gap / 1000) + "秒あけた");
+      } else {
+        _liveDlStep("press_ng_sort_effect", (gap < 0 ? "押した時刻が分からない " : "時間差が短い ") + info);
+        _setPressNote("sort", "effect_unknown", gap < 0 ? "押した時刻不明" : Math.round(gap / 1000) + "秒");
+      }
+    } catch (_) {}
+  }
+  /** この一覧はもう並べ替え済み（押した・読み直し後の続き・次頁の続き・物件取得が始まった）＝並べ替えを始めない */
+  var _sortSkipDoneNoted = "";
+  function _sortRecognizedDone(where) {
+    var why = _adSortDone ? "done" : _sortResumeStarted ? "press_run" : _sortResumeWaiting ? "resume_wait"
+      : (_sortPressedAt ? "pressed" : (_sortPressedMeansList(_readSortPressedSync()) ? "pressed_sync" : ""));
+    if (!why) return false;
+    if (_sortSkipDoneNoted !== why) {
+      _sortSkipDoneNoted = why;
+      try { _liveDlStep("sort_skip_done", why + " " + String(where || "").slice(0, 24)); } catch (_) {}
+    }
+    return true;
+  }
+  function _sortPressedMeansList(o) {
+    if (!o || !o.at) return false;
+    if (Date.now() - Number(o.at) > 3 * 60 * 1000) return false;
+    var here = String(location.href || "");
+    var ad = /(?:^|[?&])ad=odr_desc(?:&|$)/.test(here) || (/(?:^|[?&])key=ad(?:&|$)/.test(here) && /(?:^|[?&])odr=desc(?:&|$)/.test(here));
+    if (ad) return true;
+    if (o.href && String(o.href) !== here) return true;
+    return false;
+  }
   function _kickSortAfterSearch(why) {
     try {
+      if (_sortRecognizedDone("kick:" + String(why || ""))) return false;
       if (_pendingAutoSendDispatched || _autoPdfRun) return false;
       if (_adSortInFlight) {
         try { _liveDlStep("sort_skip_inflight", String(why || "kick").slice(0, 36)); } catch (_) {}
@@ -2604,13 +2786,30 @@
    * @param {{ afterSearch?: boolean }} [opt]
    *   afterSearch=true … 検索後の読み直し（pending）から。条件入力中ではない。
    */
+  /**
+   * ★ 2.8.319 竹内さん「並べ替えした後物件取得するところで止まった」:
+   *   一覧が出たのに物件取得が始まらない時の理由を点検に残す（旧は黙って return して原因が見えなかった）。
+   *   同じ理由は10秒に1回まで（点検を埋めない）。印: dl:list_flow_wait_reason
+   */
+  var _lastListWaitWhy = "";
+  var _lastListWaitAt = 0;
+  function _listWaitReason(why) {
+    try {
+      var now = Date.now();
+      var w = String(why || "").slice(0, 60);
+      if (w === _lastListWaitWhy && now - _lastListWaitAt < 10000) return;
+      _lastListWaitWhy = w;
+      _lastListWaitAt = now;
+      _liveDlStep("list_flow_wait_reason", w);
+    } catch (_) {}
+  }
   function _maybeAutoPressOnLoad(opt) {
     // ★ 2026-11-22: スタッフでも _autoModeOn（選んだ客の自動）なら押す。旧は _staffModeOn で止めていた。
     // ★ 2.8.190: 検索後印があるのに auto OFF ならこの一覧だけ開く（止まらない）
     if (!_autoModeOn) _forceAutoForPending((opt && opt.afterSearch) ? "afterSearch" : "onLoad");
     if (_autoPdfRun || !_autoModeOn) return;
-    if (_guideBlocksAuto("autoOnLoad")) return;
-  if (_supBlocksAuto("autoOnLoad")) return;
+    if (_guideBlocksAuto("autoOnLoad")) { _listWaitReason("guide_blocks"); return; }
+  if (_supBlocksAuto("autoOnLoad")) { _listWaitReason("supervisor_blocks"); return; }
     /**
      * ★ 2026-11-22: 駅・沿線・所在地モーダル中は一覧が裏にあっても押さない／並べ替えない。
      */
@@ -2643,12 +2842,54 @@
      * ★ 2026-11-16: ちゃんと検索してから物件取得。
      *   fill-done（armed）か、検索後の pending 再開だけ許可。勝手に一覧を押さない。
      */
+    /**
+     * ★ 2.8.322: 高→低を押したあとの読み直し。並べ替えは完了。④物件取得へ。
+     *   「検索前だから押さない」より前に見る（この印がある回は、検索はもう終わっている）。
+     */
+    var _sortSync = _readSortPressedSync();
+    if (_sortPressedMeansList(_sortSync)) {
+      _adSortDone = true;
+      _autoSendArmed = true;
+      _sortCursorScheduled = false;
+      _sortWaitRetryPending = false;
+      if (!_sortPressedAt) _sortPressedAt = Number(_sortSync.at) || 0;
+      if (!tracked.length) {
+        _listWaitReason("sort_pressed_rows0");
+        return;
+      }
+      if (_sortResumeStarted || _autoPdfRun || _sortResumeWaiting) return;
+      // ★ 2.8.324 竹内さん「並べ替えのあとラグが起きるので時間を少し開けるのが理想」:
+      //   実測 #1673: 押してから4秒で物件取得が始まった（猶予の15秒は読み直しで消えていた）。
+      //   読み直したあとにも猶予（15〜20秒）を取ってから一覧を取る。押した印は待っている間も残す（もう一度読み直しても待ち直す）。
+      _sortResumeWaiting = true;
+      var _lagR = _lagGraceMs();
+      try { _liveDlStep("sort_lag_grace", Math.round(_lagR / 1000) + "秒 読み直し後の猶予（ラグ・並べ替えは完了済み）"); } catch (_) {}
+      _setBulkWaitById("sort_resume_lag", _lagR);
+      setTimeout(function () {
+        _sortResumeWaiting = false;
+        if (_sortResumeStarted || _autoPdfRun) return;
+        _sortResumeStarted = true;
+        try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
+        _sortTimeRecognized("resume", _sortPressedAt);
+        try { _liveDlStep("sort_done", "pressed_resume"); } catch (_) {}
+        try { _announcePhase("list", "sort_pressed_resume"); } catch (_) {}
+        try { _requestLoopGrasp("list", "sort_pressed_resume", true); } catch (_) {}
+        try { _startAutoPressRun(); } catch (_) {}
+      }, _lagR);
+      return;
+    }
     if (!_autoSendArmed && !(opt && opt.afterSearch)) {
       console.log("[AXLX bulk-dl][auto] 検索完了の合図前 → 一覧を押しません");
       _tmark("auto_pdf_load", "blocked_need_search_first");
       return;
     }
-    if (tracked.length === 0) return;
+    if (tracked.length === 0) {
+      // ★ 2.8.319 並べ替えの後に止まった回の原因が点検に残らなかった（黙って return）。押せる行0＋画面の送付済み数を残す
+      var _sv0 = 0;
+      try { _sv0 = document.querySelectorAll("a,span,td").length ? Array.prototype.filter.call(document.querySelectorAll("a,span,td"), function (e) { var t = String(e.textContent || "").replace(/\s+/g, ""); return t === "送付済み" || t === "送付済"; }).length : 0; } catch (_) { _sv0 = 0; }
+      _listWaitReason("tracked0 sentVis=" + _sv0 + " armed=" + (_autoSendArmed ? 1 : 0) + " sortDone=" + (_adSortDone ? 1 : 0));
+      return;
+    }
     /** ★ 2.8.277 結果ページの見出しを希望と照らす（記録・警告・旗がある時だけ止める） */
     var _rvr = _resultVerifyOnce();
     if (_rvr && (_rvr.verdict === "mismatch" || _rvr.verdict === "full") && _resultVerifyEnforce(_rvr)) {
@@ -2742,10 +2983,11 @@
       return;
     }
     var sig = tracked.map(function (t) { return _urlKey(t.btn && t.btn.href); }).join(",").slice(0, 3000);
+    if (!sig || sig === _autoPdfSig) _listWaitReason(!sig ? "sig_empty" : "sig_same_as_before");
     if (!sig || sig === _autoPdfSig) return;
     // まだ1件も押していない一覧だけ（既に送った行がある一覧の描き直しでは始めない）
     var fresh = tracked.some(function (t) { return t.btn && !_onePdfSent[t.btn.href]; });
-    if (!fresh) return;
+    if (!fresh) { _listWaitReason("no_fresh_row（全行が送信済みの印）"); return; }
     // ★ 2.8.191: 見る間の前に sig を立てない（キャンセル後に再試行不能になるため）
     console.log("[AXLX bulk-dl][auto] 自動モード: 一覧が出たので印刷用PDFを1件ずつ押して送ります（" + tracked.length + "行）");
     _tmark("auto_pdf_load", "rows=" + tracked.length);
@@ -3072,6 +3314,7 @@
       '  <div>',
       '    <div style="font-size:10px;font-weight:700;color:#38bdf8;letter-spacing:0.06em;margin-bottom:3px;">いま</div>',
       '    <div id="axlx-count" style="font-size:13px;font-weight:700;line-height:1.45;color:#f8fafc;">待機中</div>',
+      '    <div id="axlx-wait" style="display:none;font-size:11px;font-weight:700;line-height:1.45;color:#fde68a;margin-top:3px;"></div>',
       "  </div>",
       '  <div style="height:1px;background:rgba(148,163,184,0.2);"></div>',
       '  <div>',
@@ -3082,6 +3325,7 @@
       '  <div>',
       '    <div style="font-size:10px;font-weight:700;color:#a78bfa;letter-spacing:0.06em;margin-bottom:3px;">把握</div>',
       '    <div id="axlx-grasp" style="font-size:11px;font-weight:600;line-height:1.45;color:#c4b5fd;">一括の客をまだ把握していない</div>',
+      '    <div id="axlx-press" style="display:none;font-size:11px;font-weight:700;line-height:1.45;color:#86efac;margin-top:3px;"></div>',
       "  </div>",
       "</div>",
       // 次回の自動便（小さめ・補助）
@@ -3179,19 +3423,63 @@
     }
   }
 
+  /**
+   * ★ 2.8.329 竹内さん「時間も5秒刻みとかでよいのでしっかりと表記する」:
+   *   「いま」の手がどれだけ続いているかを5秒刻みで添える（同じ手の間は数え続ける・リセットの読み直しを越えて
+   *   数えるので、始まりの時刻はこのタブの sessionStorage に置く）。言葉が変わったら0から数え直す。
+   *   枠の言葉が変わった時は点検に1行（dl:panel_text）残す（あとで実際の手と枠の言葉がずれていないか確かめるため）。
+   */
+  var _nowTextRaw = "";
+  var _nowNextRaw = "";
+  var _nowSince = 0;
+  var _nowTick = null;
+  var _panelTextSig = "";
+  function _fmtElapsed5(ms) {
+    var s = Math.floor(Math.max(0, Number(ms) || 0) / 5000) * 5;
+    if (s < 5) return "";
+    return s < 60 ? s + "秒" : Math.floor(s / 60) + "分" + (s % 60 ? (s % 60) + "秒" : "");
+  }
+  function _paintNow() {
+    var nowEl = document.getElementById("axlx-count");
+    if (!nowEl) return;
+    var el = _nowTextRaw && _nowSince ? _fmtElapsed5(Date.now() - _nowSince) : "";
+    nowEl.textContent = _nowTextRaw + (el ? "・経過 " + el : "");
+  }
+  function _nowKeyOf(t) {
+    // 何人目か（2/3）は同じ手の間も変わらないが、念のため数字の並びは外さずそのまま比べる
+    return String(t || "");
+  }
   /** ★ 2.8.213: いま／つぎを同時に書く（旧 axlx-count 互換） */
   function _setStatusNowNext(nowText, nextText) {
     var nowEl = document.getElementById("axlx-count");
     var nextEl = document.getElementById("axlx-next");
-    if (nowEl) nowEl.textContent = nowText == null ? "" : String(nowText);
+    var raw = nowText == null ? "" : String(nowText);
+    if (_nowKeyOf(raw) !== _nowKeyOf(_nowTextRaw)) {
+      _nowSince = Date.now();
+      try {
+        var _sv = JSON.parse(sessionStorage.getItem("axlx_now_since") || "null");
+        if (_sv && _sv.key === _nowKeyOf(raw) && Date.now() - Number(_sv.at || 0) < 15 * 60000) _nowSince = Number(_sv.at);
+        else sessionStorage.setItem("axlx_now_since", JSON.stringify({ key: _nowKeyOf(raw), at: _nowSince }));
+      } catch (_) {}
+    }
+    _nowTextRaw = raw;
+    if (nowEl) _paintNow();
+    if (!_nowTick) _nowTick = setInterval(function () { if (!document.hidden) _paintNow(); }, 5000);
+    var n = "";
     if (nextEl) {
-      var n = nextText == null || nextText === "" ? _statusNextHint(nowText) : String(nextText);
+      n = nextText == null || nextText === "" ? _statusNextHint(nowText) : String(nextText);
       nextEl.textContent = n;
+    }
+    _nowNextRaw = n;
+    var sig = raw + "｜" + n;
+    if (sig !== _panelTextSig && raw) {
+      _panelTextSig = sig;
+      try { _liveDlStep("panel_text", ("いま=" + raw + " つぎ=" + n).slice(0, 80)); } catch (_) {}
     }
   }
 
   /**
-   * ★ 2.8.227: page から「いまの行動」（外している最中／入れ最中）を受けて枠へ反映
+   * ★ 2.8.227: page から「いまの行動」（リセットで空を確かめている最中／入れ最中）を受けて枠へ反映
    * ★ 2.8.228: task_now（間取外:2LDK 等）も枠へ
    * ★ 2.8.229: axlx-task-grasped（検索の search_grasped と同型・次タスク移行のAPI把握）
    */
@@ -3276,14 +3564,20 @@
       }
       if (e.data.from === "axlx-task-grasped") {
         if (e.data.currentAction) {
-          _bulkGraspState.taskNow = String(e.data.currentAction).slice(0, 28);
-          _bulkGraspState.currentAction = String(e.data.currentAction).slice(0, 28);
+          var _caG = String(e.data.currentAction).slice(0, 28);
+          // ★ 2.8.323: 並べ替えが完了したあとの「いま」は、地図の物件取得の言葉（手で書かない）
+          if (_adSortDone && /並べ替え/.test(_caG)) _caG = _panelWord("list", "now") || _caG;
+          _bulkGraspState.taskNow = _caG;
+          _bulkGraspState.currentAction = _caG;
         }
         if (e.data.nextMove) {
           var nmG = String(e.data.nextMove).slice(0, 40);
           if (/並べ替え|並び替え|AD→高/.test(nmG) && !_isSearchConfirmGrasp(_searchGraspedMem)) {
             nmG = "検索を押す";
             try { _liveDlStep("next_move_premature_block", "検索未確認→並べ替え拒否"); } catch (_) {}
+          }
+          if (/並べ替え|並び替え/.test(nmG) && _adSortDone) {
+            nmG = _panelWord("list", "next") || nmG;
           }
           try {
             var _pG = typeof _readPagerState === "function" ? _readPagerState() : null;
@@ -3312,6 +3606,177 @@
     } catch (_) {}
   });
 
+  /**
+   * ★ 2.8.319 竹内さん「拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる（確認できるから）」:
+   *   一覧の動き（並べ替え→物件取得→全部送付済み→次ページ→客完了）を、手順書と同じ言葉（PANEL_PHASE_WORDS）で枠に出す。
+   *   ページの読み直しで古い言葉（「新しい条件を入れている最中」）に戻らないよう、session の axlx_bulk_grasp にも書く。
+   *   印: dl:list_flow_announce（点検で何をいつ言ったか読める）
+   */
+  /**
+   * ★ 2.8.323 パネルの言葉は流れの地図が正本（bulk-panel-grasp.js の PANEL_PHASE_WORDS は scripts/gen-panel-words.ts が作る）。
+   *   ここで言葉を手で書かない。段（reset/fill/search/sort/list/all_sent/next_page/done）と field（now/next）で引く。
+   */
+  function _panelWord(key, field) {
+    try {
+      var W = window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.PANEL_PHASE_WORDS;
+      var w = W && W[key];
+      if (w && w[field]) return String(w[field]);
+    } catch (_) {}
+    return "";
+  }
+  function _announcePhase(key, why) {
+    try {
+      var W = window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.PANEL_PHASE_WORDS;
+      var w = W && W[key];
+      if (!w || !_bulkGraspState || !(Number(_bulkGraspState.total) > 0)) return;
+      _bulkGraspState.currentAction = w.now;
+      _bulkGraspState.taskNow = "";
+      _bulkGraspState.nextMove = w.next;
+      _applyBulkGrasp(_bulkGraspState);
+      try { chrome.storage.session.set({ axlx_bulk_grasp: _bulkGraspState }); } catch (_) {}
+      try { _liveDlStep("list_flow_announce", String(key) + " " + String(why || "").slice(0, 40)); } catch (_) {}
+    } catch (_) {}
+  }
+  /* WAIT_WORDS:BEGIN */
+  var WAIT_WORDS = {
+    search_to_sort: "検索の結果が画面に出きるまで待っている（並べ替えは検索確認から40〜50秒後）",
+    sort_lag: "高→低を押したあと、並べ替えの画面が追いつくまで待っている",
+    sort_resume_lag: "読み直したあと、並べ替えの画面が追いつくまで待っている",
+    reset_settle: "リセットを押して、画面が空になるまで待っている（30〜34秒）",
+    reset_hidden: "リアプロのタブが見えないので、リセットを押さずに待っている（Chrome を前に出してください）",
+    reset_insure: "完了の通知が来ないので、さらに60〜90秒待ってから画面を確かめている",
+    reset_gap: "送付が終わったので、20秒あけてからリセットへ進んでいる",
+    reset_done_gap: "リセットで空を確かめたので、20秒あけてから次のお客さんの条件を読み直している",
+    api_reload_gap: "条件を読み直したので、20秒あけてから入れている"
+  };
+  /* WAIT_WORDS:END */
+  /**
+   * ★ 2.8.325 竹内さん「待機中や待機している時間もちゃんとボックスに表示されるように／ボックスにも細かく何しているか表示」:
+   *   待ちは「いま」の下に、何を待っているか＋残りの秒数で出す（#axlx-wait）。言葉は流れの地図の LOOP_WAITS が正本（上の WAIT_WORDS）。
+   *   background（リセット後の30〜34秒）は id と秒数だけを送る（axlx-bulk-wait）。
+   */
+  var _waitTick = null;
+  var _waitUntilMs = 0;
+  var _waitLabelNow = "";
+  function _stopWaitTick() {
+    if (_waitTick) { clearInterval(_waitTick); _waitTick = null; }
+    _waitUntilMs = 0;
+  }
+  function _paintWait() {
+    var el = document.getElementById("axlx-wait");
+    var left = _waitUntilMs ? Math.ceil((_waitUntilMs - Date.now()) / 1000) : 0;
+    if (left <= 0) {
+      if (el) { el.style.display = "none"; el.textContent = ""; }
+      _stopWaitTick();
+      return;
+    }
+    if (el) {
+      el.style.display = "block";
+      // ★ 2.8.329 5秒刻み（切り上げ）。最後の5秒だけ「あと5秒以内」
+      var left5 = Math.ceil(left / 5) * 5;
+      el.textContent = "⏳ " + _waitLabelNow + "（" + (left5 <= 5 ? "あと5秒以内" : "あと約" + _fmtElapsed5(left5 * 1000)) + "）";
+    }
+  }
+  function _setBulkWait(label, ms) {
+    _waitLabelNow = String(label || "").slice(0, 90);
+    _waitUntilMs = Date.now() + Math.max(0, Math.round(Number(ms) || 0));
+    _paintWait();
+    if (_waitUntilMs > Date.now() && !_waitTick) _waitTick = setInterval(_paintWait, 1000);
+  }
+  function _setBulkWaitById(id, ms) {
+    var label = WAIT_WORDS && WAIT_WORDS[id];
+    if (!label) { try { _liveDlStep("wait_unknown_id", String(id || "").slice(0, 30)); } catch (_) {} return; }
+    _setBulkWait(label, ms);
+  }
+  /**
+   * ★ 2.8.326 竹内さん「リセットして押したことを把握できていない」:
+   *   押した結果（押せた／押せず／遅れて押せた・空の確認）を、枠の「把握」の下に「✓ 押した…」で出す。
+   *   「予定」（次の動き）ではなく「実際に押した結果」だけを書く。background（_bulkPressShow）が送る。
+   */
+  function _setPressNote(what, result, detail, atMs) {
+    var el = document.getElementById("axlx-press");
+    if (!el) return;
+    // ★ 2.8.329 読み直しの後に戻す時は、押した時の時刻で書く（戻した時刻にしない）
+    var now = atMs ? new Date(Number(atMs)) : new Date();
+    var hm = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function (n) { return (n < 10 ? "0" : "") + n; }).join(":");
+    var d = String(detail || "").slice(0, 30);
+    var t = "";
+    var col = "#86efac";
+    if (what === "reset" && result === "pressed") t = "✓ リセットを押した（" + hm + "）→ 画面の読み直しを待つ";
+    else if (what === "reset" && result === "pressed_late") t = "✓ リセットを押した（" + hm + "・返事は遅れたが画面は読み直された）";
+    else if (what === "reset" && result === "not_pressed") { t = "✗ リセットを押せなかった（" + hm + "）→ 60〜90秒後に確かめる保険へ"; col = "#fde68a"; }
+    else if (what === "reset" && result === "hidden_wait") { t = "⚠ リアプロの画面が隠れているので、リセットは押さずに待っている（" + hm + "）→ Chrome を前に出してください"; col = "#fde68a"; }
+    else if (what === "reset" && result === "hidden_stopped") { t = "✗ 画面が10分見えないままだったので、リセットを押さずに止めた（次のお客さんへ進まない）"; col = "#fca5a5"; }
+    else if (what === "reset" && result === "stopped") { t = "✗ 空を確かめられず止めた（次のお客さんへ進まない・画面を確かめてください）"; col = "#fca5a5"; }
+    else if (what === "reset_check" && result === "empty") t = "✓ 空を確認した（リセット後）";
+    else if (what === "reset_check" && result === "not_empty") { t = "⚠ 空の確認で残りが見えた（残 " + d + "）→ 空を確かめるまで次へ進まない（保険へ）"; col = "#fde68a"; }
+    else if (what === "reset_check") { t = "⚠ 空かどうか読めず → 空を確かめるまで次へ進まない（保険へ）"; col = "#fde68a"; }
+    else if (what === "sort" && result === "pressed") t = "✓ 高→低を押した（" + hm + "）→ 画面が追いつくまで待つ";
+    else if (what === "sort" && result === "not_pressed") { t = "✗ 高→低を押せなかった（" + hm + "）→ 押し直す"; col = "#fca5a5"; }
+    else if (what === "sort" && result === "effect_ok") t = "✓ 高→低を押して時間差をあけた＝並べ替え完了と認識（" + d + "・" + hm + "）";
+    else if (what === "sort" && result === "effect_unknown") { t = "⚠ 高→低の時間差を確かめられない（" + d + "）→ 記録して進む（押し直さない）"; col = "#fde68a"; }
+    else if (what === "search" && result === "pressed") t = "✓ 検索を押した（" + hm + "）→ 結果を待つ";
+    else if (what === "press" && result === "unverified") { t = "⚠ 押したが確かめられず（" + d + "）→ 画面で確かめる"; col = "#fde68a"; }
+    // ★ 2.8.328 押したことの把握: ページ側の全部のボタンの受領・確定が効いたか・印刷用PDF・次へ
+    else if (what === "press" && result === "ok") t = "✓ 押した：" + d + "（" + hm + "）";
+    else if (what === "press" && result === "ng") { t = "✗ 押せなかった：" + d + "（" + hm + "）"; col = "#fca5a5"; }
+    else if (what === "confirm" && result === "closed") t = "✓ 確定してリストへが効いた（" + d + "の小窓が閉じた・" + hm + "）";
+    else if (what === "confirm" && result === "still_open") { t = "✗ 確定してリストへを2回押しても" + d + "の小窓が閉じない → 止めた"; col = "#fca5a5"; }
+    else if (what === "pdf" && result === "pressed") t = "✓ 印刷用PDFを押した（" + d + "・" + hm + "）→ 送るのを待つ";
+    else if (what === "pdf" && result === "not_pressed") { t = "✗ 印刷用PDFを押せなかった（" + d + "）→ 次の物件へ"; col = "#fca5a5"; }
+    else if (what === "pdf" && result === "sent") t = "✓ 印刷用PDFを送り終えた（" + d + "・" + hm + "）";
+    else if (what === "pdf" && result === "no_effect") { t = "⚠ 印刷用PDFを押したが送れていない（" + d + "）→ 次の物件へ"; col = "#fde68a"; }
+    else if (what === "next" && result === "pressed") t = "✓ 次へを押した（→" + d + "・" + hm + "）→ 頁が変わるのを待つ";
+    else if (what === "next" && result === "not_pressed") { t = "✗ 次へを押せなかった（→" + d + "）"; col = "#fca5a5"; }
+    else if (what === "next" && result === "moved") t = "✓ 次の頁に進んだ（" + d + "・" + hm + "）";
+    else if (what === "next" && result === "not_moved") { t = "⚠ 次へを押したが頁の番号が合わない（" + d + "）"; col = "#fde68a"; }
+    // 2.8.328 選んだ欄（町・管理費・構造）が効いたか
+    else if (what === "pick" && result === "effect_ok") t = "✓ 選んだ欄が効いた：" + d + "（" + hm + "）";
+    else if (what === "pick" && result === "retry") { t = "⚠ 選んだのに付いていない：" + d + " → 1回だけ選び直す"; col = "#fde68a"; }
+    else if (what === "pick" && result === "effect_ng") { t = "✗ 選び直しても付かない：" + d + " → 記録して進む（画面で確かめてください）"; col = "#fca5a5"; }
+    else return;
+    // 普通の「✓ 押した」で、直前（4秒以内）の注意・失敗の行を消さない
+    try {
+      if (what === "press" && result === "ok" && el.__axWarnAt && Date.now() - el.__axWarnAt < 4000) return;
+      el.__axWarnAt = col !== "#86efac" ? Date.now() : 0;
+    } catch (_) {}
+    el.textContent = t;
+    el.style.color = col;
+    el.style.display = "block";
+  }
+  /**
+   * ★ 2.8.329 リセットの位置（background の axlx-bulk-reset-pos）。入れる前のリセットなら「つぎ」はいまの客の条件、
+   *   送付のあとなら次の客の条件（bulk-panel-grasp の {after}）。読み直しを越えるので axlx_box_live からも戻す。
+   */
+  var _resetPos = null;
+  function _setResetPos(kind, at) {
+    _resetPos = kind ? { kind: String(kind), at: Number(at) || Date.now() } : null;
+    try { if (_bulkGraspState) _applyBulkGrasp(_bulkGraspState); } catch (_) {}
+  }
+  /** ★ 2.8.329 読み直しで消えた枠の待ち・押した行・リセットの位置を session（background が書く axlx_box_live）から戻す */
+  function _restoreBoxLive() {
+    try {
+      chrome.storage.session.get("axlx_box_live").then(function (st) {
+        var v = (st && st.axlx_box_live) || null;
+        if (!v) return;
+        var nowMs = Date.now();
+        if (v.resetPos && nowMs - Number(v.resetPos.at || 0) < 6 * 60000) _setResetPos(v.resetPos.kind, v.resetPos.at);
+        if (v.wait && Number(v.wait.until) > nowMs + 1000) _setBulkWaitById(String(v.wait.id || ""), Number(v.wait.until) - nowMs);
+        if (v.press && nowMs - Number(v.press.at || 0) < 3 * 60000) {
+          _setPressNote(String(v.press.what || ""), String(v.press.result || ""), String(v.press.detail || ""), Number(v.press.at));
+        }
+        try { _liveDlStep("box_live_restore", "待ち=" + (v.wait && Number(v.wait.until) > nowMs ? v.wait.id : "-") + " 押した=" + (v.press ? v.press.what + ":" + v.press.result : "-") + " 位置=" + (v.resetPos ? v.resetPos.kind : "-")); } catch (_) {}
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  setTimeout(_restoreBoxLive, 2000);
+  /** ★ 2.8.326 ページ側（page-script.js の _pressNote）の押した結果を枠の「押した」行へ */
+  window.addEventListener("message", function (e) {
+    try {
+      if (!e || e.source !== window || !e.data || e.data.from !== "axlx-press-note") return;
+      _setPressNote(String(e.data.what || ""), String(e.data.result || ""), String(e.data.detail || ""));
+    } catch (_) {}
+  });
   /** ★ 2.8.217: 一括把握の配信を枠へ反映 */
   function _applyBulkGrasp(g) {
     _bulkGraspState = g && Number(g.total) > 0 ? g : null;
@@ -3333,7 +3798,8 @@
     var lines = null;
     try {
       if (window.AxlxBulkPanelGrasp && window.AxlxBulkPanelGrasp.formatBulkPanelGrasp) {
-        lines = window.AxlxBulkPanelGrasp.formatBulkPanelGrasp(_bulkGraspState);
+        var _rp = _resetPos && Date.now() - _resetPos.at < 6 * 60000 ? _resetPos.kind : null;
+        lines = window.AxlxBulkPanelGrasp.formatBulkPanelGrasp(_bulkGraspState ? Object.assign({}, _bulkGraspState, { resetPos: _rp }) : null);
       }
     } catch (_) { lines = null; }
     if (!lines && _bulkGraspState) {
@@ -3732,6 +4198,7 @@
        * → メニュー操作を**必ず試す**（リンクの有無で止めない）。
        */
       _liveDlStep("sort_menu", "start");
+      _announcePhase("sort", "sort_menu_start");
       /** ★ 2.8.185/186: 検索完了→並べ替えへ移る印（ライブで監査へ・batch待ちしない） */
       try { _liveDlStep("search_to_sort", "after_search_grasp"); } catch (_) {}
       /** ★ 2.8.226: ループ段=並べ替え／次の動きを page 側で把握（タスク一覧に sort が入る） */
@@ -3799,7 +4266,7 @@
                 return;
               }
               _sortByAdLikeHuman(function (ok2) {
-                if (ok2) _liveDlStep("sort_done", "hilo_retry");
+                if (ok2) { _sortTimeRecognized("hilo_retry", _sortPressedAt); _liveDlStep("sort_done", "hilo_retry"); _announcePhase("list", "sort_done_retry"); }
                 else if (_sortFailWaitThenRetry("after_quick_retry")) return;
                 else {
                   console.warn("[AXLX bulk-dl][auto] 再試行も並べ替えできず → この並びのまま押します");
@@ -3824,7 +4291,9 @@
           _nudge("⚠ 並べ替えできませんでした（この並びのまま続けます）");
           _liveDlStep("sort_failed", "continue");
         } else {
+          _sortTimeRecognized("hilo", _sortPressedAt);
           _liveDlStep("sort_done", "hilo");
+          _announcePhase("list", "sort_done");
           try { _requestLoopGrasp("list", "sort_done", true); } catch (_) {}
         }
         // AD後も手順書 list×画面照合してから押す（揃わなければ押さない＝駅選択中の誤送付を止める）
@@ -4010,7 +4479,7 @@
    *   ⚠ 2026-11-14 の決定「出来なくても止まらずにそのまま動かす」は守る: 待ち直しても駄目なら警告を出して続ける。
    */
   var SORT_FAIL_WAIT_RETRY_MAX = 1;
-  var SORT_WAIT_OWN_MAX_MS = 90000;
+  var SORT_WAIT_OWN_MAX_MS = 120000; // ★ 2.8.317: 90→120秒（並べ替えの待ちを 40〜50秒にしたので、待ち直し1回でも古い印にしない＝待ちの最大の2倍以上）
   var _sortFailWaitRetries = 0;
   var _sortWaitRetryPending = false;
   var _sortWaitRetryAt = 0;
@@ -4219,9 +4688,10 @@
      *   旧 falseHead が棟戸｜under を全除外 → sort_head_aim_warm が出ず sort_no_head で PDF へ飛んだ。
      */
     try {
-      chrome.storage.local.get(["axlx_learn_points", "axlx_learn_scene_flows"], function (st) {
+      chrome.storage.local.get(["axlx_learn_points__realpro", "axlx_learn_scene_flows__realpro", "axlx_learn_points", "axlx_learn_scene_flows", "axlx_learn_for_site"], function (st) {
         try {
-          var pts = (st && st.axlx_learn_points) || {};
+          var _rpOk = !st || st.axlx_learn_for_site !== "itandi";
+          var pts = (st && st.axlx_learn_points__realpro) || (_rpOk && st && st.axlx_learn_points) || {};
           var best = null;
           Object.keys(pts).forEach(function (k) {
             var v = pts[k];
@@ -4299,7 +4769,7 @@
            *   高→低／並べ替え／AD が list|other|search 流れにあれば正本印を残す。
            */
           try {
-            var sflows = (st && st.axlx_learn_scene_flows) || window.__axlxLearnSceneFlows || null;
+            var sflows = (st && st.axlx_learn_scene_flows__realpro) || (!st || st.axlx_learn_for_site !== "itandi" ? (st && st.axlx_learn_scene_flows) : null) || window.__axlxLearnSceneFlows || null;
             var flowHit = "";
             if (Array.isArray(sflows)) {
               for (var fi = 0; fi < sflows.length && !flowHit; fi++) {
@@ -4353,7 +4823,8 @@
         fn();
       }, Math.max(60, Math.round(wait(ms))));
     };
-    var visible = function (el) { try { return !!el && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
+    // ★ 2.8.315: 拡張自身の画面の中は「見えている物」に数えない（並べ替え・AD・高→低の文字探しが自分のパネルを掴まない）
+    var visible = function (el) { try { return !!el && !_isOwnUiEl(el) && !!(el.offsetParent || (el.getClientRects && el.getClientRects().length)); } catch (_) { return false; } };
     var norm = function (t) { return String(t == null ? "" : t).replace(/[\s\u3000]+/g, ""); };
     /**
      * 2026-11-14 竹内さん「検索した後並び替えしっぱいしたとでてから印刷用PDF押す前に止まってしまった
@@ -4584,6 +5055,30 @@
       ads.sort(function (a, b) { return a.score - b.score; });
       return ads[0].el;
     };
+    /**
+     * ★ 2.8.317 竹内さん「マウスもへんなうごき・とぎれてしまわないように」:
+     *   カーソルの移動が途中で取り消される（別の動き・浮遊が割り込む＝moveToEl が false）と、旧は並べ替え全体を諦めていた
+     *   （sort_abort 系で最初からやり直し・数十秒ロス）。→ 取り消されたら少し待って**1回だけ**同じ要素へ動かし直す（sort_mouse_retry）。
+     *   結果は cb(moved) ＝ true（着いた）／false（2回とも取り消された）／"rejected"（例外・従来の直接移動へ）。
+     */
+    var moveToElRetry = function (el, cb) {
+      var tryN = 0;
+      var go = function () {
+        tryN++;
+        var pr = null;
+        try { pr = P.moveToEl(el); } catch (_) { pr = null; }
+        if (!pr || typeof pr.then !== "function") { cb("rejected"); return; }
+        pr.then(function (moved) {
+          if (moved === false && tryN < 2 && alive()) {
+            _auditSort("sort_mouse_retry", "カーソルの動きが途中で取り消された→少し待って1回だけ動かし直す");
+            setTimeout(go, 400 + Math.floor(Math.random() * 500));
+            return;
+          }
+          cb(moved);
+        }, function () { cb("rejected"); });
+      };
+      go();
+    };
     /** 押さずに「カーソルをその上へ移す」（展開を待つだけ・click しない・座標は要素の真ん中） */
     var hover = function (el, cb) {
       var doneHover = typeof cb === "function" ? cb : function () {};
@@ -4610,13 +5105,15 @@
       };
       try {
         if (P && P.moveToEl) {
-          P.moveToEl(el).then(function (moved) {
+          moveToElRetry(el, function (moved) {
+            if (moved === "rejected") {
+              if (!alive()) { doneHover(false); return; }
+              try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
+              setTimeout(fire, _hd(120));
+              return;
+            }
             if (moved === false || !alive()) { doneHover(false); return; }
             setTimeout(fire, 140 + Math.floor(Math.random() * 220));
-          }, function () {
-            if (!alive()) { doneHover(false); return; }
-            try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(fire, _hd(120));
           });
           return;
         }
@@ -4652,14 +5149,17 @@
       };
       try {
         if (P && P.moveToEl) {
-          P.moveToEl(el).then(function (moved) {
+          // 着いてすぐ押さない（人は目で確かめてから押す・並べ替えの高→低などもこの道・2026-11-20）
+          moveToElRetry(el, function (moved) {
+            if (moved === "rejected") {
+              if (!alive()) { cb(false); return; }
+              var c = centerOf(el);
+              try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
+              setTimeout(go, _hd(200));
+              return;
+            }
             if (moved === false || !alive()) { cb(false); return; }
             setTimeout(go, 180 + Math.floor(Math.random() * 420));
-          }, function () {
-            if (!alive()) { cb(false); return; }
-            var c = centerOf(el);
-            try { if (P.moveTo) P.moveTo(c.x, c.y); } catch (_) {}
-            setTimeout(go, _hd(200));
           });
           return;
         }
@@ -4965,8 +5465,22 @@
             _auditSort("sort_hilo", _hiloHow + ":" + norm(hiToLo.textContent || hiToLo.getAttribute("href") || "").slice(0, 22));
             console.log("[AXLX bulk-dl][sort] ③ 高→低へカーソルを動かして押します（赤丸=AD右の高→低・URL直しない）");
             press(hiToLo, function (okPress) {
-              if (!okPress) { done(false); return; }
-              step(1200, function () { done(true); });
+              if (!okPress) { try { _setPressNote("sort", "not_pressed", ""); } catch (_) {} done(false); return; }
+              // ★ 2.8.322: 押した事実を読み直しより前に残す（待ちタイマーは読み直しで消える）
+              try {
+                sessionStorage.setItem("axlx_sort_pressed_sync", JSON.stringify({ at: Date.now(), href: String(location.href || "").slice(0, 300) }));
+              } catch (_) {}
+              _adSortDone = true;
+              _sortPressedAt = Date.now();
+              try { _liveDlStep("sort_pressed", "高→低を押した→読み直し後は④物件取得"); } catch (_) {}
+              try { _setPressNote("sort", "pressed", ""); } catch (_) {}
+              // ★ 2.8.323: 地図の sort.panel.switchTo=list。押した時点でパネルも物件取得の言葉へ（猶予の間「並べ替え最中」のままにしない）
+              try { _announcePhase("list", "sort_pressed"); } catch (_) {}
+              // ★ 2.8.316: 並べ替えを押した後は画面の追いつき（ラグ）の猶予を置いてから一覧を取る
+              var _lagG = _lagGraceMs();
+              _auditSort("sort_lag_grace", Math.round(_lagG / 1000) + "秒 押した後の猶予（ラグ）");
+              _setBulkWaitById("sort_lag", 1200 + _lagG);
+              step(1200 + _lagG, function () { done(true); });
             });
           });
         });
@@ -4976,6 +5490,11 @@
 
   /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
   function _startAutoPressRun() {
+    // ★ 2.8.324: 読み直し後の待ちと、同じページの待ち（_autoPdfRunPending）が両方から来ても、一覧の押しは1回だけ
+    if (_autoPdfRun) return;
+    _sortResumeStarted = true;
+    try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
+    _announcePhase("list", "auto_press_run");
     var pick = function () {
       return tracked.filter(function (t) { return t.cb && t.btn && t.btn.isConnected && AxlxSendPairing.isHttpUrl(t.btn.href); });
     };
@@ -5015,6 +5534,7 @@
         _nudge("👀 送る部屋がありません（画面送付済み " + sentVis0 + "・押せるPDF0）→ 次へ／客完了");
         _tmark("auto_pdf_start", "all_sent_no_press sentVis=" + sentVis0);
         try { _liveDlStep("all_sent_no_press", "sentVis=" + sentVis0 + "→客完了へ"); } catch (_) {}
+        _announcePhase("all_sent", "no_press sentVis=" + sentVis0);
         try {
           _graspAcquire("all_sent", true, "押せる行0・画面送付済" + sentVis0 + "＝失敗ではない→次頁/客完了");
         } catch (_) {}
@@ -5068,6 +5588,7 @@
           );
         } catch (_) {}
         try { _liveDlStep("all_sent_page", "filtered0 skip=" + skipN); } catch (_) {}
+        _announcePhase("all_sent", "filtered0 skip=" + skipN);
         // 全部送付済みなら次ページへ／無ければ客完了（_autoFinish 一本化）
         _autoPdfRun = { total: 0, done: 0, index: 0, skipped: skipN, order: [], customerId: cid || null, startedAt: Date.now() };
         _autoFinish("このページは送る部屋が無い");
@@ -5535,9 +6056,14 @@
           setTimeout(function () {
             try { if (P && P.tap) P.tap(); } catch (_) {}
             setTimeout(function () {
+              // ★ 2.8.328 押したことの把握: 旧は押せなくても必ず cb(true)（「押せず」の分かれを一度も通らなかった）
+              var ok = !!(btn && btn.isConnected);
               try { btn.click(); } catch (_) {}
-              console.log("[AXLX bulk-dl][auto] 印刷用PDFを押しました:", String(btn.href || "").slice(0, 80));
-              cb(true);
+              try { if (_autoPdfRun) { if (ok) _autoPdfRun.pressOk = (Number(_autoPdfRun.pressOk) || 0) + 1; else _autoPdfRun.pressNg = (Number(_autoPdfRun.pressNg) || 0) + 1; } } catch (_) {}
+              try { _setPressNote("pdf", ok ? "pressed" : "not_pressed", (_autoPdfRun ? _autoPdfRun.total + "件目" : "")); } catch (_) {}
+              if (!ok) { try { _liveDlStep("press_ng_pdf", "印刷用PDFを押せず（行が画面から外れた）"); } catch (_) {} }
+              console.log("[AXLX bulk-dl][auto] 印刷用PDFを" + (ok ? "押しました:" : "押せませんでした:"), String(btn && btn.href || "").slice(0, 80));
+              cb(ok);
             }, 70 + Math.floor(Math.random() * 130));
           }, gap);
         });
@@ -5585,6 +6111,17 @@
       if (done) return;
       done = true;
       if (why) console.warn("[AXLX bulk-dl][auto] 1件待ち打ち切り → 次へ:", why);
+      // ★ 2.8.328 押した後に効いたか（送り始めて終わった）を数える。効かなかった物は1件ずつ残す
+      try {
+        if (why) {
+          if (_autoPdfRun) _autoPdfRun.noEffect = (Number(_autoPdfRun.noEffect) || 0) + 1;
+          _liveDlStep("press_ng_pdf_effect", "印刷用PDFを押したが" + String(why).slice(0, 30));
+          _setPressNote("pdf", "no_effect", String(why).slice(0, 20));
+        } else if (_autoPdfRun) {
+          _autoPdfRun.effectOk = (Number(_autoPdfRun.effectOk) || 0) + 1;
+          _setPressNote("pdf", "sent", _autoPdfRun.effectOk + "件目");
+        }
+      } catch (_) {}
       try { cb(); } catch (_) {}
     };
     var poll = function () {
@@ -5635,6 +6172,11 @@
   function _autoFinish(why) {
     var n = _autoPdfRun ? _autoPdfRun.done : 0;
     var skipped = _autoPdfRun ? (Number(_autoPdfRun.skipped) || 0) : 0;
+    try {
+      var _pr = _autoPdfRun || {};
+      _liveDlStep("press_pdf_sum", "P" + (Number(_autoPdfPage) || 1) + " 押した" + (Number(_pr.pressOk) || 0) + " 送り終えた" + (Number(_pr.effectOk) || 0)
+        + " 送れず" + (Number(_pr.noEffect) || 0) + " 押せず" + (Number(_pr.pressNg) || 0));
+    } catch (_) {}
     var whyText = _skipWhyText(_autoPdfRun);
     _autoPdfRun = null;
     _autoPdfTotalSent = (Number(_autoPdfTotalSent) || 0) + (Number(n) || 0);
@@ -5744,7 +6286,19 @@
    * ★ 2026-11-14／2026-11-16: 次のページへ進んで押し直す（上限5ページ）。
    *   送付済みだけの頁でも、未送付を送った頁のあとでも進む。
    */
+  /**
+   * ★ 2.8.328 次へが効いたか: 頁の番号（td.pager の押せない番号＝いまの頁）が押した先と合うかを残す。
+   *   合わない時は記録と枠に出すだけ（送付済みの行は飛ばすので同じ物件は送らない・頁の上限で必ず終わる）。
+   */
+  function _nextPageEffectNote(expect, extra) {
+    var cur = null;
+    try { cur = _readPagerState().current; } catch (_) { cur = null; }
+    var ok = cur != null && Number(cur) === Number(expect);
+    _liveDlStep(ok ? "press_next_moved" : "press_ng_next_page", "頁 いま=" + (cur == null ? "?" : cur) + " 押した先=P" + expect + " " + String(extra || "").slice(0, 30));
+    _setPressNote("next", ok ? "moved" : "not_moved", "P" + expect + (ok ? "" : "（いま" + (cur == null ? "?" : cur) + "）"));
+  }
   function _autoNextPageThenRestart(why, meta) {
+    _announcePhase("next_page", String(why || "").slice(0, 24));
     var maxP = _autoMaxPages();
     if (_autoNextPageTries >= (maxP - 1)) {
       console.log("[AXLX bulk-dl][auto] ページ上限 " + maxP + " に達した → 終わります");
@@ -5802,12 +6356,19 @@
           return;
         }
         var P = window.AxlxPointerUi;
+        var _nextFired = false;
         var fire = function () {
+          if (_nextFired) return;
+          _nextFired = true;
+          var ok = false;
           try {
             try { _nextMark.at = Date.now(); chrome.storage.session.set({ axlx_auto_next_page: _nextMark }); } catch (_) {}
             if (typeof window.__axlxRecNoteOp === "function") window.__axlxRecNoteOp("click", btn);
-            btn.click();
-          } catch (_) {}
+            if (btn && btn.isConnected) { btn.click(); ok = true; }
+          } catch (_) { ok = false; }
+          // ★ 2.8.328 押したことの把握: 次へを押した／押せなかったを残す（効いたかは行の入れ替わり・読み直し後の頁番号で見る）
+          try { _liveDlStep(ok ? "press_next" : "press_ng_next", (ok ? "次へを押した→P" : "次へを押せず→P") + _autoPdfPage); } catch (_) {}
+          try { _setPressNote("next", ok ? "pressed" : "not_pressed", "P" + _autoPdfPage); } catch (_) {}
         };
         if (P && P.moveToEl) {
           try { if (P.ensure) P.ensure(); } catch (_) {}
@@ -5853,6 +6414,7 @@
         }
         // 読み直し無しで続けられた → 読み直し用の印は要らない（二重に始めない）
         try { chrome.storage.session.remove("axlx_auto_next_page"); } catch (_) {}
+        try { _nextPageEffectNote(_autoPdfPage, "rows=" + n); } catch (_) {}
         // ★ continuePages: ページカウンタを消さない（3ページ目に進むため）
         // 次ページ到着後も手順表×画面照合（行が出たか）
         _guideLikeListFlowGrasp("after_next", function () {
@@ -5901,24 +6463,24 @@
         _liveDlStep("next_customer_grasp", "いま=" + cur + " 次客=" + (nxt || "（末）") + " " + String(why || "").slice(0, 20));
       } catch (_) {}
       try {
-        _liveDlStep("next_move_grasp", "次の動き=前客の選択を1つずつ外す " + String(why || "").slice(0, 20));
+        _liveDlStep("next_move_grasp", "次の動き=リセットで空にして次のお客さんへ " + String(why || "").slice(0, 20));
       } catch (_) {}
       try {
         _liveDlStep("handoff_grasp", "取得完了→外す " + String(why || "").slice(0, 28));
       } catch (_) {}
       try {
         if (_bulkGraspState) {
-          _bulkGraspState.nextMove = "前客の選択を1つずつ外す";
           _bulkGraspState.lastDone = onePage ? "1ページのみ物件取得完了" : "物件取得完了";
-          _applyBulkGrasp(_bulkGraspState);
+          _announcePhase("done", String(why || "").slice(0, 24));
         }
       } catch (_) {}
       try {
         window.postMessage({
           from: "axlx-bulk-next",
+          done: true,
           currentName: String(bg.currentName || ""),
           nextName: String(bg.nextName || ""),
-          nextMove: "前客の選択を1つずつ外す",
+          nextMove: "リセットで空にして次のお客さんへ",
         }, "*");
       } catch (_) {}
       try {
@@ -5927,7 +6489,7 @@
           why: String(why || "batch_done").slice(0, 40),
           currentName: String(bg.currentName || ""),
           nextName: String(bg.nextName || ""),
-          nextMove: "前客の選択を1つずつ外す",
+          nextMove: "リセットで空にして次のお客さんへ",
           onlyOnePage: onePage,
           sent: Number(bg.sentCount) || null,
         }, "*");
@@ -5937,7 +6499,7 @@
           from: "axlx-task-grasp",
           now: null,
           done: onePage ? "1ページのみ・物件取得完了" : "物件取得完了",
-          next: "前客の選択を1つずつ外す",
+          next: "リセットで空にして次のお客さんへ",
           kind: "handoff",
         }, "*");
       } catch (_) {}
@@ -6498,6 +7060,21 @@
       if (msg && msg.type === "axlx-work-note-clear") {
         _axlxClearWorkNote();
         _paintPdfProgress();
+        return;
+      }
+      /** ★ 2.8.325: 待ち（background のリセット後の待ち等）を枠の「待ち」行へ */
+      if (msg && msg.type === "axlx-bulk-wait") {
+        _setBulkWaitById(String(msg.id || ""), Number(msg.ms) || 0);
+        return;
+      }
+      /** ★ 2.8.326 押した結果（background の押す処理から）を枠の「押した」行へ */
+      if (msg && msg.type === "axlx-bulk-press") {
+        _setPressNote(String(msg.what || ""), String(msg.result || ""), String(msg.detail || ""));
+        return;
+      }
+      /** ★ 2.8.329 リセットの位置（送付のあと／入れる前） */
+      if (msg && msg.type === "axlx-bulk-reset-pos") {
+        _setResetPos(String(msg.kind || ""), Date.now());
         return;
       }
       /** ★ 2.8.217: 一括の誰・何件・次客・把握 */
@@ -7829,13 +8406,34 @@
    * ★ 2.8.234 竹内さん「1ページだけの場合止まってしまう／1ページのみと把握して次へ」:
    *   リアプロは 1ページでも「次」セルが出ることがある。数字が1つだけ＝1ページのみ。
    *   次に onclick が無い／pager(現在以下)＝押せない次。把握印 list_page_one_only。
+   * ★ 2.8.329 #1677「前頁 1 2 次 最後」の2頁を1ページのみと読んでリセットした（30日で次ページを押せた印0件）:
+   *   td.pager だけ数えると、いまの頁の番号が td.pager でない形では2頁が [2] だけ＝1頁になる。
+   *   番号は「次」と同じ行の全部の葉から数える。いまの頁＝押す口（onclick・href）の無い番号。
+   *   次がある＝いまの頁 < 最後の番号（pager(N) の N は0始まりの事があるので、いまの頁と比べない）。
    */
+  function _pagerCellClickable(el, stopAt) {
+    for (var x = el, up = 0; x && up < 4 && x !== stopAt; x = x.parentElement, up++) {
+      if (x.getAttribute && (x.getAttribute("onclick") || (x.tagName === "A" && x.getAttribute("href")))) return true;
+    }
+    return false;
+  }
+  function _pagerCellLooksCurrent(el) {
+    try {
+      var cls = String(el.className || "") + " " + String((el.parentElement && el.parentElement.className) || "");
+      if (/current|active|selected|now|on\b/i.test(cls)) return true;
+      var tg = String(el.tagName || "").toUpperCase();
+      if (tg === "B" || tg === "STRONG") return true;
+    } catch (_) {}
+    return false;
+  }
   function _readPagerState() {
     var nums = [];
     var current = null;
     var nextEl = null;
     var nextOnclick = "";
     var texts = [];
+    var cells = [];
+    var source = "td.pager";
     try {
       var tds = document.querySelectorAll("td.pager");
       for (var i = 0; i < tds.length; i++) {
@@ -7844,36 +8442,68 @@
         var t = String(td.textContent || "").replace(/\s+/g, "").trim();
         if (!t) continue;
         texts.push(t);
-        if (/^\d+$/.test(t)) {
-          var n = parseInt(t, 10);
-          if (nums.indexOf(n) < 0) nums.push(n);
-          var oc = String(td.getAttribute("onclick") || "");
-          // 番号セルに onclick が無い＝いまのページ
-          if (!oc) current = n;
-        }
         if (/^(次|次へ|次のページ)$/.test(t)) {
           nextEl = td;
           nextOnclick = String(td.getAttribute("onclick") || "");
         }
       }
+      var row = nextEl ? (nextEl.closest ? nextEl.closest("tr") : nextEl.parentElement) : null;
+      if (!row && tds.length) row = tds[0].closest ? tds[0].closest("tr") : tds[0].parentElement;
+      var leaves = [];
+      if (row) {
+        source = "row";
+        var all = row.querySelectorAll("td,th,a,span,b,strong,font,li");
+        for (var j = 0; j < all.length; j++) {
+          var c = all[j];
+          var tt = String(c.textContent || "").replace(/\s+/g, "").trim();
+          if (!/^\d+$/.test(tt)) continue;
+          var inner = c.querySelectorAll("td,th,a,span,b,strong,font,li");
+          var dupInner = false;
+          for (var q = 0; q < inner.length; q++) {
+            if (String(inner[q].textContent || "").replace(/\s+/g, "").trim() === tt) { dupInner = true; break; }
+          }
+          if (dupInner) continue;
+          leaves.push(c);
+        }
+      } else {
+        for (var k = 0; k < tds.length; k++) {
+          if (/^\d+$/.test(String(tds[k].textContent || "").replace(/\s+/g, "").trim())) leaves.push(tds[k]);
+        }
+      }
+      var curByShape = null;
+      for (var L = 0; L < leaves.length; L++) {
+        var le = leaves[L];
+        if (!_isElVisible(le)) continue;
+        var n = parseInt(String(le.textContent || "").replace(/\s+/g, ""), 10);
+        if (!isFinite(n)) continue;
+        if (nums.indexOf(n) < 0) nums.push(n);
+        var click = _pagerCellClickable(le, row ? row.parentElement : null);
+        if (!click && current == null) current = n;
+        if (curByShape == null && _pagerCellLooksCurrent(le)) curByShape = n;
+        if (cells.length < 8) {
+          cells.push(String(le.tagName || "").toLowerCase() + "." + String(le.className || "").slice(0, 12) + ":" + n + (click ? ":押" : ":今"));
+        }
+      }
+      if (current == null && curByShape != null) current = curByShape;
     } catch (_) {}
-    if (current == null && nums.length) current = nums[0];
+    nums.sort(function (a, b) { return a - b; });
+    var maxN = nums.length ? nums[nums.length - 1] : 0;
     var onlyOne = nums.length <= 1;
     var usable = false;
-    if (nextEl && !_isDisabledEl(nextEl) && _isElVisible(nextEl) && !onlyOne) {
-      if (nextOnclick) {
-        var m = nextOnclick.match(/pager\s*\(\s*(\d+)/i);
-        if (m) usable = Number(m[1]) > (current || 1);
-        else usable = true;
-      }
+    if (nextEl && !_isDisabledEl(nextEl) && _isElVisible(nextEl) && !onlyOne && nextOnclick) {
+      if (current != null) usable = current < maxN;
+      else usable = true;
     }
     if (onlyOne) usable = false;
     return {
       nums: nums,
       current: current || 1,
+      currentKnown: current != null,
       onlyOnePage: onlyOne,
       hasNextUsable: usable,
       texts: texts.slice(0, 12),
+      cells: cells,
+      source: source,
       nextOnclick: nextOnclick.slice(0, 40),
     };
   }
@@ -7917,12 +8547,9 @@
           console.log("[AXLX bulk-dl] _findNextPageEl: 次にonclick無し → 最終ページ扱い");
           continue;
         }
-        var pm = poc.match(/pager\s*\(\s*(\d+)/i);
-        if (pm) {
-          var pst1 = null;
-          try { pst1 = _readPagerState(); } catch (_) { pst1 = null; }
-          if (pst1 && Number(pm[1]) <= (pst1.current || 1)) continue;
-        }
+        var pst1 = null;
+        try { pst1 = _readPagerState(); } catch (_) { pst1 = null; }
+        if (pst1 && !pst1.hasNextUsable) continue;
         console.log("[AXLX bulk-dl] _findNextPageEl: td.pager で次ボタン発見 onclick=" + poc);
         return pt;
       }
@@ -9315,6 +9942,7 @@
             _pendingAutoSendDispatched = true;
             console.log("[AXLX bulk-dl][auto] Case E: 次ページの読み直し後 → P" + _autoPdfPage + " を続きから押します（行=" + n + "・累計 " + _autoPdfTotalSent + "件）");
             _tmark("auto_next_page_resume", "P" + _autoPdfPage + " rows=" + n);
+            try { _nextPageEffectNote(_autoPdfPage, "読み直し後 rows=" + n); } catch (_) {}
             _guideLikeListFlowGrasp("after_next", function () {
               _startAutoPressAfterLook(n || 10, { continuePages: true });
             });

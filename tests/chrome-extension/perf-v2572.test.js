@@ -73,7 +73,7 @@ ok("リアプロ: 光の横の吹き出しに手順の文を出さない（画�
 ok("リアプロ: 枠の文は1行（省略・全文はマウスを乗せた時）・全手順は畳む", /white-space:nowrap;overflow:hidden;text-overflow:ellipsis;/.test(rg) && /▸ 全手順/.test(rg));
 const ig = read("itandi-guide.js");
 ok("ITANDI: 黄色の点滅をやめた・吹き出しの文なし", !/@keyframes axlxItGlow/.test(ig) && /function highlight\(targets(, hint)?\)/.test(ig));
-ok("ITANDI: 見えていないタブでは見直さない", /if \(document\.hidden\) return;\r?\n    if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig));
+ok("ITANDI: 見えていないタブでは見直さない", /if \(document\.hidden\) return;\r?\n(?:[ \t]*(?:\/\/[^\n]*|if \(typeof guideOn !== "undefined" && !guideOn\) return;)\r?\n)*[ \t]*if \(!_dirty && Date\.now\(\) - _lastTickAt < 1500\) return;/.test(ig) /* 2026-11-22: 間に「案内OFFの時は回さない」の1行が入った（見えていない→止める・変化なし→1.5秒に1回、の順は同じ） */);
 const css = read("styles.css");
 // v2.5.75 竹内「拡張ツールのここのアナウンス不要 目に悪いのと、情報量多くて紛らわしいため」: 帯そのものをやめた
 {

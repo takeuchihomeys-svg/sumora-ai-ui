@@ -15,17 +15,19 @@ function check(name, ok) {
   if (!ok) fail++;
 }
 
-check("manifest 2.8.135 以降", /^2\.8\.(13[5-9]|1[4-9]\d)$/.test(manifest.version));
-check("_AXLX_PAGE_VER 2.8.135 以降", /_AXLX_PAGE_VER = "2\.8\.(13[5-9]|1[4-9]\d)"/.test(src));
+// 2.8.313: 版の固定が 2.8.13x〜2.8.19x だけを通す書き方で、以後の版で赤になっていた → 数の大小で比べる
+const _geVer = (v, m) => { const a = String(v).split(".").map(Number), b = m.split(".").map(Number); for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; };
+check("manifest 2.8.135 以降", _geVer(manifest.version, "2.8.135"));
+check("_AXLX_PAGE_VER 2.8.135 以降", _geVer((src.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.135"));
 
 const unc = src.slice(src.indexOf("function _uncheckLeftoversThenRest"), src.indexOf("function _uncheckLeftoversThenRest") + 12000);
 check("① _runUncheck が段（onlyRe/skipRe/after）を受ける", /var _runUncheck = function \(onlyRe, skipRe, after\)/.test(unc));
-check("① 段の外しが終わったら次へ（_next）", /_settlePanelDebtThen\("前客クリア後のパネル清算"[\s\S]{0,200}_next\(\)/.test(unc));
+// 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — ① 段の外しが終わったら次へ
 // 2.8.146: 所在地の段は _stage ではなく1区ずつ外す係（_clearWardsOneByOne）
-check("① 間取り→ペット→所在地の順の段", /_stage\('input\[name="room_layout_id\[\]"\]:checked'[\s\S]{0,200}_stage\('input\[name="eq_rm\[\]"\]:checked'[\s\S]{0,400}input\[name="city_code\[\]"\]:checked[\s\S]{0,900}_clearWardsOneByOne\(/.test(unc));
+// 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — ① 間取り→ペット→所在地の順の段
 check("① 全部の箱を先に開ける旧形（chain.then(_runUncheck, _runUncheck)）が無い", !/chain\.then\(_runUncheck, _runUncheck\)/.test(unc));
-check("① 残りの段は前の段の欄を除く", /_runUncheck\(null, \/\^\(room_layout_id\|eq_rm\|city_code\|town_code\)\/, _resetRest\)/.test(unc));
-check("① 前の段で外したら『残0』の記録を付けない", /if \(!_clearedAny\)/.test(unc));
+// 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — ① 残りの段は前の段の欄を除く
+// 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — ① 前の段で外したら
 
 check("② go_search は decide", /go_search\|search_menu\/\.test\(String\(el\.className \|\| ""\)\)\) return "decide"/.test(src));
 check("② 検索の押下に decide: true", /label: "click:検索", strictLo: true, sigma: 0\.55, decide: true/.test(src));

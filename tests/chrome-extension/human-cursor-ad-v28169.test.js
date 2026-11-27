@@ -30,7 +30,20 @@ console.log("■ 2.8.169 人間の動き: カーソル1本＋ADメニュー把�
 ok("manifest ≥2.8.169", verGe(man.version, "2.8.169"), man.version);
 ok("_AXLX_PAGE_VER ≥2.8.169", verGe((ps.match(/_AXLX_PAGE_VER = "([\d.]+)"/) || [])[1], "2.8.169"));
 ok("forceOneCursor がある", /forceOneCursor:\s*function/.test(pu));
-ok("押し前に forceOneCursor", /forceOneCursor/.test(ps) && /_humanPointerClick/.test(ps));
+// 今の形: 押す直前に page-script の _humanPointerClick が pointer-ui の ensure() を呼び、
+//   ensure() が余分な #axlx-fake-cursor を消して1つだけ使う（2026-11-17）・動かす度に _place が OS カーソルを隠す（_osHide(true)）。
+//   forceOneCursor を押し前に直接呼ぶのは bulk-dl 側（AD前）に残っている。
+ok("押し前にカーソル1本化（_humanPointerClick → ensure が余分を消す）",
+  (function () {
+    // 2.8.328: 動き方の中身は _humanPointerClickCore（外側は押した受領だけ）
+    const a = ps.indexOf("function _humanPointerClickCore(");
+    const b = a < 0 ? -1 : ps.indexOf("var _P = window.AxlxPointerUi;", a);
+    // 次の function 宣言より前（＝この関数の中）で _P.ensure() を呼んでいる
+    const nx = a < 0 ? -1 : ps.indexOf("\n  function ", a + 30);
+    return b > a && (nx < 0 || b < nx) && /if \(_P && _P\.ensure\) \{\s*try \{ _P\.ensure\(\); \}/.test(ps.slice(b, b + 200));
+  })() &&
+  /function ensure\(\) \{[\s\S]{0,1500}?removeChild\(all\[xi\]\)/.test(pu) &&
+  /_osHide\(true\);\s*_savePos\(x, y\)/.test(pu));
 ok("AD前に forceOneCursor", /forceOneCursor/.test(bd));
 ok("isListChrome で一覧列を捨てる", /isListChrome/.test(bd));
 ok("sort_ad_wrong 印", /sort_ad_wrong/.test(bd));

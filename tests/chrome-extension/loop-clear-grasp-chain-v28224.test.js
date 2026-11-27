@@ -15,19 +15,27 @@ function ok(name, c, d) {
   else { fail++; console.log("  ✗ " + name + (d !== undefined ? "  " + String(d).slice(0, 120) : "")); }
 }
 
+// 版は「その版以上」で見る（固定すると次の版で赤になる）
+function vge(v, min) {
+  const a = String(v || "0").split(".").map(Number), b = String(min).split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); }
+  return true;
+}
+
 console.log("\n■ 版");
-ok("manifest 2.8.224", mf.version === "2.8.224", mf.version);
-ok("page 2.8.224", /_AXLX_PAGE_VER = "2\.8\.224"/.test(ps));
-ok("rules 2.8.224", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.224"/.test(rules));
+ok("manifest ≥2.8.224", vge(mf.version, "2.8.224"), mf.version);
+ok("page ≥2.8.224", vge((ps.match(/_AXLX_PAGE_VER = "([^"]+)"/) || [])[1], "2.8.224"));
+ok("rules ≥2.8.224", vge((rules.match(/AUTO_RULES_REVIEWED_UP_TO = "([^"]+)"/) || [])[1], "2.8.224"));
 
 console.log("\n■ ループチェーン（外す把握）");
 ok("1 取得完了 list_done（bulk）", /_graspCustomerLoopPhase\("list_done", "bulk_done→外す"\)/.test(ps));
 ok("2 bulk を fill と誤らない", !/_graspCustomerLoopPhase\("fill", "bulk_grasp"\)/.test(ps));
-ok("3 bulk nextMove=外す", /nextMove: "前客の選択を1つずつ外す"/.test(bd));
+ok("3 bulk nextMove=外す", /nextMove: "リセットで空にして次のお客さんへ"/.test(bd));
 ok("4 leftover_scan で clear 段", /_graspCustomerLoopPhase\("clear", "leftover_scan"\)/.test(ps));
-ok("5 clear_then_fill で clear 段", /_graspCustomerLoopPhase\("clear", "clear_then_fill"\)/.test(ps));
-ok("6 post_send で clear 段", /_graspCustomerLoopPhase\("clear", "post_send_clear"\)/.test(ps));
-ok("7 series_done 後 next_move=外す", /前客の選択を1つずつ外す/.test(bg) && /loop_advance/.test(bg));
+// 今の形: 外しの段そのものは clear_stage:／leftover_scan で "clear"、外し完了の移行（clear_then_fill）では "fill" へ進めて把握する
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 5 clear_then_fill で外し→入れの移行を把握
+ok("6 post_send の clear 段は無い（2.8.328: 送付後の1つずつ外しを消した）", !/_graspCustomerLoopPhase\("clear", "post_send_clear"\)/.test(ps));
+ok("7 series_done 後 next_move=外す", /リセットで空にして次のお客さんへ/.test(bg) && /loop_advance/.test(bg));
 ok("8 skipped 偽OK禁止", /else if \(_psRes\.skipped\) _psOk = false/.test(bg));
 ok("9 post_send_clear_gap", /post_send_clear_gap/.test(bg) && /post_send_clear_gap/.test(ps));
 

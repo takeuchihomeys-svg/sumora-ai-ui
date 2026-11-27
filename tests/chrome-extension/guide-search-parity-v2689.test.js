@@ -49,7 +49,10 @@ console.log("\n■ ③ 検索ボタンは案内モードと同じ探し方でも
   ok("  小窓の中は避ける", /if \(_byTextBtn && !_inModal\(_byTextBtn\)\)/.test(ps));
   ok("  それでも無ければ最後の手段として押す（検索しない方が困る）", /検索ボタンが小窓の中にしかありません（押します）/.test(ps));
   ok("  input[type=button] も候補に入れる", /input\[type="submit"\],a,input\[type="button"\]/.test(ps));
-  ok("押すのはカーソルを動かしてから（人の形）", /_humanPointerClick\(btn, function \(\) \{ try \{ btn\.click\(\); \}/.test(ps));
+  // 2026-11-22 以降: 通常は enqueueHumanClick の列で押し（カーソル→押す）、列に積めない時も _humanPointerClick でカーソルが着いてから押す（直接 click はしない）
+    ok("押すのはカーソルを動かしてから（人の形）",
+      /enqueueHumanClick\(btn, function \(el\) \{[\s\S]{0,400}?try \{ el\.click\(\); \} catch \(_\) \{\}\s*\}, _uiGapMin\(\)/.test(ps)
+      && /_humanPointerClick\(btn, function \(\) \{[\s\S]{0,300}?try \{ btn\.click\(\); \} catch \(_\) \{\}/.test(ps));
 }
 
 console.log("\n■ ④ 場所の欄を開く段取りは残っている（v2.6.82）");

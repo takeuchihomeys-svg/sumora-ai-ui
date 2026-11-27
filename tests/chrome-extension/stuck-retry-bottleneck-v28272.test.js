@@ -153,9 +153,7 @@ function makeSilenceSandbox() {
     assert.ok(/if \(_deadN >= 2\) \{/.test(bg), "応答なしは2回続いた時だけ閉じる");
   });
 
-  await scenario("③ 外しの群の90秒は把握が返ってから数える", async function () {
-    assert.ok(/_clearStartGraspThen\(why \|\| tg, function \(\) \{ t0 = Date\.now\(\); step\(\); \}\)/.test(ps), "把握の後に t0 を取り直す");
-  });
+  // 退役（段階1・2026-11-27）: 1つずつ外しの把握（_clearStartGraspThen）の形を確かめていた。1つずつ外しを廃止したため確認対象外
 
   await scenario("版 2.8.272 以上がそろっている", async function () {
     var ge = function (v) { var a = String(v).split(".").map(Number), b = [2, 8, 272]; for (var i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i]; } return true; };

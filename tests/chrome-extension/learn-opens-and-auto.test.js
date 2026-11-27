@@ -39,7 +39,7 @@ console.log("■ ① 自動（AIX）の記録が DB に届く（③の核心）"
   t("  送る物に欄・種類・位置・間隔が入る", /n: adds\.n, kinds: adds\.kinds/.test(rec));
   t("  ⚠ 中身（入力値）は送らない（keys に value が無い）", !/value:/.test(rec.slice(rec.indexOf("function flushAuto"), rec.indexOf("function flushAuto") + 2500)));
   t("送る係が mode を受ける", /function \(agg, opts\)/.test(up));
-  t("  自動は5分の間隔で止めない", /if \(mode\) \{[\s\S]{0,120}upload\(agg, \{ site: o2\.site \|\| agg\.site, mode: mode \}\);[\s\S]{0,40}return;/.test(up));
+  t("  自動は5分の間隔で止めない", /if \(mode\) \{\s*upload\(agg, \{ site: targetSite, mode: mode \}\);\s*return;/.test(up));
   t("  ⚠ 人の記録の5分の間隔は残す", /if \(last && Date\.now\(\) - last < MIN_GAP_MS\)/.test(up));
 }
 
@@ -65,7 +65,7 @@ console.log("\n■ ③ 学んだ開き方が自動検索に届く");
   t("記録側が opens / open_kinds を送る", /add\.opens = \(motion\.opens && motion\.opens\.byField\)/.test(rec));
   t("background が axlx_learn_opens を置く", /axlx_learn_opens: opens/.test(bg));
   t("background が bundle.opens を読む", /var opens = \(bundle\.opens/.test(bg));
-  t("page-script が axlx_learn_opens を読む", /chrome\.storage\.local\.get\(\["axlx_learn_opens"\]/.test(ps));
+  t("page-script が axlx_learn_opens を読む", /_storageLocalGet\(\["axlx_learn_opens"\]/.test(ps) && /r\.axlx_learn_opens/.test(ps));
   t("  要素から開き方を引く（_opensOfEl）", /function _opensOfEl\(el, keys\)/.test(ps));
   t("  押す時に開き方を点検に残す", /開き方=' \+ opensKind/.test(ps));
 }

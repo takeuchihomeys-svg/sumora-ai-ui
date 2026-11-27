@@ -14,7 +14,7 @@ ok("別のお客さんの入力中は10分待つ（従来どおり）", H.tabHan
 ok("これから始めるお客さんの番号が無い時は従来どおり go", H.tabHandoffDecision({ fillRunning: true, fillCustomerId: null }, "", 0) === "go");
 const bg = rd("background.js");
 ok("background: 読み直しの前に番号なしの入力中なら見送る（reload_skip_unknown_fill）", /if \(!_probeBeforeReload\.fillCustomerId\) \{[\s\S]{0,300}reload_skip_unknown_fill[\s\S]{0,300}AXLX_OTHER_FILL_RUNNING/.test(bg));
-ok("background: 見送りは _ensureRealproTab（読み直し）より前", bg.indexOf("reload_skip_unknown_fill") < bg.indexOf('tab = await _ensureRealproTab(tab, auditRun, _lastWhy'));
+ok("background: 見送りは _ensureRealproTab（読み直し）より前", (() => { const iSkip = bg.indexOf("reload_skip_unknown_fill"); const m = /tab = await _ensureRealproTab\(\s*tab,\s*auditRun,\s*_lastWhy/.exec(bg); /* 2.8.313: 呼びが引数ごとに改行された形に変わった（読み直しの呼び＝やり直しの _ensureRealproTab）。位置の前後を見る */ return iSkip > 0 && !!m && iSkip < m.index; })());
 ok("popup が customerId を autofill に載せる", /action: "autofill",[\s\S]{0,400}customerId: \(c && c\.id\) \? String\(c\.id\) : null/.test(rd("popup.js")));
 ok("underbar が customerId をページへ転送する", /from: "aixlinx-fill", conditions: e\.data\.conditions, customerId: e\.data\.customerId \|\| null/.test(rd("underbar.js")));
 console.log("\n" + pass + " passed, " + fail + " failed");

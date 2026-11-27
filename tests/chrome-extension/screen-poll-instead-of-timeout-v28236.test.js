@@ -29,7 +29,12 @@ ok("印 screen_poll_api_next", /"screen_poll_api_next"/.test(ps));
 ok("wait mid で画面照会", /wait_mid[\s\S]{0,80}_screenPollGrasp|_screenPollGrasp\(\{ phase: "wait_mid"/.test(ps));
 ok("wait timeout で API次手", /wait_timeout[\s\S]{0,120}_screenPollThenApiNext|_screenPollThenApiNext\("wait_timeout"/.test(ps));
 ok("fill_timeout 前に画面照会", /fill_timeout[\s\S]{0,200}_screenPollThenApiNext|_screenPollThenApiNext\("fill_timeout"/.test(ps));
-ok("API経路 _graspBeforeNextTaskThen", /function _screenPollThenApiNext[\s\S]{0,1200}_graspBeforeNextTaskThen/.test(ps));
+// 2.8.256 以降: 未回復時の録画→強化→橋渡しが間に入り窓 {0,1200} では届かない。関数の本体（次の「/**」の手前まで）の中で呼ぶ事を見る。
+  ok("API経路 _graspBeforeNextTaskThen", (() => {
+    const i = ps.indexOf("function _screenPollThenApiNext("); const j = ps.indexOf("\n  /**", i);
+    const body = i > 0 && j > i ? ps.slice(i, j) : "";
+    return body.length > 500 && /_graspBeforeNextTaskThen\(\s*String\(phase \|\| "wait_timeout"\)[\s\S]{0,300}finish,/.test(body);
+  })());
 
 console.log("\n■ 決まり・KEEP");
 ok("RULES_DONE", /"screen_poll_instead_of_timeout"/.test(ps));

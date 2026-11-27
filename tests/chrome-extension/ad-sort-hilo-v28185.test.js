@@ -31,7 +31,10 @@ ok("waitHiToLo ポーリング", /waitHiToLo/.test(bulk) && /maxTries = 8/.test(
 ok("高・低 文言ゆれ", /高・低/.test(bulk) && /高⇒低/.test(bulk));
 ok("学習 aim 暖め", /__axlxSortHiloAim|sort_aim_warm/.test(bulk));
 ok("sort_detail は listChrome 除外", /span\.sort_detail[\s\S]{0,80}return false/.test(bulk));
-ok("自動中は human_search_done で閉じない", /_autoModeChosen\) _humanRun = false/.test(bg) || /_autoModeChosen\)\s*_humanRun = false/.test(bg));
+// 2.8.186 以降は _keepAuditOpenAfterFill()（自動／AIX／スタッフ）で閉じない（_autoModeChosen はその中身）
+ok("自動中は human_search_done で閉じない",
+  /if \(_humanRun && _keepAuditOpenAfterFill\(\)\) _humanRun = false/.test(bg)
+  && /function _keepAuditOpenAfterFill\(\)\s*\{\s*return !!\(_autoModeChosen/.test(bg));
 ok("__tests__ が拡張直下に無い", !fs.existsSync(path.join(root, "chrome-extension/__tests__")));
 
 console.log("\n結果: ✓" + pass + " ✗" + fail);

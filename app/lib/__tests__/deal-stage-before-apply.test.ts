@@ -38,3 +38,13 @@ assert.ok(Date.parse(v.stageAt.viewing!) <= Date.parse(v.stageAt.viewing_held!))
 const late = resolveDealOutcomes(base({ stageBeforeApply: true, viewings: [{ ymd: "2026-10-09", status: "done", thankedAt: null, name: null }] }))[0];
 assert.equal(late.stageAt.viewing_held, J("2026-10-09T20:00:00"));
 console.log("deal-stage-before-apply ok 16");
+// 台帳 #748 ②: 物件探しのフォーマットの通は申込の時刻にしない（DEAL_APPLY_FORM_SEARCH_GUARD・既定 off）
+import { isSearchFormatText, applyFormSearchGuardEnabled } from "../deal-outcome";
+assert.equal(applyFormSearchGuardEnabled({}), true);
+assert.equal(applyFormSearchGuardEnabled({ DEAL_APPLY_FORM_SEARCH_GUARD: "off" }), false);
+assert.equal(applyFormSearchGuardEnabled({ DEAL_APPLY_FORM_SEARCH_GUARD: "on" }), true);
+assert.equal(isSearchFormatText("氏名：\n生年月日：\nご希望のエリア：\n家賃の上限："), true);
+assert.equal(isSearchFormatText("氏名：\n生年月日：\nお申込みの物件：〇〇 301号室"), false);
+assert.equal(isSearchFormatText("よろしくお願いします"), false);
+assert.equal(isSearchFormatText("【お申込み時に必要な情報】氏名：\nご希望のエリア："), true, "申込の見出しだけで物件が無い");
+console.log("deal-apply-form-search-guard ok 6");

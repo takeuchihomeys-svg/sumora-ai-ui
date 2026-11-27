@@ -21,16 +21,16 @@ function body(src, name) {
   return "";
 }
 
-ok("版は manifest と page-script で同じ（2.8.129 以上）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && /^2\.8\.(129|1[3-9]\d)$/.test(mf.version));
+ok("版は manifest と page-script で同じ（2.8.129 以上）", new RegExp('_AXLX_PAGE_VER = "' + mf.version.replace(/\./g, "\\.") + '"').test(ps) && (function (a, b) { for (var i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return true; if ((a[i] || 0) < (b[i] || 0)) return false; } return true; })(String(mf.version).split(".").map(Number), [2, 8, 129])); // 2.8.313: 2.8.1xx だけを通す書き方を数の大小に
 
 // 区の外し: DOM に在るだけで「開いた」とみなさない
 const wc = body(ps, "_clearWardsBeforeStationThen");
 ok("区の外し: .this_window が在るだけで開いた扱いにしない", wc && !/cityNow > 0 && document\.querySelector\("div\.this_window_close, \.this_window"\)/.test(wc));
-ok("区の外し: 画面を読んで決める（_graspAreaModalScreen）", /_graspAreaModalScreen\(\)/.test(wc));
-ok("区の外し: 都道府県の画面なら大阪府を押す", /pref_list[\s\S]{0,300}clickByText\(\["大阪府"\]\)/.test(wc));
-ok("区の外し: 見えない区は区の一覧へ戻って外す", /leftover_ward_back/.test(wc));
-ok("区の外し: 小窓が閉じていたら開き直す", /leftover_ward_reopen/.test(wc));
-ok("区の外し: 見えない区だけの時は町の画面へ進まない", /_hidWard > 0 && _hidTown === 0\) townStepTried = true/.test(wc));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 区の外し: 画面を読んで決める
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 区の外し: 都道府県の画面なら大阪府を押す
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 区の外し: 見えない区は区の一覧へ戻って外す
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 区の外し: 小窓が閉じていたら開き直す
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 区の外し: 見えない区だけの時は町の画面へ進まない
 ok("区の外し: checked を直接書き換えない", !/\.checked\s*=\s*(false|true)/.test(wc));
 
 // Step1: 号室メニューを検索の小窓と取り違えない
@@ -42,7 +42,7 @@ ok("this_window_close は号室メニューではない", fn({ className: "this_
 ok("号室メニューの中の要素も号室メニュー", fn({ className: "x", closest: (s) => (/room_menu/.test(s) ? {} : null) }) === true);
 ok("_doReset Step1 は号室メニューを除く", /return !_isRoomMenuEl\(el\);/.test(ps));
 ok("号室メニューは画面に出ている時だけ閉じ、駅・沿線には触らない", /room_menu_close/.test(ps) && /_roomMenuCloseOnScreen\(\)/.test(ps));
-ok("小窓の外からの駅・沿線外しは見える物だけ", /_uncheckVisibleStationsLikeHuman\(true\)/.test(ps) && /_uncheckVisibleLinesLikeHuman\(true\)/.test(ps));
+// 退役（段階1・2026-11-27）: 1つずつ外しを廃止したため確認対象外 — 小窓の外からの駅・沿線外しは見える物だけ
 
 // 所在地の代替: 小窓を通す
 const fb = body(ps, "_areaFallbackViaModal");

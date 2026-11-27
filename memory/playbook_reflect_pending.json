@@ -1,9 +1,9 @@
 {
-  "at": "2026-11-23T16:53:48.670Z",
+  "at": "2026-11-26T02:49:45.807Z",
   "scope": "itandi",
-  "row_id": 2709,
-  "rules_v": "2f2f2f14",
-  "rules_n": 64,
-  "generated_at": "2026-11-23T16:53:48.308Z",
+  "row_id": 2814,
+  "rules_v": "c87c8397",
+  "rules_n": 102,
+  "generated_at": "2026-11-26T02:49:45.442Z",
   "next": "拡張≥2.8.206再読込→自動1回→check-playbook-reflect（rv一致・read≥1）"
 }

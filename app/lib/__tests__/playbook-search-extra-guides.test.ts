@@ -59,9 +59,9 @@ assert(
 
 const search = pb.scenes.find((s) => s.scene === "search");
 assert(!!search, "search scene");
-assert(search!.steps.some((t) => /①条件が揃ったら検索/.test(t)), "search ①");
+assert(search!.steps.some((t) => /①条件を入れ終えたら[^。]*検索ボタンを押す/.test(t)), "search ①");
 assert(search!.steps.some((t) => /②検索したことを手順書/.test(t)), "search ②");
-assert(search!.steps.some((t) => /③把握OKのあと並べ替え/.test(t)), "search ③");
+assert(search!.steps.some((t) => /③把握OKのあと[^。]*待って並べ替え/.test(t)), "search ③");
 assert(search!.rules.includes("search_customer_screen_grasp"), "search rule grasp");
 assert(search!.steps.length <= PLAYBOOK_MAX_STEPS, "search max");
 
@@ -73,7 +73,7 @@ assert(area!.detail.length === area!.steps.length, "area detail=steps");
 
 const next = pb.scenes.find((s) => s.scene === "next");
 assert(!!next, "next scene");
-assert(next!.steps.some((t) => t === "次のページへ"), "next mapped not 未分類");
+assert(next!.detail.some((d) => d.step === "次のページへ"), "next mapped not 未分類");
 assert(!next!.steps.some((t) => /未分類/.test(t)), "next no 未分類");
 
 assert(pb.gaps.some((g) => /検索場面/.test(g)), "gap search fixed");
@@ -93,7 +93,7 @@ const again = buildPlaybook({
   ],
 });
 const s2 = again.scenes.find((s) => s.scene === "search")!;
-const ones = s2.steps.filter((t) => /①条件が揃ったら検索/.test(t));
+const ones = s2.steps.filter((t) => /①条件を入れ終えたら[^。]*検索ボタンを押す/.test(t));
 assert(ones.length === 1, "no duplicate search guide");
 
 // DB実測と同じ薄い形（search=検索1手・area=区1手・list=PDFのみ）でも全ガイドが載る

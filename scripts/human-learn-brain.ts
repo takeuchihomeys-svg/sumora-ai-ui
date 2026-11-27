@@ -102,7 +102,7 @@ const SELECT = [
         return site === "realpro" ? (s === "realpro" || s.includes("realnet")) : (s === "itandi" || s.includes("itandi"));
       });
       if (sub.length < 3) continue;
-      const one = compactBundle(buildHumanLearnBundle(sub, nowMs));
+      const one = compactBundle(buildHumanLearnBundle(sub, nowMs, null, null, { site }), { site });
       candidates.push({
         scope: site,
         source_rows: one.source.rows,
@@ -132,7 +132,7 @@ const SELECT = [
       console.log("\n■ 書けませんでした: 全scopeで消す書き込みを拒否");
     } else {
       const { prepareBundleForWrite } = await import("../app/lib/bundle-write-prepare");
-      for (const r of inserts) prepareBundleForWrite(r.bundle as Record<string, unknown>);
+      for (const r of inserts) prepareBundleForWrite(r.bundle as Record<string, unknown>, String(r.scope ?? "")); // 2026-11-26: サイトを渡す
       const { error } = await sb.from("human_learn_profile").insert(inserts);
       console.log(error
         ? `\n■ 書けませんでした: ${error.message}`

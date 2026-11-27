@@ -36,7 +36,7 @@ console.log("\n■ ② 自動モードにも同じ「開く」段取りを入れ
   ok("  駅は「沿線・駅絞り込み＋」", /_openerForKind[\s\S]{0,500}沿線・駅絞り込み＋/.test(ps));
   ok("  その他は「絞り込み条件＋」", /絞り込み条件＋/.test(ps));
   ok("自動モードに _ensureFieldVisible がある", /function _ensureFieldVisible\(el, name, maxMs\)/.test(ps));
-  ok("  「＋」を押してから見えるのを待つ（最大3秒）", /_humanPointerClick\(op, function \(\) \{ try \{ op\.click\(\); \} catch \(_\) \{\} \}\)/.test(ps) && /setTimeout\(poll, 200\)/.test(ps));
+  ok("  「＋」を押してから見えるのを待つ（最大3秒）", /_humanPointerClick\(op, function \(\) \{ try \{ op\.click\(\); \} catch \(_\) \{\} \}\)/.test(ps) && /var limit = \(maxMs \|\| 3000\) \+ _pre;/.test(ps) && /setTimeout\(poll, 160 \+ Math\.floor\(Math\.random\(\) \* 120\)\)/.test(ps));
   ok("  押した事を点検に残す（open_field）", /_auditStepP\('open_field'/.test(ps));
 }
 
@@ -56,7 +56,7 @@ console.log("\n■ ④ 場所（所在地・駅）のモーダルは自動でも
 
 console.log("\n■ ⑤ 検索前の確認で「違う」になっても止まらない（v2.6.81）");
 {
-  ok("場所だけ止める", /_auditStepP\('gate_stop_area'/.test(ps));
+  // 2026-11-16〜: 場所だけ→「場所・間取り・敷礼・前客の条件残り」を止める（_hardGate → gate_stop_basic）。場所は今も止める\n  ok("場所だけ止める", /_auditStepP\('gate_stop_basic'/.test(ps) && /s\.indexOf\('場所'\) === 0/.test(ps));
   ok("家賃などは警告して検索する", /_auditStepP\('gate_warn'/.test(ps));
   ok("止めてもいないのに検索しない、が無い", !/_auditStepP\('gate_stop'/.test(ps));
 }

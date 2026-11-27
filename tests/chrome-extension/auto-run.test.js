@@ -131,7 +131,14 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
   ok("popup: 更新日の欄は値を入れるだけ（change を出さない＝DB に書かない）", /undo\.prevDays = el\.value; el\.value = ar\.rp_update_days \? String\(ar\.rp_update_days\) : "";/.test(pp) && !/_applyAutoRunToForm[\s\S]{0,900}dispatchEvent/.test(pp.slice(pp.indexOf("function _applyAutoRunToForm"), pp.indexOf("function _restoreAutoRun"))));
   ok("popup: リアプロの条件に sort_order・max_pages（自動便だけ）", /sort_order: _autoSort,\s*max_pages: _autoMaxPages,/.test(pp));
   ok("popup: ITANDI の条件に sort_order・max_pages", /sort_order: _autoSort_it,\s*max_pages: _autoMaxPages_it,/.test(pp));
-  ok("popup: dataset は await より前に読む", /const _autoSort = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp) && /const _autoSort_it = autofillBtn\.dataset\.auto_sort \|\| null;/.test(pp));
+  {
+    // 2.8.328: 旧は文があるだけで通っていた（実際は先頭の学びの取り直しの await の後で読み、押す側が戻した後の値を読んでいた）→ 位置で見る
+    const rpAt = pp.indexOf("const _autoSort = autofillBtn.dataset.auto_sort || null;");
+    const rpOn = pp.lastIndexOf("autofillBtn.onclick = async () => {", rpAt);
+    const rpAwait = pp.slice(rpOn, rpAt).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").search(/\bawait\b/);
+    ok("popup: dataset は await より前に読む（リアプロ: 処理の先頭から読むまでに await が無い）", rpAt > 0 && rpOn > 0 && rpAwait < 0, { rpAt, rpOn, rpAwait });
+    ok("popup: dataset は await より前に読む（ITANDI: 押した時に写し取って渡す）", /auto_sort: autofillBtn\.dataset\.auto_sort \|\| null,[\s\S]{0,400}await new Promise\(function \(r\) \{ _axLearnRefreshBeforeAutofill\(r\); \}\);\s*await _itandiAutofillRun\(_auditCtx_it, _btnSnap_it\);/.test(pp) && /const _autoSort_it = _snapIt\.auto_sort \|\| null;/.test(pp));
+  }
   const bd = read("bulk-dl.js");
   // 2026-11-11 竹内さん「AD順などするときにページ更新してしまっている。ページ更新すると拡張ツールの検索のところが
 //   閉じてしまうのにそのまま物件取得にうつってしまうので全物件が対象となってしまう」:
@@ -140,7 +147,7 @@ console.log("\n■ 配線（background・popup・underbar・bulk-dl・itandi-bul
    * ⚠ 2026-11-14: 「次ページへ進む」処理を足して `autoPressPdfs()` が長くなったので、
    *   範囲を 3400 → 6000 文字に広げた（**意図は変えない**: 押す前に AD 順へ並べ替える）。
    */
-  ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える（メニューを人の順に操作）", /function autoPressPdfs\(\)[\s\S]{0,6000}_sortByAdLikeHuman/.test(bd) && /③ 高→低 を押します/.test(bd));
+  ok("bulk-dl: 自動の押下の前に AD 高い順へ並べ替える（メニューを人の順に操作）", /function autoPressPdfs\((?:opt)?\)[\s\S]{0,12000}_sortByAdLikeHuman/.test(bd) && /③ 高→低へカーソルを動かして押します/.test(bd) && /function _sortByAdLikeHuman\(done\)/.test(bd));
 ok("bulk-dl: AD順のためにページを読み込み直さない（全物件にならない）", !/location\.href = _adLink\.href;/.test(bd));
 ok("bulk-dl: 並べ替えの後で押し始める（_autoPdfRunPending）", /_autoPdfRunPending = function \(\) \{\s*\n\s*try \{ _rescanRows\(\); \} catch \(_\) \{\}\s*\n\s*_startAutoPressRun\(\);/.test(bd));
   ok("bulk-dl: 午後の便（更新順）は並べ替えない（allowAdSort）", /_AR\(\)\.allowAdSort\(_arOpts\)/.test(bd) && /更新順の指定 → AD へ並べ替えずに押します/.test(bd));

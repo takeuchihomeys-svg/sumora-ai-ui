@@ -6394,6 +6394,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 3巡目（10/07 竹内さん「必要な場面では物件検索ブレインから分析してもらうのもあり」）: 決め手の条件（物件検索ブレインと同じ値）を返信の材料に。
     //   REPLY_PROPERTY_BRAIN=on（既定 off）・テストは testFlags.property_brain。場面: お礼・検討中・条件・質問・その他（物件を送ってきた番・見積・内覧・申込は渡さない）
     const propertyBrainReplyNote = await (async () => {
+      // ⛔ 退役（2026-11-27 統括役の決め・台帳 #156 dropped・#816）: 既定 off のまま。理由＝代わりあり（物件の検索の材料 propertySearchText）・試験で差なし（off-g2-r-r 5問で良く0・悪化0）。コードを消すのは後でまとめて
       const on = testFlags.property_brain ? testFlags.property_brain === "on" : (process.env.REPLY_PROPERTY_BRAIN ?? "").toLowerCase() === "on";
       if (!on || isTemplateOptimize || !replyScene || !["ack", "considering", "conditions", "question", "other"].includes(replyScene)) return "";
       try {

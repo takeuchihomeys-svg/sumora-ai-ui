@@ -165,7 +165,7 @@ async function patchRealproBundle(
   const clone = JSON.parse(JSON.stringify(data.bundle)) as Record<string, unknown>;
   mutator(clone);
   try {
-    prepareBundleForWrite(clone);
+    prepareBundleForWrite(clone, "realpro");
   } catch {
     /* playbook が作れなくても gaps / nearness は書く */
   }

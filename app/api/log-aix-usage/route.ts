@@ -1,6 +1,20 @@
 ﻿import { estimateSentFlagOf } from "@/app/lib/estimate-sent-flag";
 import { NextRequest, NextResponse } from "next/server";
-import { waitUntil } from "@vercel/functions";
+import { waitUntil as vercelWaitUntil } from "@vercel/functions";
+/**
+ * 2026-11-26 作業員L（統括役の了承・本番の時間切れ 2時間で5回・応答の後の処理が 30秒を超えて切れ、送った物件・事実の台帳などの記録が抜けていた）:
+ *   応答の後の処理（waitUntil）を1本ずつ、呼んだ順の番号とかかった ms を1行に（tag log-aix-usage:bg・記録だけ・既定 on・LOG_AIX_BG_TIMING=off で止める）。
+ *   番号はこのファイルの waitUntil の並び（スイッチで飛ぶ所があるので of＝その要求で呼んだ数も出す）。どれが遅いかを次の時間切れで1行で言えるように
+ */
+let bgSeq = 0, bgOf = 0;
+function waitUntil(p: Promise<unknown>): void {
+  if ((process.env.LOG_AIX_BG_TIMING ?? "").trim().toLowerCase() === "off") { vercelWaitUntil(p); return; }
+  const i = ++bgSeq; bgOf = i; const t0 = Date.now();
+  vercelWaitUntil(Promise.resolve(p).then(
+    () => { console.log(JSON.stringify({ tag: "log-aix-usage:bg", i, of: bgOf, ms: Date.now() - t0 })); },
+    (e) => { console.log(JSON.stringify({ tag: "log-aix-usage:bg", i, of: bgOf, ms: Date.now() - t0, error: e instanceof Error ? e.message.slice(0, 80) : String(e).slice(0, 80) })); },
+  ));
+}
 import { viewingDoneOnAfterGreetingOn, isAfterViewingGreeting } from "@/app/lib/viewing-done-after-greeting";
 import { supabase } from "@/app/lib/supabase-server";
 import Anthropic from "@anthropic-ai/sdk";
@@ -21,7 +35,8 @@ import { brainOnlySummaryEnabled, aixMetaPatchEnabled } from "@/app/lib/brain-on
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
 // HIGH-01: fire-and-forget は waitUntil で包む（Vercelはレスポンス返却後に処理凍結されるため）
-export const maxDuration = 30;
+// 2026-11-26 作業員L: 30→60（応答はもう返している＝スタッフの待ちは変わらない・応答の後の処理が最後まで済む時間を取る）
+export const maxDuration = 60;
 
 const AIX_TYPE_LABELS: Record<string, string> = {
   property_send:            "物件紹介を送った",
@@ -195,6 +210,7 @@ ${msgContext}
 }
 
 export async function POST(req: NextRequest) {
+  bgSeq = 0; bgOf = 0; // 応答の後の処理の番号を要求ごとに数え直す（同じ箱で重なった時は番号がずれる＝記録だけ）
   try {
     const body = await req.json() as {
       conversation_id: string;

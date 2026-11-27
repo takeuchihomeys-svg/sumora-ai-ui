@@ -95,10 +95,52 @@ export function shouldTouchRead(readAt: string | null | undefined, nowMs: number
   return !Number.isFinite(t) || nowMs - t >= READ_MARK_MIN_GAP_MS;
 }
 
-/** CDN のキャッシュの見出し（軽い確認は30秒・束は60秒・古くても5分は返しながら裏で取り直す） */
-export function cacheHeaders(kind: "light" | "bundle"): Record<string, string> {
-  const s = kind === "light" ? 30 : 60;
-  return { "Cache-Control": `public, s-maxage=${s}, stale-while-revalidate=300` };
+/**
+ * ★ 2026-11-27: 22:20 cron 等が作った長期（7日超・30日）の束が、31分後の 3日 buildNow で即上書きされるのを防ぐ。
+ *   作成から 12 時間以内の長期束は stale にしない（?fresh=1 / ?refresh=1 なら再生成する）。
+ *   戻す: LEARN_KEEP_LONG_CRON_BUNDLE=off
+ */
+export const LONG_BUNDLE_MIN_SPAN_MS = 7 * 86_400_000;
+export const LONG_BUNDLE_KEEP_AGE_MS = 12 * 3600_000;
+export function shouldPreserveLongCronBundle(o: {
+  createdAt?: string | null;
+  sourceFrom?: string | null;
+  sourceTo?: string | null;
+  forceFresh?: boolean;
+  nowMs?: number;
+  env?: Record<string, string | undefined>;
+}): boolean {
+  const env = o.env ?? (typeof process !== "undefined" ? process.env : {});
+  if ((env.LEARN_KEEP_LONG_CRON_BUNDLE ?? "").trim().toLowerCase() === "off") return false;
+  if (o.forceFresh) return false;
+  const createdMs = Date.parse(String(o.createdAt ?? ""));
+  const fromMs = Date.parse(String(o.sourceFrom ?? ""));
+  const toMs = Date.parse(String(o.sourceTo ?? ""));
+  if (!Number.isFinite(createdMs) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) return false;
+  const now = o.nowMs ?? Date.now();
+  const ageMs = now - createdMs;
+  const spanMs = toMs - fromMs;
+  return spanMs >= LONG_BUNDLE_MIN_SPAN_MS && ageMs >= 0 && ageMs < LONG_BUNDLE_KEEP_AGE_MS;
+}
+
+/** CDN のキャッシュの見出し（lightはSWR無しで30秒・束は60秒+SWR300秒・v不整合や再構築時はno-store） */
+export function cacheHeaders(kind: "light" | "bundle" | "none"): Record<string, string> {
+  if (kind === "none") return { "Cache-Control": "no-store, no-cache, must-revalidate" };
+  if (kind === "light") return { "Cache-Control": "public, s-maxage=30, must-revalidate" };
+  return { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" };
+}
+
+/** 束の版クエリ文字列を作る（拡張が ?touch=0 で検知した新版を本体 URL の &v=... に載せて CDN 旧キャッシュを確実にバイパスする） */
+export function bundleVersionParam(o?: {
+  generated_at?: unknown;
+  playbook_rules_v?: unknown;
+  playbook_build_v?: unknown;
+} | null): string {
+  const src = o && typeof o === "object" ? o : {};
+  const gen = String(src.generated_at ?? "").trim().replace(/[^0-9A-Za-z._:-]/g, "");
+  const rv = String(src.playbook_rules_v ?? "").trim().slice(0, 12).replace(/[^0-9A-Za-z_-]/g, "");
+  const bv = Number(src.playbook_build_v) || 0;
+  return [gen || "0", rv || "0", String(bv)].join("_");
 }
 
 /** 同じ鍵の重なった呼び出しを1本にまとめる（on でない時はそのまま呼ぶ）。終わったら外す */

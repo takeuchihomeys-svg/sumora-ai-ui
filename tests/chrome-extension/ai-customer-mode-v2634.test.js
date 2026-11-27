@@ -14,6 +14,8 @@ const path = require("path");
 const dir = path.join(__dirname, "..", "..", "chrome-extension");
 const read = (f) => fs.readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n");
 const M = require(path.join(dir, "mode-core.js"));
+// 2.8.313: 関数の本体（次の2字下げの function／var／コメントまで）を取る。固定の文字数の窓に頼らず、コメントが増えても崩れない形で見る。CRLF 両対応。
+const fnSlice = (src, head) => { const i = src.indexOf(head); if (i < 0) return ""; const re = /\r?\n  (?:function |var |\/\*\*)/g; re.lastIndex = i + head.length + 30; const m = re.exec(src); return src.slice(i, m ? m.index : src.length); };
 
 let pass = 0, fail = 0;
 function eq(name, a, b) { const ok = JSON.stringify(a) === JSON.stringify(b); ok ? pass++ : fail++; console.log((ok ? "  ✓ " : "  ✗ ") + name + (ok ? "" : `\n      got ${JSON.stringify(a)} want ${JSON.stringify(b)}`)); }
@@ -63,7 +65,8 @@ console.log("\n■ ④ popup は条件画面を開くが、開いただけでは
 console.log("\n■ ⑤ 検索開始の道（ボタン／自動便だけ）");
 {
   const pj = read("popup.js");
-  ok("スタッフモードでは案内しない", /if \(!_aiCustomerModeOn \|\| _staffModeOn\) return false;/.test(pj));
+  // 2.8.313 退役: 「スタッフモードでは案内しない」は 2.8.156／2026-11-22 で、スタッフも選んだお客さんの条件画面を開く（🔍ボタン待ち）形に意図して置き換わった（popup.js _maybeAiCustomerAutoSearch の `_waitBtn = AI || スタッフ`・mode-core.js effectiveBehavior の staff 分岐）。残る守り＝通常モードでは案内しない、を見る。
+  ok("通常モードでは案内しない（AIX・スタッフの時だけ）", /var _waitBtn = !!_aiCustomerModeOn \|\| !!_staffModeOn;\s*if \(!_waitBtn\) return false;/.test(pj));
   ok("自動の一括の回は案内をスキップ", /if \(btn\.dataset\.automated\) return false;/.test(pj));
   ok("人が押す道（autofillBtn.onclick）", /autofillBtn\.onclick = async \(\) => \{/.test(pj));
   ok("自動便の automated クリック道", /aBtn\.dataset\.automated = \"1\"/.test(pj) && /aBtn\.click\(\)/.test(pj));
@@ -73,8 +76,10 @@ console.log("\n■ ⑤ 検索開始の道（ボタン／自動便だけ）");
 console.log("\n■ ⑥ 自動（aix）は一覧の行を1件ずつ押す（AIX とは別物）");
 {
   const bd = read("bulk-dl.js");
-  ok("自動モードの時だけ一覧を押す（_autoModeOn）", /function autoPressPdfs\(\)[\s\S]{0,400}if \(!_autoModeOn\)/.test(bd));
-  ok("自動押下の判定は 自動(aixMode) と AIX(aiMode) の両方＋autoModeAt", /var chosen = Number\(s\.autoModeAt\) > 0;/.test(bd) && /return !staffOn && chosen && \(!!s\.aixMode \|\| !!s\.aiMode\);/.test(bd));
+  // 2.8.313: autoPressPdfs の頭に待ち直しの処理が増えて 400 字の窓で届かない。関数の頭から最初の `if (!_autoModeOn)` と not-auto の返しを見る形に
+  ok("自動モードの時だけ一覧を押す（_autoModeOn）", /function autoPressPdfs\([^)]*\) \{[\s\S]*?if \(!_autoModeOn\) \{[\s\S]{0,200}reason: "not-auto"/.test(bd));
+  // 2.8.313: 自動(aixMode)・AIX(aiMode)＋autoModeAt は今も同じ。2026-11-22 でスタッフも自動押下に加わった（`if (staffOn) return true;`・bulk-dl.js _readAutoMode のコメント）ので `!staffOn &&` の除外だけ退役。
+  ok("自動押下の判定は 自動(aixMode) と AIX(aiMode) の両方＋autoModeAt（スタッフも自動押下に加わった）", /var chosen = Number\(s\.autoModeAt\) > 0;/.test(bd) && /return chosen && \(!!s\.aixMode \|\| !!s\.aiMode\);/.test(bd) && /if \(staffOn\) return true;/.test(bd));
   // 2026-11-11 竹内さん「AIXの場合光るのではなくて自動で押していく形となる」
   {
     const rg = read("realpro-guide.js");
@@ -202,7 +207,8 @@ console.log("\n■ 押す順（資料を上から全部順にしていない）�
   // 2026-11-11 スクロール待ちの揺らぎ（同じ距離でも毎回ちがう・page-script.js の _ensureInView）
   const psrc = fs3.readFileSync(path.join(dir, "page-script.js"), "utf8");
   ok("スクロール待ちが距離だけで決まらない（logNormalDelay で揺らす）", /H\.logNormalDelay\(base, 0\.3\)/.test(psrc) && /遠い時は目で追う/.test(psrc));
-  ok("スクロール位置は最小移動のまま（真ん中へ寄せて往復しない）", /block: "nearest", inline: "nearest"/.test(psrc));
+  // 2.8.313 退役（「毎回 nearest 固定」の部分）: 2026-11-16/17 竹内さん「築年数が画面見切れ・スクロールする必要がある場所ができていない」で、SELECT・駅区ラベル・確定など重要な欄は中央寄りまで入れる形に意図して置き換わった（page-script.js _ensureInView の _needFull）。既定は今も最小移動（nearest）・往復を避ける守りも残っているのでそれを見る。
+  ok("スクロール位置の既定は最小移動（nearest）・往復しない（直近900ms・逆向きは待つ）", /var _block = "nearest";/.test(psrc) && /now - _lastScrollAt < 900/.test(psrc) && /dir !== _lastScrollDir && now - _lastScrollAt < 2500/.test(psrc));
 }
 
 console.log("\n■ 「考える時間」のバランス（最初は長く・2回目以降は短い）");
@@ -214,7 +220,8 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("最初は 2.0〜6.5秒・2回目以降は 0.8〜2.4秒", /_first \? 2000 : 800/.test(ps4) && /_first \? 6500 : 2400/.test(ps4));
   ok("考える間は実際に待ってから入力を始める（setTimeout(next, ms)）", /setTimeout\(next, ms\)/.test(ps4));
   ok("駅は最初だけ一覧を目で探す間（1.2〜3.4秒）が入る", /_stationPickSeen/.test(ps4) && /if \(look < 1200\) look = 1200; if \(look > 3400\) look = 3400;/.test(ps4));
-  ok("駅の2つ目以降は速い（既存の 420〜1100ms＋一息）", /_stGapMin\(\) \{ return 420; \}/.test(ps4) && /_stationBreath/.test(ps4));
+  // 2.8.313 退役（「420〜1100ms で速い」の部分）: 駅の2つ目以降が短間隔の主因（統括Pro 2026-11-17・通常録画 駅 gap p50≈1.1秒）として、_stGapMin は 950ms 以上の人の速さに意図して置き換わった（page-script.js _stGapMin・memory/dept_search_tool.md「駅gap下限 950」）。一息（_stationBreath）は今も有るのでそれを見る。
+  ok("駅の間は人の速さ（下限 950ms）＋一息", /if \(v < 950\) v = 950;/.test(fnSlice(ps4, "function _stGapMin(")) && /_stationBreath/.test(ps4));
   ok("考える間を点検に残す（think_first・station_first_look）", /think_first/.test(ps4) && /station_first_look/.test(ps4));
   // ITANDI も同じ形（1.8〜5.5秒・2回目以降0.7〜2.2秒）
   const ips4 = fs4.readFileSync(path.join(dir, "itandi-page-script.js"), "utf8");
@@ -234,14 +241,18 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("ITANDI: スクロール待ちも距離だけで決まらない（logNormalDelay）", /w = H\.logNormalDelay\(base, 0\.3\)/.test(ips4) && /遠い|Math\.abs\(dist\) > 200/.test(ips4));
   ok("ITANDI: 間取りを上から順に選ばない（順番をシャッフル）", /_range\.sort\(function \(a, b\) \{ return \(0\.5 - Math\.random\(\)\); \}\)/.test(ips4) && /_subs\.sort\(function \(\) \{ return 0\.5 - Math\.random\(\); \}\)/.test(ips4));
   // 2026-11-11 竹内さん「物件検索した後に次のお客さんにうつるためにリセットする間隔など人間的になっているか」
-  ok("リアプロ: 前のお客様の条件を一瞬で全部外さない（1つずつ人の間で外す）", /_toUncheck\.push\(cb\)/.test(ps4) && /setTimeout\(function \(\) \{ _unchk\(i \+ 1\); \}, gap\)/.test(ps4));
-  ok("リアプロ: 外す間は 90〜260ms・8%で一息 300〜800ms", /if \(gap < 90\) gap = 90; if \(gap > 260\) gap = 260;/.test(ps4) && /Math\.random\(\) < 0\.08\) gap \+= 300/.test(ps4));
-  ok("リアプロ: 多い時（20件超）は5件ずつまとめて外す", /if \(_toUncheck\.length > 20\)/.test(ps4) && /slice\(_chunk, _chunk \+ 5\)/.test(ps4));
-  ok("リアプロ: 全部消えてから次へ進む（_resetRest）", /var _afterUncheck = function \(\) \{ _resetRest\(\); \}/.test(ps4) && /_chunk >= _toUncheck\.length\) \{ _afterUncheck\(\); return; \}/.test(ps4));
+  // 2.8.313: 外し方は 2.8.147（竹内さん「外し方も入れるのと同じように１つずつ」）で _clearChecksOneByOne（送る→カーソルで押す→外れたか確かめる→次）に置き換わった。一瞬で全部外さず1つずつ、は今も同じ。
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リアプロ: 前のお客様の条件を一瞬で全部外さない
+  // 2.8.313 退役: 外す間の「90〜260ms・8%で一息」は 2.8.147 で外しも入れる時と同じ1つずつ（_clearChecksOneByOne→_toggleCheckboxLikeHuman）に置き換わり、間は人の速さ（硬下限900〜）になった（page-script.js _clearChecksOneByOne のコメント）。
+  // 2.8.313 退役: 「20件超は5件ずつまとめて外す」は 2.8.147 で廃止（旧はまとめて順番待ちに積み外れたか確かめず次を押していた→常に1つずつ確かめて外す・page-script.js の 2.8.146/147 のコメント）。
+  // 2.8.313: `_afterUncheck` は無くなり、1つずつ外し終わった後の done から `_next`（既定 _resetRest）へ進む形に（関数宣言 function _resetRest は残っている）。
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リアプロ: 全部消えてから次へ進む
   ok("次のお客様まで 15〜60秒＋一息（nextCommandGapMs）", /function nextCommandGapMs\(rng\) \{\s*return customerGapMs\(rng\);/.test(fs4.readFileSync(path.join(dir, "auto-run.js"), "utf8")));
   // 2026-11-11 竹内さん「この＋一息の考え方かなり重要。人間はその発想があるから。ほかでもちゃんと確認おねがい。リアプロもitandiも」
-  ok("リアプロ: 駅の一息は2段（10%で900〜2600ms・3%で2.6〜5.5秒）", /_stationBreath/.test(ps4) && /Math\.random\(\) < 0\.10\) add \+= 900/.test(ps4) && /Math\.random\(\) < 0\.03\) add \+= 2600/.test(ps4));
-  ok("リアプロ: 間取り・設備のチェックにも一息（10%・3%）", /enqueueHumanClick\(cb, _clickEl, 420, 980\);[\s\S]{0,600}Math\.random\(\) < 0\.10\)/.test(ps4));
+  // 2.8.313: _stationBreath は2段のまま、数字だけ録画に合わせて調整された（12%で約1.4秒・3.5%で約3.6秒の対数正規）。
+  ok("リアプロ: 駅の一息は2段（12%で約1.4秒・3.5%で約3.6秒の対数正規）", (function () { const b = fnSlice(ps4, "function _stationBreath("); return /Math\.random\(\) < 0\.12\)/.test(b) && /logNormalDelay\(1400, 0\.45\)/.test(b) && /Math\.random\(\) < 0\.035\)/.test(b) && /logNormalDelay\(3600, 0\.4\)/.test(b); })());
+  // 2.8.313: 間取り・設備のチェックは setCheckboxes に集約（押し方は _toggleCheckboxLikeHuman／_clearToggleGapRange・固定の 420〜980 は無くなった）。1つ押した後の一息（10%・3%）は今も同じ。
+  ok("リアプロ: 間取り・設備のチェックにも一息（10%・3%）", (function () { const b = fnSlice(ps4, "function setCheckboxes("); return /Math\.random\(\) < 0\.10\) \{/.test(b) && /"息"/.test(b) && /Math\.random\(\) < 0\.03\) \{/.test(b) && /"考え"/.test(b); })());
   ok("ITANDI: 駅の一息も2段に揃えた（10%で900〜2600ms・3%で2.6〜5.5秒）", /Math\.random\(\) < 0\.10\) _nextGap \+= 900/.test(ips4) && /Math\.random\(\) < 0\.03\) _nextGap \+= 2600/.test(ips4));
   ok("ITANDI: 駅の間も対数正規（_itHumanRand）", /function _itHumanRand\(lo, hi\)/.test(ips4) && /_itHumanRand\(420, _itHumanRand\(760, 1100\)\)/.test(ips4));
   ok("ITANDI: 全選択の後にも一息（10%で900〜2600ms）", /allInp\.checked \|\| n >= 12\) \{[\s\S]{0,300}Math\.random\(\) < 0\.10 \? 900/.test(ips4));
@@ -253,14 +264,19 @@ console.log("\n■ 「考える時間」のバランス（最初は長く・2回
   ok("自動モードも休憩（短12〜30秒・長60〜180秒・90分で小休憩）", /restDue\(_autoWorkedSince/.test(bgn) && /continuousRestDue\(_autoWorkedSince/.test(bgn));
   ok("休憩の長さ（short 12〜30秒・long 60〜180秒）", /REST_SHORT_MS = 12000, REST_SHORT_MAX_MS = 30000/.test(hwn) && /REST_LONG_MS = 60000, REST_LONG_MAX_MS = 180000/.test(hwn)); }
   // 2026-11-11 竹内さん「一連のうごきからちゃんと一息の部分入るようになっているか。人間のように一息もランダムにはいる」
-  ok("リセット: セレクト・テキストも1つずつ消す（一斉に消さない）", /_clearTargets\.push\(\{ kind: "select"/.test(ps4) && /setTimeout\(_clearNext, gap\)/.test(ps4));
+  // 2.8.313: 2.8.270 で _resetFieldsOneByOne（欄ごとに 戻す→戻ったか読む→次）に置き換わった。select はカーソルで先頭へ・text は欄へカーソルを当てて空に、を1つずつ。
+  // 退役（段階1・2026-11-27）: 1つずつ外し・段の外し・押し直しを廃止したため確認対象外 — リセット: セレクト・テキストも1つずつ消す
   ok("リセット: 全部消えたのを見届ける間にも一息（10%）", /var _look = _ln\(650, 0\.4, 380, 1300\);[\s\S]{0,200}Math\.random\(\) < 0\.10\) _look \+= 900/.test(ps4));
-  ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", /function _enqueueWithEl[\s\S]{0,900}Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(ps4));
-  ok("リアプロ: 検索を押す前の見直しにも一息（10%・3%）", /window\._axSearchLookedOver[\s\S]{0,400}Math\.random\(\) < 0\.10\) _lookMs \+= 900/.test(ps4));
+  // 2.8.313: _enqueueWithEl の本体にコメントが増えて 900 字の窓で届かない。関数の本体の中で見る形に（一息の数字は同じ）。
+  ok("条件の入力: 1項目入れた後に一息（10%で900〜2600ms・3%で2.6〜5.5秒）", (function () { const b = fnSlice(ps4, "function _enqueueWithEl("); return /Math\.random\(\) < 0\.10\) \{[\s\S]{0,200}"息"/.test(b) && /Math\.random\(\) < 0\.03\) \{[\s\S]{0,200}"考え"/.test(b); })());
+  // 2.8.313: 2.8.263 竹内さん「検索ボタン押してから実検索までラグが大きい」で、見直しは 0.4〜1.0秒・一息は稀（5%で 0.5〜1.2秒）に短くした。一息が入る形は今も有る。
+  ok("リアプロ: 検索を押す前の見直し（2.8.317 から 9〜12秒・毎回揺らす。旧の稀な一息 5% は含めた）", /var _lookMs = _searchReviewMs\(\);/.test(ps4) && /window\._axSearchLookedOver = true;/.test(ps4));
   ok("ITANDI: 検索を押す前にも一息（10%・3%）", /_preSearchBreath[\s\S]{0,400}Math\.random\(\) < 0\.10\) _preSearchBreath = 900/.test(ips4));
   // 2026-11-11 竹内さん「AIXの部分に休憩時間等もちゃんと書いといて。昼休みなら昼休みと人間のように」
-  ok("枠に「いま何をしているか」を出す（_axlxWorkNote）", /function _axlxWorkNote\(text, untilMs\)/.test(read("bulk-dl.js")) && /_axlxWorkNote\("👀 資料を見る"/.test(read("bulk-dl.js")));
-  ok("残り秒を毎秒更新して、過ぎたら戻す", /el\.textContent = text \+ \(left > 0 \? "（あと" \+ left \+ "秒）" : ""\)/.test(read("bulk-dl.js")) && /_workNoteTimer = setInterval\(paint, 1000\)/.test(read("bulk-dl.js")));
+  // 2.8.313: 資料を見る間の表示文は「資料を確認中」に変わった（bulk-dl.js _lookAtDocThenGo）。検索結果を見る間は「👀 検索結果を見ています」。_axlxWorkNote(text, untilMs) 自体は同じ。
+  ok("枠に「いま何をしているか」を出す（_axlxWorkNote）", /function _axlxWorkNote\(text, untilMs\)/.test(read("bulk-dl.js")) && /_axlxWorkNote\("資料を確認中"/.test(read("bulk-dl.js")) && /_axlxWorkNote\("👀 検索結果を見ています"/.test(read("bulk-dl.js")));
+  // 2.8.313: 表示は el.textContent の直書きから _setStatusNowNext(...) 経由に変わった。残り秒の毎秒更新・過ぎたら消して進捗表示へ戻す、は同じ。
+  ok("残り秒を毎秒更新して、過ぎたら戻す", /_setStatusNowNext\(text \+ \(left > 0 \? "（あと" \+ left \+ "秒）" : ""\), null\);/.test(read("bulk-dl.js")) && /_workNoteTimer = setInterval\(paint, 1000\)/.test(read("bulk-dl.js")) && /_axlxClearWorkNote\(\); _paintPdfProgress\(\);/.test(read("bulk-dl.js")));
   ok("昼休み（12:00〜13:00）を判定して「🍱 昼休み（13:00まで）」と出す", /_lunchRestMs|12 \* 60 && _mins < 13 \* 60/.test(read("background.js")) && /🍱 昼休み（13:00まで/.test(bg));
   ok("休憩・次のお客様までの間も枠に出す", /☕ 休憩中/.test(read("background.js")) && /⏳ 次のお客様まで/.test(read("background.js")));
   ok("ITANDI の枠にも同じ表示", /axlx-work-note/.test(ib4) && /axlx-itandi-count/.test(ib4));
@@ -292,9 +308,12 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
   ok("カーソル: 画面の端でも丸めない（端の要素を正しく指せる）", /function _clamp\(p\) \{\s*return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5) || /return \{ x: Number\(p\.x\) \|\| 0, y: Number\(p\.y\) \|\| 0 \};/.test(pu5));
   ok("カーソル: 画面の外なら visiblePosition は null（見えていない扱い）", /function visiblePosition\(\)/.test(pu5) && /if \(_pos\.x < 0 \|\| _pos\.y < 0 \|\| _pos\.x > vw \|\| _pos\.y > vh\) return null;/.test(pu5));
   // 2026-11-11 竹内さん「カーソルもちゃんと人間のようにひと息つくときもあるか」
-  ok("カーソル: 動く途中でひと息つく（18%・120〜420ms）", /function _pausePointFor\(n\)/.test(pu5) && /Math\.random\(\) >= 0\.18\) return -1;/.test(pu5) && /120 \+ Math\.floor\(Math\.random\(\) \* 300\)/.test(pu5));
-  ok("カーソル: 長い移動の時だけ止まる（400ms 超）", /total > 400 \? _pausePointFor/.test(pu5));
-  ok("カーソル: 止まる位置は軌跡の 25〜70%", /0\.25 \+ Math\.random\(\) \* 0\.45/.test(pu5));
+  // 2.8.313: 途中の一息は残り、数字だけ調整された（統括Pro 2026-11-16 で確率 34%・2026-11-17 で長さが対数正規 320ms 中心・140〜900ms に収める）。
+  ok("カーソル: 動く途中でひと息つく（34%・約320msの対数正規で140〜900ms）", /function _pausePointFor\(n\)/.test(pu5) && /Math\.random\(\) >= 0\.34\) return -1;/.test(pu5) && /logNormalDelay\(320, 0\.45\)/.test(pu5) && /if \(v < 140\) v = 140;/.test(pu5) && /if \(v > 900\) v = 900;/.test(pu5));
+  // 2.8.313: 長い移動（320ms 超）はふつうに止まる判定・短い移動は 12% だけ。点が8未満（短い移動）は止まらない。
+  ok("カーソル: 長い移動の時だけよく止まる（320ms 超・短い移動は 12% だけ・点8未満は止まらない）", /total > 320 \? _pausePointFor\(pts\.length\) : \(Math\.random\(\) < 0\.12 \? _pausePointFor\(pts\.length\) : -1\)/.test(pu5) && /if \(n < 8\) return -1;/.test(pu5));
+  // 2.8.313: 止まる位置は軌跡の 22〜72% に調整（同じ「途中で止まる」形）。
+  ok("カーソル: 止まる位置は軌跡の 22〜72%", /Math\.floor\(n \* \(0\.22 \+ Math\.random\(\) \* 0\.50\)\)/.test(pu5));
   ok("カーソル: 迷う時にその場で漂う（drift）", /function drift\(ms, opts\)/.test(pu5) && /Math\.sin\(t \* Math\.PI \* 2 \+ ph\)/.test(pu5));
   ok("カーソル: 狙いを外して戻る（wander）", /function wander\(el, ms\)/.test(pu5));
   // 実際に止まる回がどれくらいあるか（点の数から）
@@ -307,17 +326,20 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
     ok("カーソル: 長い移動 2000回で 300回前後は途中で止まる（18%）", withPause > 250 && withPause < 450, { withPause });
   // 2026-11-11 竹内さん「ボタン押して次のボタンおすところも。この部分はすぐ押せる、この部分は考えながら押すから時間必要」
   ok("リアプロ: 押した後の間をボタンの意味で変える（_afterClickGapMs）", /function _afterClickGapMs\(el\)/.test(ps5) && /input:  \[500, 1200\]/.test(ps5) && /decide: \[1200, 3200\]/.test(ps5));
-  ok("リアプロ: キューが _afterClickGapMs を使う（固定 140〜360ms をやめた）", /var settle = _afterClickGapMs\(item\.el\);/.test(ps5) && !/var settle = 140 \+ Math\.floor\(Math\.random\(\) \* 220\);/.test(ps5));
+  // 2.8.313: 区・選択・pick の各レーンは専用の短い間・それ以外は _afterClickGapMs（ボタンの意味で変える）。固定 140〜360ms をやめた、は同じ。
+  ok("リアプロ: キューが _afterClickGapMs を使う（固定 140〜360ms をやめた）", /: \(_isSelItem \? _ln\(90, 0\.4, 50, 200\) : _afterClickGapMs\(item\.el\)\);/.test(ps5) && !/var settle = 140 \+ Math\.floor\(Math\.random\(\) \* 220\);/.test(ps5));
   ok("リアプロ: 決定の後は画面が変わったか見る（12%で+0.6〜1.8秒）・8%で一瞬つく", /_kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5) || /kind === "decide" && Math\.random\(\) < 0\.12\)/.test(ps5));
   ok("ITANDI: 同じくボタンの意味で間を変える", /_r = \[350, 1000\]/.test(ips5) && /_r = \[1200, 3200\]/.test(ips5) && /_r = \[800, 2000\]/.test(ips5));
   // 2026-11-11 竹内さん「検索して決定おしたら検索結果の部分で一息つくなど。ずっとひたすら動き続けたら人間らしくない」
   {
     const bd6 = fs5.readFileSync(path.join(dir, "bulk-dl.js"), "utf8");
-    ok("検索結果が出たら一覧を見渡す間を必ず取る（_resultsLookMs）", /function _resultsLookMs\(n\)/.test(bd6) && /function _startAutoPressAfterLook\(n\)/.test(bd6));
+    // 2.8.313: _startAutoPressAfterLook は (n, opt) の引数に（続きのページ・待ちの印 pendingSig）。見渡す間を必ず取る、は同じ。
+    ok("検索結果が出たら一覧を見渡す間を必ず取る（_resultsLookMs）", /function _resultsLookMs\(n\)/.test(bd6) && /function _startAutoPressAfterLook\(n(?:, opt)?\)/.test(bd6) && /var look = _resultsLookMs\(n\);/.test(bd6));
     ok("押し始めるのは見渡した後（2.5〜6秒・25%で長く・8%でかなり長い）", /if \(base < 2500\) base = 2500;/.test(bd6) && /if \(base > 6000\) base = 6000;/.test(bd6) && /if \(r < 0\.08\) base \+= 6000/.test(bd6) && /else if \(r < 0\.33\) base \+= 2000/.test(bd6));
     ok("件数が多いほど少し長い（20件超で+0.5〜2秒）", /if \(n > 20\) base \+= 500 \+ Math\.floor\(Math\.random\(\) \* 1500\);/.test(bd6));
     ok("見ている間は枠に出す（👀 検索結果を見ています）", /👀 検索結果を見ています/.test(bd6));
-    ok("即押さない（固定の 1.5〜2.7秒をやめた）", !/setTimeout\(function \(\) \{ autoPressPdfs\(\); \}, 1500/.test(bd6) && /_startAutoPressAfterLook\(tracked\.length\);/.test(bd6));
+    // 2.8.313: 呼び出しに { pendingSig: sig } が付いた。固定の 1.5〜2.7秒で即押さず見渡す間を通す、は同じ。
+    ok("即押さない（固定の 1.5〜2.7秒をやめた）", !/setTimeout\(function \(\) \{ autoPressPdfs\(\); \}, 1500/.test(bd6) && /_startAutoPressAfterLook\(tracked\.length(?:, \{[^}]*\})?\);/.test(bd6));
   }
   // 2026-11-11 竹内さん「駅の下限を守る」
   {
@@ -333,7 +355,8 @@ console.log("\n■ マウスとクリック（押す点とカーソルの位置�
       const sd = Math.sqrt(stn.reduce((a, b) => a + (b - m) ** 2, 0) / (stn.length - 1));
       return sd / m > 0.25 && new Set(stn).size > 200;
     })());
-    ok("駅の選択に strictLo を渡している", /enqueueHumanClick\(inp, _clickIfUnchecked, _stGapMin\(\), _stGapMax\(\), null, \{ strictLo: true \}\)/.test(ps5));
+    // 2.8.313: strictLo は呼び出しで渡さず、enqueueHumanClick が minGap≥700 で自動に付ける形になった（_stGapMin は 950 以上なので必ず付く）。
+    ok("駅の選択に strictLo が効く（enqueueHumanClick が minGap≥700 で付ける・駅の下限は950）", /enqueueHumanClick\(labels\[i\], _clickEl, _stGapMin\(\), _stGapMax\(\), null, \{ keys: \[/.test(ps5) && /if \(opts\.strictLo == null && Number\(minGap\) >= 700\) opts = Object\.assign\(\{\}, opts, \{ strictLo: true/.test(ps5) && /if \(v < 950\) v = 950;/.test(fnSlice(ps5, "function _stGapMin(")));
     ok("短いクリック間は今まで通り速く押せる（下限を緩める）", (() => {
       const xs = Array.from({ length: 500 }, () => ctx6.humanRand(80, 200));
       return Math.min(...xs) < 100;

@@ -233,8 +233,29 @@
     var near = el ? openerFor(el) : null;
     if (near) return near;
     if (kind === "pick_station" || kind === "pick_route") return byText(["沿線・駅絞り込み＋", "沿線・駅絞り込み+", "沿線・駅絞り込み"]);
-    if (kind === "pick_city") return byText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"]);
+    if (kind === "pick_city" || kind === "pick_town") return byText(["所在地絞り込み＋", "所在地絞り込み+", "所在地絞り込み"]);
     return byText(["絞り込み条件＋", "絞り込み条件+", "絞り込み条件", "検索条件を表示"]);
+  }
+  /** 町名の一致判定（page-script.js clickDetailArea と同じ：完全・前方・部分・逆前方一致） */
+  function townLabelMatches(labelText, wantTowns) {
+    var pt = norm(labelText);
+    if (!pt) return false;
+    for (var i = 0; i < (wantTowns || []).length; i++) {
+      var wt = norm(wantTowns[i]);
+      if (!wt) continue;
+      if (pt === wt || pt.indexOf(wt) === 0 || pt.indexOf(wt) >= 0 || (pt.length >= 2 && wt.indexOf(pt) === 0)) return true;
+    }
+    return false;
+  }
+  function townAnyChecked(s) {
+    var inps = document.querySelectorAll('input[name="town_code[]"]');
+    for (var i = 0; i < inps.length; i++) {
+      if (!inps[i].checked) continue;
+      if (!s || !s.towns || !s.towns.length) return true;
+      var lb = labelOf(inps[i]);
+      if (townLabelMatches(lb ? lb.textContent : "", s.towns)) return true;
+    }
+    return false;
   }
 
   /** 手順を済みにして覚える（小窓を閉じて印が読めなくなっても戻らない） */
@@ -357,6 +378,11 @@
         : { done: false, target: ensureGlowTargets([opener(s.kind)], s.kind) };
     }
     if (s.kind === "pick_city") {
+      // 詳細地域まで進む回で既に町字画面（label.one_town）が開いていれば区の手順は完了
+      if (s.hasTowns && document.querySelectorAll("label.one_town").length > 0) {
+        markStepDone(s.id);
+        return { done: true };
+      }
       var un = [], any = false;
       (s.codes || []).forEach(function (code) {
         var c2 = checkInput("city_code[]", code);
@@ -364,9 +390,65 @@
         any = true;
         if (!c2.checked) un.push(labelOf(c2) || c2);
       });
-      if (any && !un.length) return { done: true };
+      if (!any && s.ward_name) {
+        var wn = norm(s.ward_name);
+        var wnShort = norm(String(s.ward_name).replace(/^(?:大阪市|堺市)/, ""));
+        var cityInputs = document.querySelectorAll('input[name="city_code[]"]');
+        for (var ci = 0; ci < cityInputs.length; ci++) {
+          var clb = labelOf(cityInputs[ci]);
+          var ctxt = norm(clb ? clb.textContent : "");
+          if (ctxt && (ctxt === wn || ctxt === wnShort || ctxt.indexOf(wn) >= 0 || (wnShort && ctxt.indexOf(wnShort) >= 0))) {
+            any = true;
+            if (!cityInputs[ci].checked) un.push(clb || cityInputs[ci]);
+          }
+        }
+      }
+      if (any && !un.length) {
+        if (s.hasTowns) {
+          var nextBtn = document.querySelector("div.next_step_button2") || byText(["詳細な地域の設定へ進む"]);
+          if (nextBtn && visible(nextBtn)) {
+            return { done: false, target: [nextBtn], note: "「詳細な地域の設定へ進む」を押してください" };
+          }
+          return { done: false, target: [opener(s.kind)], note: "「所在地絞り込み」を開いて「詳細な地域の設定へ進む」を押してください" };
+        }
+        return { done: true };
+      }
       if (un.length && un.some(function (x) { return visible(x); })) return { done: false, target: un, note: "光っている区にチェック（" + un.length + "区）" };
+      var prefBtn = byText(["大阪府"]);
+      if (prefBtn && visible(prefBtn)) return { done: false, target: [prefBtn], note: "先に「大阪府」を押してください" };
       return { done: false, target: [opener(s.kind)], note: "「所在地絞り込み」を開いてください" };
+    }
+    if (s.kind === "pick_town") {
+      var townLabels = Array.prototype.slice.call(document.querySelectorAll("label.one_town"));
+      var townUnchecked = [], townAnyMatched = false, townAnyOn = false;
+      townLabels.forEach(function (lb) {
+        if (!townLabelMatches(lb.textContent, s.towns || [])) return;
+        townAnyMatched = true;
+        var tinp = lb.querySelector('input[name="town_code[]"], input[type="checkbox"]');
+        if (tinp && tinp.checked) townAnyOn = true;
+        else if (visible(lb)) townUnchecked.push(lb);
+      });
+      if (townLabels.length === 0) {
+        // 小窓の外で town_code[] の選択が残っていれば完了
+        if (townAnyChecked(s)) { markStepDone(s.id); return { done: true }; }
+        var nextBtn2 = document.querySelector("div.next_step_button2") || byText(["詳細な地域の設定へ進む"]);
+        if (nextBtn2 && visible(nextBtn2) && nextBtn2.classList && nextBtn2.classList.contains("town_search_Y")) {
+          return { done: false, target: [nextBtn2], note: "「詳細な地域の設定へ進む」を押してください" };
+        }
+        return { done: false, target: [opener(s.kind)], note: "「所在地絞り込み」から詳細地域を開いてください" };
+      }
+      if (townUnchecked.length > 0) {
+        return { done: false, target: townUnchecked, note: "光っている町名にチェック（" + townUnchecked.length + "件）" };
+      }
+      var confTown = byText(["確定してリストへ"]) || byText(["決定", "この条件で絞り込む"]) || byText(["×とじる", "とじる", "閉じる"]);
+      if (townAnyOn) {
+        return { done: false, target: confTown ? [confTown] : [opener(s.kind)], note: "町名を選び終えたら「確定してリストへ」" };
+      }
+      // 画面に町名はあるが一致が1つも見つからない時（右上のスキップ／閉じる）
+      if (!townAnyMatched) {
+        return { done: false, target: confTown ? [confTown] : [opener(s.kind)], note: "町名（" + (s.towns || []).slice(0, 3).join("・") + "）が見つかりません。確認またはスキップしてください" };
+      }
+      return { done: false, target: confTown ? [confTown] : [opener(s.kind)], note: "「確定してリストへ」を押してください" };
     }
     if (s.kind === "search") {
       var go = document.querySelector("div.go_search");
@@ -574,6 +656,7 @@
         rent_min: sel("rental_cost1"), rent_max: sel("rental_cost2"), area_min: sel("square_meter_l"), area_max: sel("square_meter_h"),
         building_age: sel("structured_date"), update_days: sel("update_date"),
         layouts: checkedLabels("room_layout_id[]"), city_codes: Array.prototype.filter.call(document.querySelectorAll('input[name="city_code[]"]'), function (c) { return c.checked; }).map(function (c) { return c.value; }).slice(0, 40),
+        town_codes: Array.prototype.filter.call(document.querySelectorAll('input[name="town_code[]"]'), function (c) { return c.checked; }).map(function (c) { return c.value; }).slice(0, 40),
         stations: stations,
       };
     } catch (_) { return null; }
@@ -767,6 +850,12 @@
       var closeHit = false;
       for (var n2 = t, k2 = 0; n2 && k2 < 4; n2 = n2.parentElement, k2++) if (Plan.STATION_MODAL_DONE_TEXTS.map(norm).indexOf(norm(n2.value || n2.textContent)) >= 0) { closeHit = true; break; }
       if (closeHit && (cur.step.kind === "pick_route" || stationAnyChecked(cur.step))) { markStepDone(cur.step.id); if (cur.step.kind === "pick_station") reportStationMiss(cur.step); }
+    }
+    // 町名の小窓を「確定してリストへ」「×とじる」等で閉じた: 町名に印があれば済み
+    if (cur.step.kind === "pick_town") {
+      var townCloseHit = false;
+      for (var n2t = t, k2t = 0; n2t && k2t < 4; n2t = n2t.parentElement, k2t++) if (Plan.STATION_MODAL_DONE_TEXTS.map(norm).indexOf(norm(n2t.value || n2t.textContent)) >= 0) { townCloseHit = true; break; }
+      if (townCloseHit && townAnyChecked(cur.step)) markStepDone(cur.step.id);
     }
     if (cur.step.kind === "search" && tgt && (tgt === t || tgt.contains(t))) {
       session.stage = "results"; session.at = Date.now(); saveSession(); clearHighlight(); memoSearchRun(session, "realpro");

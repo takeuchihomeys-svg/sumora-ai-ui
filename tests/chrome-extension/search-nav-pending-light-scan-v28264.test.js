@@ -35,7 +35,12 @@ ok("bulk: beforeunload で移動中", /addEventListener\("beforeunload"[\s\S]{0,
 ok("bulk: 検索押下20秒以内だけ", /Date\.now\(\) - pAt >= 20000\) return/.test(bd));
 ok("bulk: 移動中は並べ替えタイマーを止める", /_navPendingAt = Date\.now\(\);[\s\S]{0,200}clearTimeout\(_sortCursorTimer\)/.test(bd));
 ok("bulk: 関所の先頭で nav_pending", /function _pageDisplayedAfterThisSearch[\s\S]{0,120}_isNavPending\(\)/.test(bd));
-ok("bulk: 予約の先頭で nav_pending（行の読み直しをしない）", /function _scheduleSortCursorAfterSearch[\s\S]{0,260}_isNavPending\(\)[\s\S]{0,200}return false/.test(bd));
+// 2.8.328: 予約の先頭に「並べ替え済みの一覧では始めない（_sortRecognizedDone）」が入った。nav_pending は行を読む前のまま
+ok("bulk: 予約の先頭で nav_pending（行の読み直しをしない）", (() => {
+  const i0 = bd.indexOf("function _scheduleSortCursorAfterSearch");
+  const nav = bd.indexOf("_isNavPending()", i0), rows = bd.indexOf("_rescanRows", i0);
+  return i0 > 0 && nav > i0 && nav - i0 < 900 && rows > nav && /_isNavPending\(\)[\s\S]{0,200}return false/.test(bd.slice(nav - 20, nav + 260));
+})());
 ok("bulk: armed より後の beforeunload は消さない", /_navPendingAt && _navPendingAt < _pAt264/.test(bd));
 ok("page: beforeunload で移動中", /addEventListener\("beforeunload"[\s\S]{0,500}__axlxNavPendingAt = Date\.now\(\)/.test(ps));
 ok("page: 照合の先頭で移動中なら見ない", /tries\+\+;[\s\S]{0,200}_navPendingNow\(\)/.test(ps));

@@ -34,7 +34,7 @@ ok("文言は結果ページ表示済", /検索結果ページ表示済/.test(bd
 ok("armed_poll 2.2秒以降", /armed_poll_page[\s\S]{0,80}2200|_kickSortAfterSearch\("armed_poll_page"\)[\s\S]{0,40}2200/.test(bd));
 
 console.log("\n■ 検索見直しラグ短縮");
-ok("search_look 0.4〜1.0秒帯", /humanRand\(400,\s*1000\)/.test(ps));
+ok("search_look 9〜12秒帯（2.8.317）", /var _lookMs = _searchReviewMs\(\)/.test(ps));
 
 console.log("\n■ 決まり・KEEP");
 ok("RULES_DONE page_displayed_before_sort", /"page_displayed_before_sort"/.test(ps));

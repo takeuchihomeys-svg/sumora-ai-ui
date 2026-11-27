@@ -18,8 +18,9 @@ function ok(name, c, d) {
 
 console.log("\n■ 版");
 ok("manifest ≥2.8.222", /^2\.8\.(22[2-9]|2[3-9]\d|[3-9]\d{2})$/.test(mf.version), mf.version);
-ok("page-script ≥2.8.222", /_AXLX_PAGE_VER = "2\.8\.22[2-9]"/.test(ps));
-ok("AUTO_RULES_REVIEWED_UP_TO ≥2.8.222", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.22[2-9]"/.test(rules));
+// 2026-11-26: 版が 2.8.310 まで進んだため、完全一致（2.8.222〜229）を「以上」の判定に直した
+ok("page-script ≥2.8.222", /_AXLX_PAGE_VER = "2\.8\.(22[2-9]|2[3-9]\d|[3-9]\d{2})"/.test(ps));
+ok("AUTO_RULES_REVIEWED_UP_TO ≥2.8.222", /AUTO_RULES_REVIEWED_UP_TO = "2\.8\.(22[2-9]|2[3-9]\d|[3-9]\d{2})"/.test(rules));
 
 console.log("\n■ 台帳");
 ok("who_grasp / loop_advance 細原子", /"who_grasp"/.test(ledger) && /"loop_advance"/.test(ledger));
@@ -29,7 +30,7 @@ console.log("\n■ BG 一括・キュー");
 ok("scrape に loopMeta 引数", /async function _scrapeAndSendRealpro\([\s\S]{0,200}loopMeta/.test(bg));
 ok("series_done 後に loop_advance", /_auditStep\(_runId, "loop_advance"/.test(bg));
 ok("一括開始 nextMove 明示", /_g0\.nextMove = _bi === 0/.test(bg));
-ok("一括完了後 publish nextMove=外す", /nextMove: _bulkNextNm \? "前客の選択を1つずつ外す"/.test(bg));
+ok("一括完了後 publish nextMove=外す", /nextMove: _bulkNextNm \? "リセットで空にして次のお客さんへ"/.test(bg));
 ok("キュー _axlxQueueLoopMeta", /_axlxQueueLoopMeta/.test(bg));
 ok("キュー scrape に loopMeta 渡し", /self\._axlxQueueLoopMeta \|\| null/.test(bg));
 

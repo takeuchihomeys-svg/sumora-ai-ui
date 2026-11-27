@@ -32,17 +32,18 @@ console.log("■ ① 保存がちゃんと走る（_saving の掛け金）");
 
 console.log("\n■ ② 貯めた直後に DB へ送る（変化待ちに頼らない）");
 {
-  ok("貯めた後の処理で送る係を呼ぶ", /__axlxHumanMotionUploadNow/.test(rec) && /U\(next\)/.test(rec));
-  ok("送る係を呼ぶのは storage に書いた後", rec.indexOf("chrome.storage.local.set(o, function ()") < rec.indexOf("U(next)"));
+  const saveBody = rec.slice(rec.indexOf("function save(force)"));
+  ok("貯めた後の処理で送る係を呼ぶ", /__axlxHumanMotionUploadNow/.test(rec) && /U\((?:next|uploadDelta)(?:\s*,\s*\{[^}]*\})?\)/.test(saveBody));
+  ok("送る係を呼ぶのは storage に書いた後", saveBody.indexOf("chrome.storage.local.set(o, function ()") < saveBody.search(/U\((?:next|uploadDelta)/));
   ok("貯めた内容をコンソールに出す（何が貯まったか分かる）", /人の動きを貯めました:/.test(rec));
   ok("送る係に「その場で送る」口がある", /window\.__axlxHumanMotionUploadNow = function \(agg, opts\)/.test(up));
   ok("その場で送る時も5分の間隔を守る", /if \(last && Date\.now\(\) - last < MIN_GAP_MS\)/.test(up.slice(up.indexOf("__axlxHumanMotionUploadNow"))));
-  ok("その場で送る時も送った印を置く", /o\[SENT_KEY\] = Date\.now\(\);[\s\S]{0,80}upload\(agg/.test(up));
+  ok("その場で送る時も送った印を置く", /o\[(?:SENT_KEY|sKey)\] = Date\.now\(\);[\s\S]{0,80}upload\(agg/.test(up));
   /**
    * 2026-11-14 竹内さん「自動検索の部分学習反映されるようにちゃんと連携する」:
    *   自動モードの記録は `mode` を付けて送る。⚠ 人の5分の間隔で止めない（別枠）。
    */
-  ok("自動モードの記録は mode を付けて送れる", /if \(mode\) \{[\s\S]{0,120}upload\(agg, \{ site: o2\.site \|\| agg\.site, mode: mode \}\)/.test(up));
+  ok("自動モードの記録は mode を付けて送れる", /if \(mode\) \{[\s\S]{0,120}upload\(agg, \{ site: (?:o2\.site \|\| agg\.site|targetSite), mode: mode \}\)/.test(up));
   ok("  自動モードは5分の間隔で止めない（人の記録に影響しない）", /if \(mode\) \{[\s\S]{0,200}return;/.test(up.slice(up.indexOf("__axlxHumanMotionUploadNow"))));
 }
 
@@ -50,7 +51,7 @@ console.log("\n■ ③ 読み込み順（記録より先に送る係）");
 {
   const c = mf.content_scripts.find((x) => (x.js || []).includes("human-learn-record.js"));
   ok("送る係が先・記録が後", c.js.indexOf("human-learn-upload.js") < c.js.indexOf("human-learn-record.js"), c.js);
-  ok("どちらも3サイト＋リアプロ", c.matches.includes("https://www.realnetpro.com/*") && c.matches.includes("https://itandibb.com/*") && c.matches.includes("https://system.reins.jp/*"));
+  ok("どちらもリアプロ＋ITANDI（レインズは2026-11-26から対象外）", c.matches.includes("https://www.realnetpro.com/*") && c.matches.includes("https://itandibb.com/*") && !c.matches.some((m) => m.includes("reins")));
 }
 
 console.log("\n■ ④ その場で確かめられる（console）");
@@ -69,7 +70,7 @@ console.log("\n■ ⑤ 学習の読み込みが全サイトで有効");
 {
   const first = mf.content_scripts[0];
   ok("純関数が先頭（document_start）", first.js.includes("human-learn.js"));
-  ok("3サイトすべて", first.matches.length >= 4);
+  ok("リアプロ・ITANDIの全部（2サイト・レインズは対象外）", first.matches.length >= 3);
   ok("カーソル（pointer-ui.js）より前（癖を読める）", first.js.indexOf("human-learn.js") < first.js.indexOf("pointer-ui.js"));
 }
 

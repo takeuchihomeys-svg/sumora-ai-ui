@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】一覧で「全部送付済み・次ページも全部送付済み・検索結果0件」の時も、客完了→リセットして次のお客さんへ（リセットからの流れは同じ）",
+    "category": "architecture",
+    "insight": "一覧で送る物件が無い時の行き先を手順書に書く。(1)この頁の行が全部送付済み→印刷用PDFは押さず「次へ」で次のページへ。(2)次のページも全部送付済みなら続けて次へ。最後のページまで全部送付済みなら新しい物件なしとして客完了。(3)検索結果が0件（0棟0戸）なら行を待ち続けず客完了。(4)どの場合も客完了のあとは、送って終わった客と同じ流れ：リセットを押す→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索。パネルの「いま／つぎ」の言葉も手順書と同じ言葉に揃える。",
+    "rationale": "送る物が無い客で止まるとループ全体が止まる。コードは all_sent_page／all_sent_done／zero_count0_finish で既に進むが、手順書に書いて無かったので、人が点検できる形（手順書＝パネル＝点検の印）に揃える。",
+    "context": "2026-11-27 竹内さん「検索結果が０であったり、すべて送付済みで次のページにいっても送付済みの場合も次のお客さんにうつるように手順書に物件が送付ずみの場合と次ページもすべて送付済みの場合と検索結果０件だった場合、リセットして次のお客さんにうつることいれておく　リセットからの流れは同じ」／直前「ここ全部送付済みの場合次へで次のページにうつること手順書は把握しているのか／拡張ツールに表示されているアナウンスの部分もちゃんと手順書とあわせる」",
+    "applied_to": "app/lib/action-playbook.ts（PLAYBOOK_LIST_AD_SORT_STEPS ⑤〜⑧・flow series）、app/lib/auto-procedure-rules.ts（all_sent_advance_no_stuck／zero_result_finish_reset）、app/lib/bulk-panel-grasp.ts と chrome-extension/bulk-panel-grasp.js（PANEL_PHASE_WORDS）、chrome-extension/search-audit.js（dl:zero_count0_）",
+    "tags": ["AIX", "ループ", "Chrome拡張", "手順書", "一覧", "2.8.319"],
+    "priority": 1
+  }
+]

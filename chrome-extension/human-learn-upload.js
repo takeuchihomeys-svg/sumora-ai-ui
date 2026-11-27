@@ -18,6 +18,22 @@
   var SENT_KEY = "axlx_human_learn_uploaded_at";
   var MIN_GAP_MS = 5 * 60 * 1000;   // 前回の送信から5分は送らない（サーバーを叩きすぎない）
   var ENDPOINT = "/api/human-motion";
+  function _siteNow() {
+    try {
+      var h = String((typeof location !== "undefined" && location && location.hostname) || "");
+      if (/realnetpro/.test(h)) return "realpro";
+      if (/itandibb/.test(h)) return "itandi";
+      if (/reins/.test(h)) return "reins";
+    } catch (_) {}
+    return "unknown";
+  }
+  function _siteKey(base, s) {
+    var v = String(s || _siteNow() || "");
+    return (v && v !== "unknown") ? (base + "__" + v) : base;
+  }
+  var SITE = _siteNow();
+  var SITE_KEY = _siteKey(KEY, SITE);
+  var SITE_SENT_KEY = _siteKey(SENT_KEY, SITE);
 
   function apiBase() {
     try {
@@ -29,6 +45,39 @@
   }
 
   var _sending = false;
+  function _isAllowedSiteField(k) {
+    if (typeof k !== "string" || !k) return false;
+    var s = k.trim();
+    if (!s || s.indexOf("[object ") >= 0) return false;
+    if (SITE === "realpro") {
+      // リアプロの必須固有キーは通す。ITANDI 固有（#_r_ / css- / itandi-bb-ui / colon演算子）およびゴミを落とす
+      if (/^#?_r_[a-z0-9_]+_(?:｜|$)|css-[a-z0-9]{4,}|itandi-bb-ui|:(?:lteq|gteq|eq|in|match|not_eq)/i.test(s)) return false;
+      if (/^[-ー－_・=|]{2,}$|^(input|select|textarea|button|a|span|div|label|iframe|id)$/i.test(s)) return false;
+    } else if (SITE === "itandi") {
+      if (/^(?:eq_rm|city_code|town_code|route_id|station_id|room_layout_id|struct_id|exclusive_area)\[|^rental_cost[12]$|^structured_date$|^#(?:top_free|main_form)$|\.(?:one_city|one_town|one_line|one_station|go_search)(?:[^a-zA-Z0-9_]|$)|駅の設定へ進む|沿線の設定へ戻る|確定してリストへ|沿線・駅絞り込み|所在地絞り込み/.test(s)) return false;
+      if (/^[-ー－_・=|]{2,}$|^(input|select|textarea|button|a|span|div|label|iframe|id)$/i.test(s) || /路線・駅選択都道府県/.test(s)) return false;
+    }
+    return true;
+  }
+  function _clampMotionForUpload(agg) {
+    if (!agg || typeof agg !== "object") return agg;
+    try {
+      var out = Object.assign({}, agg);
+      if (out.points && typeof out.points === "object" && out.points.fields && typeof out.points.fields === "object") {
+        var cleanPf = {};
+        Object.keys(out.points.fields).slice(0, 60).forEach(function (k) {
+          if (!_isAllowedSiteField(k)) return;
+          var v = out.points.fields[k];
+          if (!v || typeof v !== "object") return;
+          var nv = Number(v.n) || 0;
+          if (nv <= 0) return;
+          cleanPf[k] = Object.assign({}, v, { n: Math.min(200, Math.round(nv)) });
+        });
+        out.points = Object.assign({}, out.points, { fields: cleanPf, n: Math.min(500, Number(out.points.n) || Object.keys(cleanPf).length) });
+      }
+      return out;
+    } catch (_) { return agg; }
+  }
   function upload(agg, opts) {
     if (_sending || !agg || !agg.n) return;
     var o = opts || {};
@@ -37,7 +86,7 @@
     try {
       chrome.runtime.sendMessage({
         type: "axlx-human-motion",
-        motion: agg,
+        motion: _clampMotionForUpload(agg),
         site: o.site || agg.site || null,
         mode: o.mode || null,
         shot_taken: !!o.shot_taken,
@@ -81,23 +130,25 @@
   /** 貯まった物を読んで、必要なら送る */
   function maybeUpload() {
     try {
-      chrome.storage.local.get([KEY, SENT_KEY], function (r) {
-        var agg = r && r[KEY];
+      chrome.storage.local.get([SITE_KEY, SITE_SENT_KEY], function (r) {
+        var agg = r && r[SITE_KEY];
         if (!agg || !agg.n) return;
-        var last = Number(r && r[SENT_KEY]) || 0;
+        // サイト不一致の古いデータがあれば送らない
+        if (SITE !== "unknown" && agg.site && agg.site !== SITE) return;
+        var last = Number(r && r[SITE_SENT_KEY]) || 0;
         if (last && Date.now() - last < MIN_GAP_MS) return;
         // 送った印は先に置く（同じ分を2回送らない）
-        var o = {}; o[SENT_KEY] = Date.now();
+        var o = {}; o[SITE_SENT_KEY] = Date.now();
         try { chrome.storage.local.set(o); } catch (_) {}
-        _modeNow(function (m) { upload(agg, { site: agg.site, mode: m }); });
+        _modeNow(function (m) { upload(agg, { site: (SITE !== "unknown" ? SITE : agg.site), mode: m }); });
       });
     } catch (_) {}
   }
 
-  // 学習の記録が増えたら送る（1分ごとの書き出しの後）
+  // 学習の記録が増えたら送る（1分ごとの書き出しの後・自サイトキーのみ監視）
   try {
     chrome.storage.onChanged.addListener(function (ch, area) {
-      if (area !== "local" || !ch || !ch[KEY] || !ch[KEY].newValue) return;
+      if (area !== "local" || !ch || !ch[SITE_KEY] || !ch[SITE_KEY].newValue) return;
       maybeUpload();
     });
   } catch (_) {}
@@ -129,16 +180,18 @@
        *     自動の記録は mode を付けて**別枠**で送る（人の記録の間隔には影響しない）。
        */
       var mode = o2.mode || null;
+      var targetSite = o2.site || agg.site || (SITE !== "unknown" ? SITE : null);
       if (mode) {
-        upload(agg, { site: o2.site || agg.site, mode: mode });
+        upload(agg, { site: targetSite, mode: mode });
         return;
       }
-      chrome.storage.local.get([SENT_KEY], function (r) {
-        var last = Number(r && r[SENT_KEY]) || 0;
+      var sKey = _siteKey(SENT_KEY, targetSite);
+      chrome.storage.local.get([sKey], function (r) {
+        var last = Number(r && r[sKey]) || 0;
         if (last && Date.now() - last < MIN_GAP_MS) { void chrome.runtime.lastError; return; }
-        var o = {}; o[SENT_KEY] = Date.now();
+        var o = {}; o[sKey] = Date.now();
         try { chrome.storage.local.set(o); } catch (_) {}
-        upload(agg, { site: agg.site });
+        upload(agg, { site: targetSite });
       });
     } catch (_) {}
   };

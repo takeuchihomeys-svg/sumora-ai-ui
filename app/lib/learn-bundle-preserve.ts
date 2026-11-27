@@ -13,10 +13,16 @@
  *   → 履歴 SELECT 失敗時は solid 不足なら safe_to_write=false（読めない＝消す書き込みを許さない）。
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { applyBundleAliasExpansion } from "./field-name-aliases";
+import { applyBundleAliasExpansion, fieldHasPosition } from "./field-name-aliases";
+import { applyItandiBundleAliasExpansion, itandiAliasesOf } from "./itandi-field-aliases";
+import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 import { isPlaybookNewerThanCode, pickNewestPlaybook } from "./playbook-freshness";
 import { PLAYBOOK_BUILD_V } from "./action-playbook";
-import { AUTO_RULES_REVIEWED_UP_TO } from "./auto-procedure-rules";
+import { rulesReviewedUpToFor } from "./auto-itandi-rules";
+import { SCENE_JA, describeSceneFlow, type SceneFlow } from "./learn-flow-steps";
+import { buildLinkPipeline, type BundleReflectHint } from "./bundle-reflect";
+import { buildImproveLoop } from "./improve-loop";
+import { measureAutoCompletion } from "./learn-improve-mech";
 
 export type BundlePreserveResult = {
   solid: number;
@@ -34,14 +40,16 @@ export type BundlePreserveResult = {
 export const INHERIT_LOOKBACK_DEFAULT = 80;
 export const INHERIT_LOOKBACK_MAX = 200;
 
-export function countLearnedSolid(bundle: unknown): { solid: number; learned: unknown } {
+export function countLearnedSolid(bundle: unknown, site?: string | null): { solid: number; learned: unknown } {
   const learned = (bundle as { shots?: { learned?: unknown } } | null)?.shots?.learned;
+  const sc = (site === "realpro" || site === "itandi") ? site : null;
   let solid = 0;
   if (learned && typeof learned === "object") {
     for (const list of Object.values(learned as Record<string, unknown>)) {
       for (const f of Array.isArray(list) ? list : []) {
-        const rec = f as { x?: unknown; y?: unknown; n?: unknown };
+        const rec = f as { name?: unknown; x?: unknown; y?: unknown; n?: unknown };
         if (typeof rec?.x !== "number" || typeof rec?.y !== "number") continue;
+        if (sc && typeof rec?.name === "string" && !isAllowedMotionFieldName(rec.name, sc)) continue;
         if ((Number(rec.n) || 0) >= 3) solid++;
       }
     }
@@ -199,16 +207,23 @@ function applyLearnedFromOld(
   bundle: Record<string, unknown>,
   oldB: unknown,
   oldSolid: number,
+  scope?: string | null,
 ): void {
-  const old = countLearnedSolid(oldB);
+  const old = countLearnedSolid(oldB, scope);
   if (!old.learned || typeof old.learned !== "object") return;
   const curSh = ((bundle.shots as Record<string, unknown>) || {});
   const oldSh = ((oldB as { shots?: Record<string, unknown> })?.shots || {});
-  const merged = mergeLearnedKeepSolid(curSh.learned, old.learned);
+  const cleanOld = sanitizeLearnedForSite(old.learned, scope).learned;
+  if (!cleanOld) return;
+  const cleanCur = sanitizeLearnedForSite(curSh.learned, scope).learned;
+  const merged = mergeLearnedKeepSolid(cleanCur ?? curSh.learned, cleanOld);
+  const cleanOldScene = oldSh.learned_scene ? sanitizeLearnedForSite(oldSh.learned_scene, scope).learned : null;
+  const cleanCurScene = curSh.learned_scene ? sanitizeLearnedForSite(curSh.learned_scene, scope).learned : null;
   bundle.shots = {
     ...oldSh,
     ...curSh,
     learned: merged.learned,
+    ...(cleanCurScene || cleanOldScene ? { learned_scene: cleanCurScene ?? cleanOldScene } : {}),
     learned_from_new: merged.from_new,
     preserved_learned: true,
     preserved_solid: oldSolid,
@@ -223,6 +238,429 @@ function applyLearnedFromOld(
  * 履歴から学習土台を継ぎ足す（破壊的に bundle を更新）。
  * lookback 既定 80（最大 200）。
  */
+/**
+ * inheritLinkFoundations 等で bundle.scene_flows の station 手順が後から差し替わった時、
+ * bundle.supervisor / supervisor_by_site.realpro 内の「場面: ...」行を最新 scene_flows と同期する。
+ *   ※ 統括の判断文・矛盾自体は一切書き換えず、機械的に生成された scene_flows の転記行だけを一致させる。
+ */
+export function syncSupervisorSceneFlows(bundle: Record<string, unknown>, site?: string | null): number {
+  const flows = Array.isArray(bundle.scene_flows) ? (bundle.scene_flows as SceneFlow[]) : [];
+  if (!flows.length) return 0;
+  const targets: Array<Record<string, unknown>> = [];
+  const sup = bundle.supervisor as Record<string, unknown> | null | undefined;
+  if (sup && typeof sup === "object") targets.push(sup);
+  const bySite = bundle.supervisor_by_site as Record<string, unknown> | null | undefined;
+  if (bySite && typeof bySite === "object") {
+    const sKey = site === "itandi" ? "itandi" : "realpro";
+    const sSup = bySite[sKey] as Record<string, unknown> | null | undefined;
+    if (sSup && typeof sSup === "object") targets.push(sSup);
+  }
+  let synced = 0;
+  for (const t of targets) {
+    const meeting = t.meeting as { evidence?: Array<{ label?: string; value?: string; guessed?: boolean }> } | null | undefined;
+    const ev = Array.isArray(meeting?.evidence) ? meeting.evidence : null;
+    if (!ev) continue;
+    for (const f of flows) {
+      if (!f || !f.scene) continue;
+      const ja = SCENE_JA[f.scene];
+      if (!ja) continue;
+      const label = `場面: ${ja}`;
+      const expected = describeSceneFlow(f).replace(`${ja}: `, "");
+      for (const row of ev) {
+        if (row && row.label === label && row.value !== expected) {
+          row.value = expected;
+          synced++;
+        }
+      }
+    }
+  }
+  return synced;
+}
+
+/**
+ * 2026-11-27: inheritLinkFoundations / carryLearnedShots で bundle.shots.learned が増えた後、
+ *   buildHumanLearnBundle 時点の 3日窓 shotLearn ベースで作成された
+ *   supervisor.meeting.evidence（「学習→自動の連携」「連携のボトルネック」「改善までの一連」）と
+ *   agenda（「改善までの一連: 段階3で停止」）・challenge_missing_in_bundle を、
+ *   実際の bundle.shots.learned の画面位置（screen_solid / screen_all）と同期させる。
+ *   ※ 統括の判断文（today/headline 等）は書き換えず、機械計算の連携行だけを事実と一致させる。
+ *   ※ scope='all' の時は supervisor のみ更新し、supervisor_by_site.itandi を all 件数で汚染しない。
+ */
+export function syncSupervisorImproveLoop(bundle: Record<string, unknown>, site?: string | null): number {
+  const sh = (bundle.shots && typeof bundle.shots === "object") ? (bundle.shots as Record<string, unknown>) : null;
+  const rawLearned = sh?.learned;
+  if (!rawLearned || typeof rawLearned !== "object" || Array.isArray(rawLearned)) return 0;
+
+  const siteFilter = site === "itandi" || site === "realpro" ? site : null;
+  const cleanLearned = sanitizeLearnedForSite(rawLearned, siteFilter).learned ?? (rawLearned as Record<string, unknown[]>);
+  let screenAll = 0;
+  let screenSolid = 0;
+  const haveXy = new Set<string>();
+  for (const list of Object.values(cleanLearned)) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as { name?: unknown; x?: unknown; y?: unknown; n?: unknown };
+      const name = String(r.name ?? "").trim();
+      if (!name || !isAllowedMotionFieldName(name, siteFilter)) continue;
+      if (typeof r.x !== "number" || typeof r.y !== "number") continue;
+      screenAll++;
+      if ((Number(r.n) || 0) >= 3) screenSolid++;
+      haveXy.add(name);
+    }
+  }
+  const pts = (bundle.points && typeof bundle.points === "object" && !Array.isArray(bundle.points))
+    ? (bundle.points as Record<string, unknown>)
+    : null;
+  if (pts) {
+    for (const [k, v] of Object.entries(pts)) {
+      const p = v as { x?: unknown; y?: unknown } | null;
+      if (p && typeof p.x === "number" && typeof p.y === "number" && isAllowedMotionFieldName(k, siteFilter)) {
+        haveXy.add(k);
+      }
+    }
+  }
+
+  let updated = 0;
+  if (Array.isArray(bundle.challenge_missing_in_bundle) && haveXy.size > 0) {
+    const prevMissing = bundle.challenge_missing_in_bundle as unknown[];
+    const nextMissing = prevMissing.filter((raw) => {
+      const f = String(raw ?? "").trim();
+      if (!f) return false;
+      return siteFilter === "itandi"
+        ? !itandiAliasesOf(f).some((a) => haveXy.has(a))
+        : !fieldHasPosition(f, haveXy);
+    });
+    if (nextMissing.length !== prevMissing.length) {
+      bundle.challenge_missing_in_bundle = nextMissing;
+      updated++;
+    }
+  }
+
+  if (screenAll === 0 && screenSolid === 0) return updated;
+
+  const brMeta = (bundle.bundle_reflect && typeof bundle.bundle_reflect === "object")
+    ? (bundle.bundle_reflect as { read_count?: unknown; read_at?: unknown; auto_after?: unknown })
+    : null;
+  const srcObj = (bundle.source && typeof bundle.source === "object") ? (bundle.source as Record<string, unknown>) : null;
+  const lacObj = (bundle.latest_auto_challenge && typeof bundle.latest_auto_challenge === "object")
+    ? (bundle.latest_auto_challenge as { fields?: unknown })
+    : null;
+  const chFields = Array.isArray(lacObj?.fields) ? (lacObj!.fields as string[]).filter(Boolean) : [];
+
+  const targets: Array<Record<string, unknown>> = [];
+  if (bundle.supervisor && typeof bundle.supervisor === "object") {
+    targets.push(bundle.supervisor as Record<string, unknown>);
+  }
+  const bySite = bundle.supervisor_by_site as Record<string, unknown> | null | undefined;
+  if (bySite && typeof bySite === "object" && siteFilter) {
+    const sSup = bySite[siteFilter] as Record<string, unknown> | null | undefined;
+    if (sSup && typeof sSup === "object") targets.push(sSup);
+  }
+
+  for (const t of targets) {
+    const meeting = t.meeting as {
+      today?: string[];
+      evidence?: Array<{ label?: string; value?: string; guessed?: boolean }>;
+      agenda?: Array<{ priority?: number; topic?: string; why?: string; decide?: string }>;
+    } | null | undefined;
+    // 本番の統括は `t.meeting.today` に today を持つ（テスト等で `t.today` にある時も両対応）
+    const todayArr = Array.isArray((t as { today?: unknown }).today)
+      ? ((t as { today?: unknown[] }).today as string[])
+      : (Array.isArray(meeting?.today) ? meeting!.today! : null);
+    const ev = Array.isArray(meeting?.evidence) ? meeting!.evidence! : null;
+    if (!ev) continue;
+
+    const rowLink = ev.find((r) => r && r.label === "学習→自動の連携");
+    const rowLoop = ev.find((r) => r && r.label === "改善までの一連");
+    const rowAutoComp = ev.find((r) => r && r.label === "自動モード完成度");
+    const rowChain = ev.find((r) => r && r.label === "学習完成（期間・土台・つながり・一連）");
+    if (!rowLink && !rowLoop && !rowAutoComp && !rowChain) continue;
+
+    const sampleLine = String(rowLoop?.value || rowLink?.value || "");
+    const mPhoto = sampleLine.match(/写真Storage保存✓\s*（(\d+)枚|（(\d+)枚（human-motion-shots/);
+    const photoInStorage = Number(sh?.in_storage) || Number(mPhoto?.[1] || mPhoto?.[2] || 0) || (sampleLine.includes("写真Storage保存✓") ? 1 : 0);
+    const mOps = sampleLine.match(/操作つき\s*(\d+)件/);
+    const withOps = Number(srcObj?.with_ops) || Number(mOps?.[1] || 0) || (sampleLine.includes("操作・押した位置✓") ? 1 : 0);
+
+    let hint: BundleReflectHint;
+    if (brMeta && (typeof brMeta.read_count === "number" || typeof brMeta.auto_after === "boolean")) {
+      hint = {
+        read_count: Number(brMeta.read_count) || 0,
+        read_at: brMeta.read_at ? String(brMeta.read_at) : null,
+        auto_after: brMeta.auto_after === true,
+        bundle_at: null,
+      };
+    } else {
+      const mRead = sampleLine.match(/読んだ\s*(\d+)回（([^）]+)）|読んだ\s*(\d+)回/);
+      hint = {
+        read_count: Number(mRead?.[1] || mRead?.[3] || 0) || (sampleLine.includes("拡張が束を読む✓") ? 1 : 0),
+        read_at: mRead?.[2] ? String(mRead[2]) : null,
+        auto_after: sampleLine.includes("自動で使う✓"),
+        bundle_at: null,
+      };
+    }
+
+    const pipe = buildLinkPipeline({
+      photoInStorage,
+      withOps,
+      screenSolid,
+      screenAll,
+      hint,
+    });
+    const loop = buildImproveLoop({
+      photoInStorage,
+      withOps,
+      screenSolid,
+      screenAll,
+      hint,
+      challengeFields: chFields,
+      canMeasure: hint.read_count > 0 && hint.auto_after,
+    });
+
+    if (rowLink && rowLink.value !== pipe.line) {
+      rowLink.value = pipe.line;
+      rowLink.guessed = (hint.read_count <= 0) || !hint.auto_after;
+      updated++;
+    }
+    const idxBn = ev.findIndex((r) => r && r.label === "連携のボトルネック");
+    if (pipe.bottleneck) {
+      if (idxBn >= 0) {
+        if (ev[idxBn].value !== pipe.bottleneck) {
+          ev[idxBn].value = pipe.bottleneck;
+          ev[idxBn].guessed = true;
+          updated++;
+        }
+      } else {
+        const idxLink = ev.findIndex((r) => r && r.label === "学習→自動の連携");
+        const insertAt = idxLink >= 0 ? idxLink + 1 : ev.length;
+        ev.splice(insertAt, 0, { label: "連携のボトルネック", value: pipe.bottleneck, guessed: true });
+        updated++;
+      }
+    } else if (idxBn >= 0) {
+      ev.splice(idxBn, 1);
+      updated++;
+    }
+    if (rowLoop && rowLoop.value !== loop.improve_line) {
+      rowLoop.value = loop.improve_line;
+      rowLoop.guessed = (loop.bottleneck_n ?? 0) > 0;
+      updated++;
+    }
+
+    if (Array.isArray(meeting?.agenda)) {
+      const idxAg = meeting!.agenda!.findIndex((a) => typeof a?.topic === "string" && a.topic.startsWith("改善までの一連: 段階"));
+      if (idxAg >= 0) {
+        if (loop.bottleneck_n != null) {
+          const nextTopic = `改善までの一連: 段階${loop.bottleneck_n}で停止`;
+          const nextWhy = loop.improve_line || loop.bottleneck || "";
+          if (meeting!.agenda![idxAg].topic !== nextTopic || meeting!.agenda![idxAg].why !== nextWhy) {
+            meeting!.agenda![idxAg].topic = nextTopic;
+            meeting!.agenda![idxAg].why = nextWhy;
+            updated++;
+          }
+        } else {
+          meeting!.agenda!.splice(idxAg, 1);
+          updated++;
+        }
+      }
+    }
+
+    // ★ 2026-11-27: 同じ束の中で「改善までの一連=段階5」と「自動モード完成度／学習完成=段階3・画面位置3/6✗」が矛盾しないよう同期する
+    if (rowAutoComp) {
+      const valStr = String(rowAutoComp.value || "");
+      const todayCompLine = todayArr?.find((s) => typeof s === "string" && s.startsWith("自動モード完成度 ")) || "";
+      const bothStr = `${valStr} ${todayCompLine}`;
+      // 本家の出力は全角「％」（例: 再現20％・欄×観点68％・精度31％）だが半角「%」も両方拾う
+      const mRepro = valStr.match(/再現(\d+)[%％]/) || todayCompLine.match(/再現(\d+)[%％]/) || valStr.match(/人間らしさの再現(\d+)[%％]/);
+      const mFine = valStr.match(/欄×観点(\d+)[%％]/) || todayCompLine.match(/欄×観点(\d+)[%％]/);
+      const mPrec = valStr.match(/精度(\d+)[%％]/) || todayCompLine.match(/精度(\d+)[%％]/);
+      const reproPct = mRepro ? Number(mRepro[1]) : null;
+      const fineAvg = mFine ? Number(mFine[1]) : null;
+      const precisionScore = mPrec ? Number(mPrec[1]) : null;
+      const humanOk = /人間として可/.test(bothStr) || /人間として自動できるか\s*10\/10/.test(valStr) || /人間として自動:\s*可/.test(valStr);
+      const oldRemainM = valStr.match(/残り:\s*([^／]+)/);
+      const todayRemLine = todayArr?.find((s) => typeof s === "string" && s.startsWith("完成度の残り:")) || "";
+      const oldReproRemains = `${oldRemainM?.[1] || ""}・${todayRemLine.replace(/^完成度の残り:\s*/, "")}`
+        .split("・")
+        .map((x) => x.trim())
+        .filter((x) => x.startsWith("再現:"))
+        .map((x) => x.replace(/^再現:\s*/, ""))
+        .filter((v, i, a) => a.indexOf(v) === i);
+      const ac = measureAutoCompletion({
+        improveSteps: loop.steps,
+        bottleneckN: loop.bottleneck_n,
+        reproducePct: reproPct,
+        reproduceRemain: oldReproRemains,
+        fineAvg,
+        precisionScore,
+        humanAutoOk: humanOk,
+        challengeN: chFields.length,
+      });
+      const nextEvVal = `${ac.line}／内訳: ${ac.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り: ${ac.remain.slice(0, 4).join("・") || "なし"}／${ac.learnHint}`;
+      if (rowAutoComp.value !== nextEvVal) {
+        rowAutoComp.value = nextEvVal;
+        rowAutoComp.guessed = ac.score < 85;
+        updated++;
+      }
+      if (todayArr) {
+        const idxTLine = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("自動モード完成度 "));
+        if (idxTLine >= 0 && todayArr[idxTLine] !== ac.line) {
+          todayArr[idxTLine] = ac.line;
+          updated++;
+        }
+        const idxTRem = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("完成度の残り:"));
+        if (ac.remain.length) {
+          const nextRemLine = `完成度の残り: ${ac.remain.slice(0, 5).join("・")}`;
+          if (idxTRem >= 0 && todayArr[idxTRem] !== nextRemLine) {
+            todayArr[idxTRem] = nextRemLine;
+            updated++;
+          }
+        } else if (idxTRem >= 0) {
+          todayArr.splice(idxTRem, 1);
+          updated++;
+        }
+        const idxTHint = todayArr.findIndex((s) => typeof s === "string" && s.startsWith("完成度↑:"));
+        if (idxTHint >= 0 && todayArr[idxTHint] !== ac.learnHint) {
+          todayArr[idxTHint] = ac.learnHint;
+          updated++;
+        }
+      }
+      if (Array.isArray(meeting?.agenda)) {
+        const idxAgAc = meeting!.agenda!.findIndex((a) => typeof a?.topic === "string" && /^自動モード完成度(?:[\s:：\/／（(]|$)/.test(a.topic));
+        if (idxAgAc >= 0) {
+          const nextTop = `自動モード完成度 ${ac.score}/100（${ac.grade}）`;
+          const nextWhy = `内訳 ${ac.parts.map((p) => `${p.label}${p.score}/${p.max}`).join("・")}／残り ${ac.remain.slice(0, 3).join("・") || "なし"}`;
+          if (meeting!.agenda![idxAgAc].topic !== nextTop || meeting!.agenda![idxAgAc].why !== nextWhy || meeting!.agenda![idxAgAc].decide !== ac.learnHint) {
+            meeting!.agenda![idxAgAc].topic = nextTop;
+            meeting!.agenda![idxAgAc].why = nextWhy;
+            meeting!.agenda![idxAgAc].decide = ac.learnHint;
+            updated++;
+          }
+        }
+      }
+    }
+
+    if (rowChain || ev.some((r) => r && (r.label === "学習完成・つながり" || r.label === "学習完成・一連の動き"))) {
+      const rowPPeriod = ev.find((r) => r && r.label === "学習完成・学習期間");
+      const rowPFound = ev.find((r) => r && r.label === "学習完成・土台");
+      const rowPLink = ev.find((r) => r && r.label === "学習完成・つながり");
+      const rowPSeries = ev.find((r) => r && r.label === "学習完成・一連の動き");
+      const rowPath = ev.find((r) => r && r.label === "学習完成の道筋");
+
+      const linkBnM = pipe.bottleneck ? pipe.bottleneck.match(/段階\s*(\d+)/) : null;
+      const linkBn = linkBnM ? Number(linkBnM[1]) : null;
+      // pipe.bottleneck は「5.自動で使う: ...」の形で「段階」を含まないことがあるため、bottleneck 非空なら必ず未達
+      const linkDone = !pipe.bottleneck && screenSolid >= 30 && hint.read_count >= 1 && hint.auto_after;
+      const linkLineStr = pipe.bottleneck || pipe.line;
+      const linkNext = screenSolid < 30
+        ? "画面位置 solid を履歴から復元（F1/F33）"
+        : (hint.read_count < 1
+          ? "拡張再読込で束を読む（read_count）"
+          : (!hint.auto_after ? "自動1回（F6）" : "連携段を再測"));
+      const seriesDone = loop.bottleneck_n == null && !!loop.improve_line;
+      const seriesNext = loop.bottleneck_n != null
+        ? `improve_loop 段階${loop.bottleneck_n}の次手（photo_learn/再読込/自動/効果）`
+        : "一連の印を束に載せる";
+
+      if (rowPLink) {
+        const nextV = `${linkDone ? "✓" : "✗"} ${linkLineStr}${linkDone ? "" : `／次=${linkNext}`}`;
+        if (rowPLink.value !== nextV) { rowPLink.value = nextV; rowPLink.guessed = !linkDone; updated++; }
+      }
+      if (rowPSeries) {
+        const nextV = `${seriesDone ? "✓" : "✗"} ${loop.improve_line}${seriesDone ? "" : `／次=${seriesNext}`}`;
+        if (rowPSeries.value !== nextV) { rowPSeries.value = nextV; rowPSeries.guessed = !seriesDone; updated++; }
+      }
+
+      const parsePillar = (row: { value?: string; guessed?: boolean } | undefined, name: string) => {
+        const raw = String(row?.value || "");
+        const okFlag = raw.startsWith("✓");
+        const cleanBody = raw.replace(/^[✓✗]\s*/, "");
+        const parts = cleanBody.split("／次=");
+        return { name, ok: okFlag, line: parts[0] || "", next: parts[1] || "" };
+      };
+      // 個別行（学習完成・学習期間／土台）が省かれている束では、他の evidence 行や既存の rowChain から 4本柱を保つ
+      let pPeriod = parsePillar(rowPPeriod, "学習期間");
+      if (!rowPPeriod) {
+        const rDet = ev.find((r) => r && r.label === "学習期間・構築の細部");
+        const rcVal = String(rowChain?.value || "");
+        if (rDet?.value) {
+          const v = String(rDet.value);
+          // fine_avg 等の止=は構築細部(construct)であり「学習期間」柱自体は rowChain で 止=学習期間 でない限り ✓
+          const periodFailed = /止=学習期間/.test(rcVal) || /止=(materials|window|days|period)/.test(v);
+          const okDet = !periodFailed && !/期間不足|日窓が短い/.test(v);
+          pPeriod = { name: "学習期間", ok: okDet, line: v.split("／")[0] || v, next: okDet ? "維持（材料3日で揃え）" : "材料・期間を揃える" };
+        }
+      }
+      let pFound = parsePillar(rowPFound, "土台");
+      if (!rowPFound) {
+        const rF = ev.find((r) => r && r.label === "学習土台点検（F番号）");
+        const rcVal = String(rowChain?.value || "");
+        const mRcFound = rcVal.match(/(土台\s+\d+\/\d+\s*✓[^／]*)/);
+        if (rF?.value) {
+          const v = String(rF.value);
+          const mNum = v.match(/(\d+)\/(\d+)\s*✓／欠\s*(\d+)/);
+          const missN = mNum ? Number(mNum[3]) : 1;
+          const okF = missN === 0;
+          const baseLine = mRcFound?.[1] ? `${mRcFound[1]}${missN > 0 ? `／欠${missN}` : ""}` : v.split("／").slice(0, 2).join("／");
+          const mImp = rcVal.match(/重要欠:([^／]+)/);
+          pFound = {
+            name: "土台",
+            ok: okF,
+            line: mImp ? `${baseLine}／重要欠:${mImp[1]}` : baseLine,
+            next: mImp ? `重要欠 ${mImp[1].split("・")[0]} を完了線まで埋める` : (missN > 0 ? `欠${missN}を上から1本` : "維持"),
+          };
+        } else if (mRcFound) {
+          pFound = { name: "土台", ok: !/欠[1-9]|止=土台/.test(rcVal), line: mRcFound[1], next: "土台欠を埋める" };
+        }
+      }
+      const pillars = [
+        pPeriod,
+        pFound,
+        { name: "つながり", ok: linkDone, line: linkLineStr, next: linkNext },
+        { name: "一連の動き", ok: seriesDone, line: loop.improve_line, next: seriesNext },
+      ].filter((p) => p.line || p.name === "つながり" || p.name === "一連の動き");
+      const doneN = pillars.filter((p) => p.ok).length;
+      const totalN = pillars.length;
+      const allOk = totalN > 0 && doneN === totalN;
+      const stuck = pillars.find((p) => !p.ok) || null;
+      const chainLine = allOk
+        ? `学習完成: 期間・土台・つながり・一連 すべて✓（${doneN}/${totalN}）`
+        : `学習完成: ${doneN}/${totalN} ✓／止=${stuck?.name}／${stuck?.line || ""}`;
+      const chainNext = stuck?.next || "維持: 4本柱を毎回測る";
+      const pathStr = pillars
+        .filter((p) => !p.ok)
+        .map((p, i) => `${i + 1}.${p.name}:${p.next}`)
+        .join(" → ")
+        || "完成済み→自動1回で効果確認のみ";
+
+      if (rowChain) {
+        const nextV = chainLine + (allOk ? "" : `／次=${chainNext}`);
+        if (rowChain.value !== nextV) { rowChain.value = nextV; rowChain.guessed = !allOk; updated++; }
+      }
+      if (rowPath) {
+        if (rowPath.value !== pathStr) { rowPath.value = pathStr; rowPath.guessed = !allOk; updated++; }
+      }
+      if (Array.isArray(meeting?.agenda)) {
+        const idxCh = meeting!.agenda!.findIndex((a) => a?.topic === "学習期間・土台・つながり・一連を完成させる");
+        if (idxCh >= 0) {
+          if (allOk) {
+            meeting!.agenda!.splice(idxCh, 1);
+            updated++;
+          } else if (stuck) {
+            const nextWhy = `${stuck.name}: ${stuck.line}`;
+            if (meeting!.agenda![idxCh].why !== nextWhy || meeting!.agenda![idxCh].decide !== pathStr) {
+              meeting!.agenda![idxCh].why = nextWhy;
+              meeting!.agenda![idxCh].decide = pathStr;
+              updated++;
+            }
+          }
+        }
+      }
+    }
+  }
+  return updated;
+}
+
 export async function inheritLinkFoundations(
   sb: SupabaseClient,
   bundle: Record<string, unknown>,
@@ -232,7 +670,21 @@ export async function inheritLinkFoundations(
   const lookback = Math.max(5, Math.min(INHERIT_LOOKBACK_MAX, opt.lookback ?? INHERIT_LOOKBACK_DEFAULT));
   const minSolid = opt.minSolid ?? 30;
   const needFa = !bundle.foundation_audit;
-  const needTransit = !hasStationTransitSteps(bundle);
+  // ★ 2026-11-27: ITANDI / REINS にリアプロ固有の駅手順（駅の設定へ進む 等）を継承しない（#2520→#2821 の無限連鎖汚染を止める）
+  const isRealproFamily = scope !== "itandi" && scope !== "reins";
+  const needTransit = isRealproFamily && !hasStationTransitSteps(bundle);
+  if (!isRealproFamily && Array.isArray(bundle.scene_flows)) {
+    const cleanFlows: Array<{ scene?: string; steps?: string[] }> = [];
+    for (const f of bundle.scene_flows as Array<{ scene?: string; steps?: string[] }>) {
+      if (f && f.scene === "station" && Array.isArray(f.steps)) {
+        const keptSteps = f.steps.filter((s) => !/駅の設定へ進む|沿線の設定へ戻る|one_station|沿線・駅絞り込み/.test(String(s)));
+        if (keptSteps.length) cleanFlows.push({ ...f, steps: keptSteps });
+      } else {
+        cleanFlows.push(f);
+      }
+    }
+    bundle.scene_flows = cleanFlows;
+  }
 
   let preserved = false;
   let preserved_solid = 0;
@@ -255,16 +707,16 @@ export async function inheritLinkFoundations(
         if (hp.__stamp_only) hp.__scope = sc;
         historyPlaybooks.push(hp);
       }
-      const old = countLearnedSolid(row.bundle);
+      const old = countLearnedSolid(row.bundle, scope);
       if (old.solid >= minSolid) historyHadSolid = true;
-      const curSolid = countLearnedSolid(bundle).solid;
+      const curSolid = countLearnedSolid(bundle, scope).solid;
       if (
         old.solid >= minSolid
         && old.learned
         && typeof old.learned === "object"
         && old.solid > curSolid
       ) {
-        applyLearnedFromOld(bundle, row.bundle, old.solid);
+        applyLearnedFromOld(bundle, row.bundle, old.solid, scope);
         preserved = true;
         preserved_solid = Math.max(preserved_solid, old.solid);
       }
@@ -287,15 +739,15 @@ export async function inheritLinkFoundations(
           bundle.scene_flows = flows;
         }
       }
-      const now = countLearnedSolid(bundle);
-      if (now.solid >= minSolid && now.solid >= preserved_solid && bundle.foundation_audit && hasStationTransitSteps(bundle)) {
+      const now = countLearnedSolid(bundle, scope);
+      if (now.solid >= minSolid && now.solid >= preserved_solid && bundle.foundation_audit && (!needTransit || hasStationTransitSteps(bundle))) {
         break;
       }
     }
   }
 
   // lookback 窓外の solid≥min も必ず拾う（0 連打で窓外に押し出された 96 を救出）
-  if (countLearnedSolid(bundle).solid < minSolid || !historyHadSolid) {
+  if (countLearnedSolid(bundle, scope).solid < minSolid || !historyHadSolid) {
     for (const sc of scopes) {
       const { row, error } = await loadBestSolidRow(sb, sc, minSolid, INHERIT_LOOKBACK_MAX);
       if (error) {
@@ -303,24 +755,29 @@ export async function inheritLinkFoundations(
         continue;
       }
       if (!row) continue;
-      const old = countLearnedSolid(row.bundle);
+      const old = countLearnedSolid(row.bundle, scope);
       if (old.solid >= minSolid) historyHadSolid = true;
-      if (old.solid > countLearnedSolid(bundle).solid) {
-        applyLearnedFromOld(bundle, row.bundle, old.solid);
+      if (old.solid > countLearnedSolid(bundle, scope).solid) {
+        applyLearnedFromOld(bundle, row.bundle, old.solid, scope);
         preserved = true;
         preserved_solid = Math.max(preserved_solid, old.solid);
       }
     }
   }
 
-  /** inherit 後も拡張の完全一致引き用に別名を載せる */
-  applyBundleAliasExpansion(bundle);
+  /** inherit 後も拡張の完全一致引き用に別名を載せる（2026-11-27: ITANDI は ITANDI 専用の別名だけを使う） */
+  if (scope === "itandi") applyItandiBundleAliasExpansion(bundle);
+  else applyBundleAliasExpansion(bundle);
+  /** 駅遷移などを後から継いだとき、統括 evidence の「場面: ...」行を最新 scene_flows と同期させる */
+  try { syncSupervisorSceneFlows(bundle, scope); } catch { /* */ }
+  /** 引き継いだ shots.learned の screen_solid に合わせて連携・改善ループ行も同期させる */
+  try { syncSupervisorImproveLoop(bundle, scope); } catch { /* */ }
 
   // ★ 2.8.297: 履歴の一番新しい手順書を「列挙されない印」で束に載せる（JSON にも DB にも出ない・prepareBundleForWrite が読んで消す）
   try {
     let newest = pickNewestPlaybook<Record<string, unknown>>(historyPlaybooks);
     // コードより新しい物だけ残す価値がある（そうでなければ作り直してよい＝本体は要らない）
-    if (newest && !isPlaybookNewerThanCode(newest, { upTo: AUTO_RULES_REVIEWED_UP_TO, build: PLAYBOOK_BUILD_V })) newest = null;
+    if (newest && !isPlaybookNewerThanCode(newest, { upTo: rulesReviewedUpToFor(scope), build: PLAYBOOK_BUILD_V })) newest = null;
     // 細い読みで印だけの時は、その1行の手順書本体を1回だけ読む（読めなければ印を付けない＝今までの動き）
     if (newest && newest.__stamp_only) {
       const at = String(newest.__at ?? ""), sc = String(newest.__scope ?? "");
@@ -342,7 +799,7 @@ export async function inheritLinkFoundations(
     }
   } catch { /* 印が付かなくても書く（今までの動き） */ }
 
-  const solid = countLearnedSolid(bundle).solid;
+  const solid = countLearnedSolid(bundle, scope).solid;
   const has_fa = !!bundle.foundation_audit;
   const has_transit = hasStationTransitSteps(bundle);
 

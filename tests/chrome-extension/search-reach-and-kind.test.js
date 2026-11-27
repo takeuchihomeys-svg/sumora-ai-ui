@@ -63,7 +63,7 @@ console.log("■ ④ 押す順番が人の手順どおり（所在地→地域�
     ["所在地絞り込みを開く", /_auditStepP\('modal', 'area'\)/],
     ["区を選ぶ", /_auditStepP\('ward'/],
     ["町字を選ぶ", /_auditStepP\('town'/],
-    ["確定してリストへ", /_auditStepP\('modal_confirm'/],
+    ["確定してリストへ", /_auditStepP\(["']modal_confirm["']/],
     ["条件の入力", /_basicQueue = _orderByLearned/],
     ["検索", /_auditStepP\('search'/],
   ];

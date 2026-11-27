@@ -24,7 +24,8 @@ const L = require(path.join(dir, "human-learn.js"));
 
 console.log("■ ① 押すのは「左のサイドバー」の検索（小窓の中は押さない）");
 {
-  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 16000);
+  // 2.8.313: clickSearch は関所・待ちの追加で長くなった（検索ボタンを選ぶ所は 600 行ほど先）ので窓を広げる
+  const cs = ps.slice(ps.indexOf("function clickSearch()"), ps.indexOf("function clickSearch()") + 90000);
   ok("小窓の中かどうかを見る（_inModal）", /var _inModal = function \(el\)/.test(cs));
   ok("  小窓の印（.this_window / role=dialog / .modal）を見る", /\.this_window, \[role="dialog"\], \.modal/.test(cs));
   ok("左のサイドバーかどうかを見る（_isSidebar）", /var _isSidebar = function \(el\)/.test(cs));

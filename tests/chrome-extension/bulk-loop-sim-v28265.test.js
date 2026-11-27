@@ -43,16 +43,16 @@ function queue(world) { return world.session.data.axlx_bulk_queue || null; }
     await startBulk(w, 3);
     await w.run(20 * 60000);
     assert.deepStrictEqual(cidsFilled(w), ["c1", "c2", "c3"], "入れた順: " + cidsFilled(w).join(","));
-    assert.strictEqual(w.postSendClearCalls, 3, "送付後の外しは3人とも（最後の人は待たずに戻す）: " + w.postSendClearCalls);
+    assert.strictEqual(w.resetPressCalls, 3, "送付後のリセットは3人とも（最後の人は待たずに戻す・2.8.328）: " + w.resetPressCalls);
     var q = queue(w);
     assert.ok(q && q.stage === "done", "列の最後は done: " + JSON.stringify(q));
     assert.strictEqual(w.sw.get("_manualBulkAlive"), false, "ループは終わっている");
     assert.deepStrictEqual(w.clock.errors, [], "時計の中で例外: " + w.clock.errors.map(String).join(" / "));
-    var order = w.log.filter(function (l) { return l.kind === "autofill" || l.kind === "post_send_clear_exec" || l.kind === "page_batch_done_sent"; }).map(function (l) { return l.kind + ":" + (l.d || ""); });
+    var order = w.log.filter(function (l) { return l.kind === "autofill" || l.kind === "reset_press_exec" || l.kind === "reset_verify_exec" || l.kind === "page_batch_done_sent"; }).map(function (l) { return l.kind + ":" + (l.d || ""); });
     assert.deepStrictEqual(order, [
-      "autofill:c1", "page_batch_done_sent:c1", "post_send_clear_exec:ok",
-      "autofill:c2", "page_batch_done_sent:c2", "post_send_clear_exec:ok",
-      "autofill:c3", "page_batch_done_sent:c3", "post_send_clear_exec:ok",
+      "autofill:c1", "page_batch_done_sent:c1", "reset_press_exec:ok", "reset_verify_exec:ok",
+      "autofill:c2", "page_batch_done_sent:c2", "reset_press_exec:ok", "reset_verify_exec:ok",
+      "autofill:c3", "page_batch_done_sent:c3", "reset_press_exec:ok", "reset_verify_exec:ok",
     ], "外してから次の人を入れる順: " + order.join(" → "));
     assert.strictEqual(w.kicksSent.length, 0, "普通の時は画面から起こさない: " + JSON.stringify(w.kicksSent.map(function (k) { return k.msg.why; })));
     var ends = w.pageMarks.filter(function (m) { return m.k === "handoff_watch_end"; }).map(function (m) { return m.d.split(" ")[0]; });
@@ -116,8 +116,8 @@ function queue(world) { return world.session.data.axlx_bulk_queue || null; }
   await scenario("S3 裏が「人の間」の途中で止められた → 立ち上げ直しで2人目から", async function () {
     var w = sim.createWorld({ customers: customers(3), gapMs: 60000 });
     await startBulk(w, 3);
-    // c1: 入力30秒＋送付60秒＋外し4秒＋見る3秒 → 間（60秒）の途中で止める
-    await w.run(30000 + 60000 + 4000 + 3000 + 20000);
+    // c1: 入力30秒＋送付60秒＋リセット前の20秒＋押す1.5秒＋30〜34秒の確かめ＋読む0.9秒＋リセット後の20秒 → 間（60秒）の途中で止める（2.8.328）
+    await w.run(30000 + 60000 + 20000 + 1500 + 34000 + 1000 + 20000 + 20000);
     var ph = w.session.data.axlx_bulk_phase;
     assert.ok(ph && ph.phase === "gap", "止める時の段は gap: " + JSON.stringify(ph));
     w.killSw("idle");
@@ -144,11 +144,11 @@ function queue(world) { return world.session.data.axlx_bulk_queue || null; }
     assert.deepStrictEqual(cidsFilled(w), ["c1", "c2"], cidsFilled(w).join(","));
   });
 
-  await scenario("S6 送付後の外しが返らない → 125秒で諦めて次へ", async function () {
-    var w = sim.createWorld({ customers: customers(2), page: function (cid) { return cid === "c1" ? { postSendClear: "hang" } : {}; } });
+  await scenario("S6 リセットを押した返事が返らない → 画面を読み直す保険で空を確かめて次へ（2.8.328）", async function () {
+    var w = sim.createWorld({ customers: customers(2), page: function (cid) { return cid === "c1" ? { reset: "hang" } : {}; } });
     await startBulk(w, 2);
-    await w.run(30000 + 60000 + 100000);
-    assert.deepStrictEqual(cidsFilled(w), ["c1"], "125秒より前は待っている");
+    await w.run(30000 + 60000 + 20000 + 60000);
+    assert.deepStrictEqual(cidsFilled(w), ["c1"], "返事待ちと保険の途中は2人目へ進まない");
     await w.run(10 * 60000);
     assert.deepStrictEqual(cidsFilled(w), ["c1", "c2"], cidsFilled(w).join(","));
   });
@@ -243,7 +243,8 @@ function queue(world) { return world.session.data.axlx_bulk_queue || null; }
       onAutofill: function (world, cid, idx) { if (idx === 1) seen.push(world.sw.call("_bulkStaleLockCid", { customerId: "c1" }, cid)); },
     });
     await startBulk(w, 3);
-    await w.run(30000 + 60000 + 4000 + 3000 + 20000);
+    // 2.8.328: 送付→リセット（20秒＋押す＋30〜34秒の確かめ＋20秒）の後の間で止める（S3 と同じ時刻）
+    await w.run(30000 + 60000 + 20000 + 1500 + 34000 + 1000 + 20000 + 20000);
     w.killSw("idle");
     await w.run(60000);
     w.startSw();

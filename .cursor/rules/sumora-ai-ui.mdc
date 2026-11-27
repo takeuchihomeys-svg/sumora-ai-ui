@@ -38,6 +38,12 @@ alwaysApply: true
    点検: `npx tsx --env-file=.env.local scripts/check-supervisor-table.ts`／`scripts/supervisor-talk.ts`
  - ⚠ **自動で直す範囲は広げない**。今は「統括が判断して竹内さんに聞く」まで。実績が溜まるまで勝手に直さない。
 
+
+8. **直す前に「前提と流れ」を理解してから書く**（2026-11-27 竹内さん「根本的な部分を理解して改善できるように仕組みをつくる」）。
+ - 実例: 手順書へ「全部送付済み／0件でもリセットして次客へ」を足す時、一列の入れ物に合わせて ⑤⑥⑦⑧ と通し番号で書いた。実際は④の**分かれ道**。入れ物の形を確かめず、試験も文言の有無だけだった。
+ - **直す前に** `npx tsx --env-file=.env.local scripts/change-premise.ts --area=list|reset|all` を出して読む。**理解の書面（形／前提／入れ物／言い直し）**を書き、ずれる所は竹内さんに**1つだけ**聞く。
+ - **流れの正本は `app/lib/loop-flow-map.ts`**。流れを変える時は先に地図を直す（手順書の④から先は地図から作る）。試験は構造（順番・分かれ道・合流）を見る。
+
 ## DB の決まり
 - **DB の変更（DDL: CREATE / ALTER / DROP / VIEW の作り直し）は、中身を竹内さんに見せて OK をもらってから当てる。** 当てたら migrate-schema も同じ形に直す。
 - 本番の DB は**まず読むだけ**で使う。行を書き換える・消す時は、件数と中身を先に確かめ、戻し方（控え・戻しの SQL）を用意してから。
@@ -53,6 +59,8 @@ alwaysApply: true
 - 直す前に必ず読む: `memory/dept_search_tool.md`（拡張の部署の記録・前回からの変更と引き継ぎ）、`chrome-extension/DB_STRUCTURE.md`。
 - **リアプロ・ITANDI・REINS の路線名・駅名の表記は完全に別に管理する。混ぜない**（例: 同じ路線でもサイトごとに名前が違う。対応表は `chrome-extension/popup-maps.js` が正本・`resolution-core.js` は写し）。
 - `site` の値は `realpro` / `itandi` / `reins` を使う（`automation_commands.sites` だけ今は `realnetpro` が残っている。揃える作業中）。
+- **拡張を直したら反映の鎖を `scripts/ext-release.ts` で通す**（2.8.314・竹内さん 2026-11-27「ここで改善したらちゃんと拡張ツールに反映されていくように」）。版5か所の一致・記録の更新・未コミット無し・新しい赤の試験無し・型エラー増無し・main に早送り可、を点検（`npx tsx --env-file=.env.local scripts/ext-release.ts`）。`--push`／`--attach`／`--all` は竹内さんの OK の後だけ。済んだ後も**実機（再読込→自動2客以上→`check-playbook-sync` ⑧が verified）まで「反映済み」と言わない**。
+- 点検の段の名前（`search-audit.js` の KEEP_STEP／RULE_STEP）を足す・消す時は、出す側のコードと揃える（`tests/chrome-extension/audit-step-phantoms-v28314.test.js` が「表にあるのに出す所が無い」幽霊を止める。受け入れは `_audit-step-phantoms.json` に理由つきで）。機能を置き換えたら、旧い段の名前と試験も同じ回で直す。
 - 拡張を直したら、**すぐ** `memory/dept_search_tool.md` に何を変えたかを足す。DB に送る値や API を変えたら `chrome-extension/DB_STRUCTURE.md` も直す。
 - DB に新しく送る値（今は拡張の中だけにある一時調整・駅の選び直しなど）が要る時は、API と表は Claude Code 側が作るので、先にどの値を送るかを決めて合わせる。
 - 大量の自動の試し（同じ検索を何百回）をしない。人が1回ずつ検索した形で、点検の記録（`search_audits`）を読んで確かめる（リアプロの運営への配慮）。
