@@ -246,6 +246,8 @@
     else if (/AXLX_TAB_DEAD|タブが応答しません/.test(msg)) why = /ITANDI/.test(msg) ? "ITANDI のタブが検索の画面になりません（一覧を開き直してもだめでした・ログイン切れの可能性）" : "リアプロのタブが応答しません（読み直してもだめでした）";
     // v2.5.45 ITANDI の検索のボタンが押せなかった（入力の誤り・3,000件超）。理由は page-script の日本語のまま
     // v2.5.46 ITANDI の前のお客様の条件を外せなかった（欄の名前は page-script の日本語のまま）→ 混ざった条件で検索しないで飛ばした
+    // 2.8.318 次のお客さんの条件を API から読み直せなかった（3回）→古い条件では検索せず飛ばした
+    else if (/AXLX_API_RELOAD_FAILED/.test(msg)) why = "お客様の最新の条件を拡張ツールのAPIから読み直せませんでした（3回やり直してもだめ）→古い条件では検索せず、このお客様は飛ばしました（理由は点検の customer_api_reload）";
     else if (/AXLX_RESET_FAILED/.test(msg)) why = "前のお客様の条件を画面から外せませんでした（" + (msg.split("AXLX_RESET_FAILED:")[1] || "").trim().slice(0, 70) + "）";
     else if (/AXLX_SEARCH_BLOCKED/.test(msg)) why = "検索のボタンが押せませんでした（" + (msg.split("AXLX_SEARCH_BLOCKED:")[1] || "").trim().slice(0, 60) + "）";
     // v2.5.50 検索を押す前の関所: 入れるはずの間取りが画面に入らなかった → 条件の合わない物件を取らないよう検索していない

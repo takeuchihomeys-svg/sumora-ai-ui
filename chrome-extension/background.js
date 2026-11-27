@@ -9329,16 +9329,27 @@ async function _batchAutofill(customer, site, isWide, opts, auditRun) { // opts:
    *     ⚠ キャッシュした条件で回さない（`cache: "no-store"`）。
    *   → `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す。
    *
-   *   ⚠ 読めなかった時は**今までの条件で続行**する（検索を止めない・理由を残す）。
+   *   ⚠ 2.8.318 読めなかった時は**古い条件では検索せず、そのお客さんを飛ばす**（理由を残す・次のお客さんへ進む）。
    *   ⚠ 手動の一括検索でも同じ（人が押した時こそ最新の条件で動くべき）。
    */
-  var customer = await _refreshCustomerBeforeSearch(customer, site);
+  customer = await _refreshCustomerBeforeSearch(customer, site);
+  // ★ 2.8.318 竹内さん「読み直しが失敗したら、古い条件では検索せず、そのお客さんを飛ばして理由を残す」:
+  //   3回とも読めなかった（または API の一覧に居ない）時は、手元の古い条件で検索しない。入力の前に止めて飛ばす
+  //   （呼び出し元は「検索できなかった」として理由を残し、次のお客さんへ進む）。
+  var _rlFail = _lastCustomerReload;
+  var _rlFailed = !!(_rlFail && !_rlFail.ok && customer && customer.id != null && String(_rlFail.cid) === String(customer.id));
+  if (_rlFailed) {
+    try {
+      if (auditRun && auditRun.runId) _auditStep(auditRun.runId, "customer_api_reload", ("API読み直し失敗→このお客さんは飛ばす（古い条件では検索しない・" + String(_rlFail.why || "-").slice(0, 40) + "・" + _rlFail.tries + "回）").slice(0, 120));
+    } catch (_) {}
+    throw new Error("AXLX_API_RELOAD_FAILED: 条件を最新に読み直せませんでした（" + String(_rlFail.why || "-").slice(0, 40) + "・" + _rlFail.tries + "回）→古い条件では検索せず飛ばしました");
+  }
   var conds = _buildBatchConditions(customer, isWide, opts);
   // ★ 2.8.317 毎回のAPI読み直しの結果を監査に残す（読めたか・条件が更新されていたか・失敗の理由。竹内さん「かなり重要」）
   try {
     var _rl = _lastCustomerReload;
     if (auditRun && auditRun.runId && _rl && String(_rl.cid) === String(customer && customer.id)) {
-      _auditStep(auditRun.runId, "customer_api_reload", (_rl.ok ? ("API読み直しOK " + _rl.tries + "回目" + (_rl.changed ? "・条件が更新されていた" : "・更新なし")) : ("API読み直し失敗→今までの条件で続行（" + String(_rl.why || "-").slice(0, 40) + "・" + _rl.tries + "回）")).slice(0, 120));
+      _auditStep(auditRun.runId, "customer_api_reload", (_rl.ok ? ("API読み直しOK " + _rl.tries + "回目" + (_rl.changed ? "・条件が更新されていた" : "・更新なし")) : ("API読み直し失敗→このお客さんは飛ばす（古い条件では検索しない・" + String(_rl.why || "-").slice(0, 40) + "・" + _rl.tries + "回）")).slice(0, 120));
     }
   } catch (_) {}
   // 2026-09-27 AIXツールのメモの検索の指示（web_brain の回だけ）。customer は呼び出し元で重ね済み（_runBatchSearch）、
@@ -9997,7 +10008,7 @@ function _buildBatchConditions(c, isWide, opts) {
  *     ① `cache: "no-store"` で読み直す（キャッシュを使わない）
  *     ② `updated_at` が**前の検索より新しければ**「条件が変わった」印を画面に出す
  *        （`_nudge` があればそこに・無ければ console）
- *     ③ 読めなければ**今までの条件で続行**（検索を止めない・理由を残す）
+ *     ③ 読めなければ**古い条件では検索せず、そのお客さんを飛ばす**（2.8.318・理由を残す）
  *
  *   ⚠ 返すのは**顧客オブジェクト**（読めなければ元の物をそのまま返す）。
  *   ⚠ 条件の中身（賃料・エリア等）はサーバーが作った物をそのまま使う（拡張で作り直さない）。
@@ -10048,7 +10059,7 @@ async function _fetchCustomerListWithRetry(url, tag) {
  *   毎回（1人目も・2人目以降も）リセットの後・条件を入れる直前に API から読み直す。結果（成功・更新あり/なし・失敗の理由・何回目か）は
  *   _lastCustomerReload に残し、_batchAutofill が監査の段 customer_api_reload に書く（読めたか後から DB で確かめられる）。
  *   ・失敗（通信エラー・5xx・時間切れ）は最大3回までやり直す（間 2秒→4秒）。4xx・「その客が居ない」はやり直さない。
- *   ・3回とも読めない時だけ今までの条件で続ける（止めない・理由を残す）。
+ *   ・3回とも読めない時は今までの条件で検索しない。このお客さんを飛ばして理由を残す（2.8.318）。
  */
 var _lastCustomerReload = null;
 async function _refreshCustomerBeforeSearch(c, site) {
@@ -10080,7 +10091,7 @@ async function _refreshCustomerBeforeSearch(c, site) {
           if (!fresh) {
             _note.why = "not_in_response";
             retryable = false;
-            console.warn("[customer] 読み直した中にこのお客様が居ません → 今までの条件で検索します");
+            console.warn("[customer] 読み直した中にこのお客様が居ません → このお客さんは飛ばします（古い条件では検索しない）");
           }
         }
       } catch (e) {
@@ -10091,7 +10102,8 @@ async function _refreshCustomerBeforeSearch(c, site) {
       else if (!fresh && !retryable) break;
     }
     if (!fresh) {
-      console.warn("[customer] 条件を読み直せませんでした（" + _note.why + "・" + _note.tries + "回）→ 今までの条件で検索します");
+      // ★ 2.8.318: 古い条件では検索しない。ここでは印（_lastCustomerReload.ok=false）を残し、_batchAutofill が飛ばす
+      console.warn("[customer] 条件を読み直せませんでした（" + _note.why + "・" + _note.tries + "回）→ このお客さんは飛ばします（古い条件では検索しない）");
       return c;
     }
     _note.ok = true;
@@ -10124,7 +10136,7 @@ async function _refreshCustomerBeforeSearch(c, site) {
     for (k in fresh) { if (Object.prototype.hasOwnProperty.call(fresh, k) && fresh[k] != null) merged[k] = fresh[k]; }
     return merged;
   } catch (e) {
-    console.warn("[customer] 条件の読み直しで例外 → 今までの条件で検索します:", (e && e.message) || e);
+    console.warn("[customer] 条件の読み直しで例外 → このお客さんは飛ばします（古い条件では検索しない）:", (e && e.message) || e);
     return c;
   }
 }

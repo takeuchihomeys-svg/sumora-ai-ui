@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】次のお客さんの条件を読み直せなかったら、古い条件では検索せずそのお客さんを飛ばして理由を残す",
+    "category": "architecture",
+    "insight": "次のお客さんの条件はAPIから毎回読み直す（2.8.317）。3回（2秒・4秒あけ）読んでも読めない時、または読み直した一覧にそのお客さんが居ない時は、手元の古い条件で検索しない。入力の前に止めて、そのお客さんを飛ばし、点検の段 customer_api_reload に理由を残して、次のお客さんへ進む（検索できなかったとして知らせる）。",
+    "rationale": "古い条件で検索すると、前の客や更新前の条件の物件を取ってしまい、精度が落ちる。止まらないことより正しい条件で検索することを優先する。",
+    "context": "2026-11-27 竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」（直前に「これでかなり精度の高い拡張ツールになったのか」と確認された上での決定）",
+    "applied_to": "chrome-extension/background.js _refreshCustomerBeforeSearch／_batchAutofill（AXLX_API_RELOAD_FAILED）、chrome-extension/batch-guard.js failureNotice、app/lib/auto-procedure-rules.ts（next_customer_api_reload）、app/lib/action-playbook.ts",
+    "tags": ["AIX", "ループ", "Chrome拡張", "手順書", "精度", "2.8.318"],
+    "priority": 1
+  }
+]

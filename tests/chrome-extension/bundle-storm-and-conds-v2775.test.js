@@ -71,8 +71,7 @@ console.log("\n■ 依頼2-① 検索の直前に条件を読み直す");
 {
   ok("  読み直す関数がある", /async function _refreshCustomerBeforeSearch/.test(bg));
   ok("  ⚠ キャッシュを使わない（no-store）", /cache: "no-store", signal: AbortSignal\.timeout\(12000\)/.test(bg));
-  ok("  ⚠ 検索の条件を作る直前に呼ぶ", /var customer = await _refreshCustomerBeforeSearch\(customer, site\);\s*\n\s*var conds = _buildBatchConditions/.test(bg));
-  ok("  ⚠ 読めなくても止まらない（今までの条件で続行）", /今までの条件で検索します/.test(bg));
+  ok("  ⚠ 検索の条件を作る直前に呼ぶ（読めなければ飛ばす・2.8.318）", /customer = await _refreshCustomerBeforeSearch\(customer, site\);[\s\S]{0,1600}?AXLX_API_RELOAD_FAILED[\s\S]{0,400}?var conds = _buildBatchConditions/.test(bg));
   ok("  ⚠ API の返す形が複数でも動く（配列/ customers / customer / 単体）", /Array\.isArray\(j\.customers\)/.test(bg) && /j\.customer\.id/.test(bg));
 }
 

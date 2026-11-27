@@ -123,7 +123,7 @@ console.log("\n■ ② 次客の条件を毎回APIから読み直す");
   ok("2秒・4秒あけて再試行", /2000/.test(seg) && /4000/.test(seg));
   ok("結果を _lastCustomerReload に残す", /_lastCustomerReload\s*=/.test(bg));
   ok("_batchAutofill が customer_api_reload を残す", /_auditStep\([^;]*"customer_api_reload"/.test(bg) || /"customer_api_reload"/.test(bg));
-  ok("検索の前（一括の次客）にも呼ぶ（series_handoff_order の marker）", /var customer = await _refreshCustomerBeforeSearch\(customer, site\);/.test(bg));
+  ok("検索の前（一括の次客）にも呼ぶ（series_handoff_order の marker）", /customer = await _refreshCustomerBeforeSearch\(customer, site\);/.test(bg));
 }
 
 console.log("\n■ 規則・手順書");

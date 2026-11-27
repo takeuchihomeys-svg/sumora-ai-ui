@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.317";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.318";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -660,7 +660,7 @@ export const AUTO_RULES: AutoRule[] = [
     text: "連続のお客さんのループ（一括・2.8.317 で簡素化。竹内さん「ここでループが安定する」）。各お客さんの流れ：①入力前：最初のお客さんはリセットしない（まっさら）。2人目以降は前客の送付後のリセットが済んでいれば空とみなして押さない（済んでいない・失敗・20分以上前の時だけ入れる前に押す）②次客の条件を拡張ツールのAPI（/api/property-customers・キャッシュなし）から毎回読み直して（失敗は2秒・4秒あけて最大3回）空のフォームへ入力する＝ループの要（next_customer_api_reload・印 customer_api_reload）③検索：条件を入れ終えて 9〜12 秒見直してから押す（search_review_wait）→確認の時刻から40〜50秒待って並べ替え（押した後の猶予15〜20秒）→物件取得→送付 ④送付が終わったら、完了の小窓を閉じてリセットを押し、読み直しを待ち、30〜34秒人の間で待つだけ。空かの読み戻し・写真・猶予は置かない（押して待ったら空とみなす＝reset_settled）⑤次のお客さんがいれば①へ戻る（リセットは各客の最後に1回だけ）。最後のお客さんは完了を待たせず裏でリセットして終わる。リセットが押せない・例外の時だけ、保険（もう1回押す）と従来の1つずつ外し・資料を見る間（1.8〜13秒）を代わりに使う（reset_fallback）。読み直し（②）は必ずリセット（待ち）より後。印: reset_settled／customer_api_reload／reset_before_fill／look_skip／bulk_pos／handoff_loop",
     since: "2.8.306",
     kb: "265a1cca",
-    marker: "var customer = await _refreshCustomerBeforeSearch(customer, site);",
+    marker: "customer = await _refreshCustomerBeforeSearch(customer, site);",
     file: "background.js",
     verify: {
       onlyIf: ["handoff_loop"],
@@ -1960,7 +1960,7 @@ export const AUTO_RULES: AutoRule[] = [
      */
     id: "next_customer_api_reload",
     scene: "switch",
-    text: "次のお客さんへ移る時は、必ず毎回、拡張ツールからAPIでそのお客さんの最新の条件を読み込み直して（古い手元のコピーは使わない）、その条件を空のフォームへ入れる。読み込みに失敗したら2秒・4秒あけて最大3回までやり直し（権限・存在しないエラーはやり直さない）、全部だめな時だけ手元の条件で続ける。何回目で成功したか・条件が更新されていたかは印（customer_api_reload）に残す。これを毎回することでループが安定する（竹内さん・2026-11-27「かなり重要」）。順は ①前客の送付 ②リセット（30〜34秒待つだけ）③次客の条件をAPIから読み直す ④空のフォームへ入れる ⑤検索",
+    text: "次のお客さんへ移る時は、必ず毎回、拡張ツールからAPIでそのお客さんの最新の条件を読み込み直して（古い手元のコピーは使わない）、その条件を空のフォームへ入れる。読み込みに失敗したら2秒・4秒あけて最大3回までやり直し（権限・存在しないエラーはやり直さない）、全部だめな時は古い条件では検索せず、そのお客さんを飛ばして理由を残す（2.8.318・竹内さん「古い条件では検索せず飛ばす」）。何回目で成功したか・条件が更新されていたかは印（customer_api_reload）に残す。これを毎回することでループが安定する（竹内さん・2026-11-27「かなり重要」）。順は ①前客の送付 ②リセット（30〜34秒待つだけ）③次客の条件をAPIから読み直す ④空のフォームへ入れる ⑤検索",
     since: "2.8.317",
     kb: "1ff4d9b6",
     marker: "_lastCustomerReload",
