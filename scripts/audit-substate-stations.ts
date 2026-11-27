@@ -1,16 +1,21 @@
 // scripts/audit-substate-stations.ts — 細かい状態の一致（状態の置き場の駅と、その番の駅が合うか）を手元の照らしの json で数える（#804・2026-11-27 作業員A）
 //   LLM も DB も使わない。json は audit-route-progress-takeuchi.ts --json の出力（sub1・node・branch・sentBefore）。
 //   数えるもの: 今（網のまま）／SUBSTATE_CONTEXT（前提で落とす）／＋出てよい駅を複数（SUBSTATE_MULTI_STATION）の一致。--show で外れと新しく当たった番を出す
-//   実行: npx tsx scripts/audit-substate-stations.ts <json> [--show]
+//   実行: npx tsx scripts/audit-substate-stations.ts <json> [--show] [--before=YYYY-MM-DD] [--exclude=<足す駅を選んだ json>] [--writer=takeuchi]
 import { readFileSync } from "node:fs";
 import { SUBSTATES } from "../app/lib/apply-route-substate";
 import { SUBSTATE_NEEDS } from "../app/lib/substate-context";
 import { substateStationsOf } from "../app/lib/apply-route-substate";
 
-type Row = { conv: string; at: string; node: string | null; branch: string | null; act: string | null; sub1: string | null; sentBefore?: Record<string, unknown> };
-const path = process.argv.find((a) => a.endsWith(".json"))!;
+type Row = { conv: string; at: string; writer?: string | null; node: string | null; branch: string | null; act: string | null; sub1: string | null; sentBefore?: Record<string, unknown> };
+const path = process.argv.find((a) => a.endsWith(".json") && !a.startsWith("--"))!;
 const show = process.argv.includes("--show");
-const rows = (JSON.parse(readFileSync(path, "utf8")) as Row[]).filter((r) => r.sub1);
+// 2026-11-27 統括役: 足す駅を選んだ60日の外で確かめる（--before=YYYY-MM-DD でその日より前の番だけ・--exclude=<json> でその json にある番を外す）
+const before = process.argv.find((a) => a.startsWith("--before="))?.slice(9) ?? null;
+const exclFile = process.argv.find((a) => a.startsWith("--exclude="))?.slice(10) ?? null;
+const writer = process.argv.find((a) => a.startsWith("--writer="))?.slice(9) ?? null; // --all-writers の json を竹内さん本人の番だけで数える時は --writer=takeuchi
+const excl = new Set(exclFile ? (JSON.parse(readFileSync(exclFile, "utf8")) as Row[]).map((r) => `${r.conv}@${r.at}`) : []);
+const rows = (JSON.parse(readFileSync(path, "utf8")) as Row[]).filter((r) => r.sub1 && (!before || r.at < before) && (!writer || (r.writer ?? "takeuchi") === writer) && !excl.has(`${r.conv}@${r.at}`));
 const atOf = (id: string) => SUBSTATES.find((s) => s.id === id)?.at ?? null;
 const ctxOf = (r: Row) => ({ estimateSent: !!r.sentBefore?.estimate_sheet, propertiesSent: !!(r.sentBefore?.property_send || r.sentBefore?.property_recommendation) });
 const here = (r: Row, st: readonly string[]) => st.some((s) => s === r.node || s === r.branch);
