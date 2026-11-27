@@ -42,7 +42,8 @@ ok("猶予は 15000 以上", mn >= 15000, mn);
 ok("猶予は 20000 未満", mx < 20000, mx);
 ok("毎回揺れる", seen.size > 50, seen.size);
 ok("定数は 15000／20000", /var LAG_GRACE_MIN_MS = 15000;/.test(bd) && /var LAG_GRACE_MAX_MS = 20000;/.test(bd));
-const sortIdx = bd.indexOf("sort_lag_grace");
+// ★ 2.8.324: 読み直し後の猶予も sort_lag_grace の印を使うので、押下の所（_auditSort）を指して見る
+const sortIdx = bd.indexOf('_auditSort("sort_lag_grace"');
 ok("並べ替えの後に sort_lag_grace を残す", sortIdx > 0);
 ok("step の待ちは 1200 + 猶予", /step\(1200 \+ _lagG, function \(\) \{ done\(true\); \}\);/.test(bd.slice(Math.max(0, sortIdx - 400), sortIdx + 300)));
 ok("background に猶予の関数は無い（リセット後に猶予を置かない）", bg.indexOf("function _lagGraceMs()") < 0 && bg.indexOf('_stamp("reset_lag_grace"') < 0);

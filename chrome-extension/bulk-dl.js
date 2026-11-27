@@ -2628,6 +2628,8 @@
    *     並べ替えをもう一度せず、④物件取得へ進む。同じページの待ちの間（まだ読み直していない）はここでは始めない。
    */
   var _sortResumeStarted = false;
+  /** ★ 2.8.324: 読み直し後の猶予（15〜20秒）を待っている間の印（二重に待たない） */
+  var _sortResumeWaiting = false;
   function _readSortPressedSync() {
     try {
       var o = JSON.parse(sessionStorage.getItem("axlx_sort_pressed_sync") || "null");
@@ -2736,13 +2738,23 @@
         _listWaitReason("sort_pressed_rows0");
         return;
       }
-      if (_sortResumeStarted || _autoPdfRun) return;
-      _sortResumeStarted = true;
-      try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
-      try { _liveDlStep("sort_done", "pressed_resume"); } catch (_) {}
-      try { _announcePhase("list", "sort_pressed_resume"); } catch (_) {}
-      try { _requestLoopGrasp("list", "sort_pressed_resume", true); } catch (_) {}
-      try { _startAutoPressRun(); } catch (_) {}
+      if (_sortResumeStarted || _autoPdfRun || _sortResumeWaiting) return;
+      // ★ 2.8.324 竹内さん「並べ替えのあとラグが起きるので時間を少し開けるのが理想」:
+      //   実測 #1673: 押してから4秒で物件取得が始まった（猶予の15秒は読み直しで消えていた）。
+      //   読み直したあとにも猶予（15〜20秒）を取ってから一覧を取る。押した印は待っている間も残す（もう一度読み直しても待ち直す）。
+      _sortResumeWaiting = true;
+      var _lagR = _lagGraceMs();
+      try { _liveDlStep("sort_lag_grace", Math.round(_lagR / 1000) + "秒 読み直し後の猶予（ラグ・並べ替えは完了済み）"); } catch (_) {}
+      setTimeout(function () {
+        _sortResumeWaiting = false;
+        if (_sortResumeStarted || _autoPdfRun) return;
+        _sortResumeStarted = true;
+        try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
+        try { _liveDlStep("sort_done", "pressed_resume"); } catch (_) {}
+        try { _announcePhase("list", "sort_pressed_resume"); } catch (_) {}
+        try { _requestLoopGrasp("list", "sort_pressed_resume", true); } catch (_) {}
+        try { _startAutoPressRun(); } catch (_) {}
+      }, _lagR);
       return;
     }
     if (!_autoSendArmed && !(opt && opt.afterSearch)) {
@@ -5166,6 +5178,8 @@
 
   /** 押す所（候補を集めて、人の順で1件ずつ押し始める） */
   function _startAutoPressRun() {
+    // ★ 2.8.324: 読み直し後の待ちと、同じページの待ち（_autoPdfRunPending）が両方から来ても、一覧の押しは1回だけ
+    if (_autoPdfRun) return;
     _sortResumeStarted = true;
     try { sessionStorage.removeItem("axlx_sort_pressed_sync"); } catch (_) {}
     _announcePhase("list", "auto_press_run");

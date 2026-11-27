@@ -23,7 +23,7 @@ import { flowNode } from "./loop-flow-map";
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.323";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.324";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -811,7 +811,7 @@ export const AUTO_RULES: AutoRule[] = [
   {
     id: "sort_pressed_then_list",
     scene: "list",
-    text: `並べ替えの③「高→低」を押したら完了し、読み直した一覧は④へ進む（2.8.322 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得・並び替え完了を把握できていない」）。手順書の③には地図と同じ文を載せる: ${flowNode("sort")?.playbook ?? ""}。押した事実は読み直しで消えない所（axlx_sort_pressed_sync）に残す。印: sort_pressed／sort_done（pressed_resume）`,
+    text: `並べ替えの③「高→低」を押したら完了し、押したあとと読み直したあとの両方で15〜20秒あけてから④へ進む（2.8.324 竹内さん「並べ替えのあとラグが起きるので時間を少し開けるのが理想」・実測 #1673 は4秒で物件取得が始まった）。読み直した一覧は④へ（2.8.322 竹内さん「並べ替えしたあとにつまっている・④のところ物件取得・並び替え完了を把握できていない」）。手順書の③には地図と同じ文を載せる: ${flowNode("sort")?.playbook ?? ""}。押した事実は読み直しで消えない所（axlx_sort_pressed_sync）に残す。印: sort_pressed／sort_done（pressed_resume）`,
     since: "2.8.322",
     kb: null,
     marker: "axlx_sort_pressed_sync",

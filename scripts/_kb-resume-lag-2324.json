@@ -1,0 +1,12 @@
+[
+  {
+    "title": "【決定】並べ替えの高→低を押したあとは、読み直しのあとも15〜20秒あけてから物件取得へ進む",
+    "category": "architecture",
+    "insight": "並べ替えの後はラグが起きるので、押してから一覧を取るまで少し間をあける。押したあとの猶予（15〜20秒）は読み直しで消えるため、読み直し後の入口（pressed_resume）にも猶予を取る。猶予なしで一覧を始めない。待っている間も押した印は残し、一覧の押しは走っている分が1つだけになるよう止める。",
+    "rationale": "実測 #1673（2.8.323）では、高→低を押して約4秒で物件取得が始まった。猶予の印（sort_lag_grace 15秒）は出ていたが、読み直し後の入口が待たずに始めていた。画面が追いつく前に一覧を取ると、並べ替えの結果が揃わないまま押すおそれがある。",
+    "context": "2026-11-27 竹内さん「AD並べ替えのあと取得するまでの期間がはやすぎる気がする／並べ替えのあとはラグがおきるので時間を少し開けるのが理想」。",
+    "applied_to": "chrome-extension/bulk-dl.js（_maybeAutoPressOnLoad の pressed_resume・_startAutoPressRun）、app/lib/loop-flow-map.ts（sort.playbook・note）、app/lib/auto-procedure-rules.ts（sort_pressed_then_list）",
+    "tags": ["Chrome拡張", "並べ替え", "物件取得", "ラグ", "手順書"],
+    "priority": 1
+  }
+]

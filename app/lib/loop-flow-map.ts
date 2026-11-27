@@ -150,11 +150,11 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     kind: "step",
     label: "並べ替え（AD→高→低・①〜③）",
     /** ③の文の末尾に、この文をそのまま載せる（手で要約しない。checkListPlaybookStrength が見張る） */
-    playbook: "押した時点で並べ替えは完了。ページが読み直されて待ちが消えても、読み直した一覧ではもう一度並べ替えず④物件取得へ進む。パネルは「物件取得最中」（「並べ替え最中」のままにしない）",
+    playbook: "押した時点で並べ替えは完了。押したあとは15〜20秒あけてから一覧を取る（並べ替えの後はラグがあるため）。ページが読み直されても、読み直した一覧ではもう一度並べ替えず、読み直しのあとも15〜20秒あけてから④物件取得へ進む。パネルは「物件取得最中」（「並べ替え最中」のままにしない）",
     next: ["list_press", "b_zero"],
     evidence: { file: "bulk-dl.js", token: "_sortByAdLikeHuman" },
     audit: ["dl:sort_done", "dl:sort_pressed"],
-    note: "2.8.322 #1668: 高→低のあと sort_lag_grace で終わり、sort_done も物件取得も無かった。完了の文は③に載せる",
+    note: "2.8.322 #1668: 高→低のあと sort_lag_grace で終わり、sort_done も物件取得も無かった。完了の文は③に載せる。2.8.324 #1673: 読み直し後の入口が猶予なしで4秒後に物件取得を始めた（猶予は読み直しで消えるため読み直し後にも取る）",
   },
   {
     id: "list_press",

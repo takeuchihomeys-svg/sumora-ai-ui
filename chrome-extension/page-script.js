@@ -4157,7 +4157,7 @@ function _guideLikeAreaSkip(why) {
     done: { now: "客完了→リセットへ", next: "リセットを押して30〜34秒待つ" }
   };
   /* PANEL_WORDS:END */
-  var _AXLX_PAGE_VER = "2.8.323";
+  var _AXLX_PAGE_VER = "2.8.324";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
