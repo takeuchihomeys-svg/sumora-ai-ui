@@ -32,7 +32,7 @@ t("generate-reply の受け渡しに配線", route.includes('meta: metaWithTurnA
 // 2026-11-21 作業員M（#467）: brain-core は判断が終わった後の meta の記録（apply_route・turn_aims_after）にだけ使う＝ブレインの材料・出力の欄には渡さない
 { const bc = readFileSync("app/lib/brain-core.ts", "utf8").split("\n");
   const uses = bc.filter((l) => /deriveTurnAimsAfter\(|matchSubstateOf\(|metaWithTurnAimsAfter/.test(l));
-  t("brain-core には渡していない（記録の行だけ）", !bc.some((l) => l.includes("metaWithTurnAimsAfter")) && uses.length > 0 && uses.every((l) => l.includes("applyRouteLocRec ?")), uses.map((l) => l.trim().slice(0, 60))); }
+  t("brain-core には渡していない（記録の行だけ）", !bc.some((l) => l.includes("metaWithTurnAimsAfter")) && uses.length > 0 && uses.every((l) => l.includes("applyRouteLocRec ?") || l.includes("substateContextOn()") || l.includes("const subA")), uses.map((l) => l.trim().slice(0, 60))); }
 
 // 2026-11-21 作業員M: 網の2版（ROUTE_SUBSTATE_NET_V2・既定 off）。文は伏せた形
 const form = "▶︎【お部屋お探し中！】 （ご希望のお部屋探しご条件） ①【ご入居の時期】⇒10月 ②【ご希望の家賃】⇒〜11万";

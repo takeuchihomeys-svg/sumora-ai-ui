@@ -9,7 +9,7 @@ t("既定 off", () => { assert.equal(aixBrainReadCardOn({}), false); assert.equa
 t("meta が無ければ空", () => { assert.equal(aixBrainReadCard(null), ""); assert.equal(aixBrainReadCard({}), ""); });
 t("番の目的・狙い・仕込み・要点・駅が事実の行で出る・言い回しと種類は変えない但し書き", () => {
   const c = aixBrainReadCard({
-    turn_aims: { turnAim: "空きの結果を伝える", midAim: "内覧の日程へ", plant: "1部屋のみ・申込で抑えてから内覧も可" },
+    turn_aims_after: { turnAim: "空きの結果を伝える", midAim: "内覧の日程へ", plant: "1部屋のみ・申込で抑えてから内覧も可" },
     main_point: "空きと初期費用",
     apply_route: { node: "proposing", branch: null, substate: { id: "proposing_liked_one" } },
   });
@@ -21,7 +21,7 @@ t("番の目的・狙い・仕込み・要点・駅が事実の行で出る・�
   assert.match(c, /AIX の種類・ピッカー・確認の結果・金額・日程は変えない/);
 });
 t("仕込みに確認・約束が入っていたら渡さない（q065 の教訓）", () => {
-  const c = aixBrainReadCard({ turn_aims: { turnAim: "入居日を答える", plant: "最速入居日は管理会社に確認してすぐ連絡する" } });
+  const c = aixBrainReadCard({ turn_aims_after: { turnAim: "入居日を答える", plant: "最速入居日は管理会社に確認してすぐ連絡する" } });
   assert.doesNotMatch(c, /管理会社に確認/);
   assert.match(c, /この番の目的/);
 });
@@ -46,5 +46,14 @@ t("材料の要約は決まった計算で取る（答え漏れ・逆算・駅�
   assert.match(c, /やわらかい次の一手の候補/);
 });
 t("材料が無ければ要約は null", () => { assert.equal(aixReadSrcOf({ blocks: [], holdSoftNext: "" }), null); });
+t("ブレインの出力の turn_aims（BRAIN_TURN_AIMS・凍結）は読まない", () => {
+  assert.equal(aixBrainReadCard({ turn_aims: { turnAim: "読まない目的" } } as never), "");
+});
+t("判断の後の決まった計算の目的（aix_read_src.aims）は札に入る", () => {
+  const src = aixReadSrcOf({ blocks: [], aims: { turnAim: "好きな1件の中身に答える", midAim: "内覧へ", plant: "" } })!;
+  const c = aixBrainReadCard({ aix_read_src: src });
+  assert.match(c, /この番の目的: 好きな1件の中身に答える/);
+  assert.match(c, /次の2〜3番の狙い: 内覧へ/);
+});
 
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

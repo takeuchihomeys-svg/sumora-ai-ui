@@ -75,6 +75,15 @@ export function deriveTurnAimsAfter(i: { customerText: string | null | undefined
   };
 }
 
+/** 2026-11-28 作業員A（#827・統括役「番の目的と仕込みは TURN_AIMS_AFTER の側から」）: AIX ボタンの札に入れる目的・狙い・仕込み。道が AIX の番でも作る（判断の後・記録と札だけ＝道は変えない）。当たらなければ null */
+export function turnAimsForAixCard(customerText: string | null | undefined, env?: Env): Pick<TurnAims, "turnAim" | "midAim" | "plant"> | null {
+  if (!turnAimsAfterOn(env)) return null;
+  const s = matchSubstateOf(customerText, env);
+  if (!s) return null;
+  const plant = s.plants.map((p) => PLANT_JA[p]).join("・").slice(0, 30);
+  return { turnAim: s.turnAim.slice(0, 30), midAim: s.midAim === "—" ? "" : s.midAim.slice(0, 40), plant: PLANT_NOT_PROMISE_RE.test(plant) ? "" : plant };
+}
+
 /** 文の統括への受け渡しに使う meta（ブレインの meta に turn_aims が無い時だけ足す・ブレインの meta は書き換えない） */
 export function metaWithTurnAimsAfter(meta: Record<string, unknown>, customerText: string | null | undefined, env?: Env): Record<string, unknown> {
   if (meta.turn_aims) return meta;

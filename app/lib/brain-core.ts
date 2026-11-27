@@ -7276,7 +7276,7 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     let aixReadSrc: import("@/app/lib/aix-brain-read-card").AixReadSrc | null = null;
     try {
       const arc = await import("@/app/lib/aix-brain-read-card");
-      if (arc.aixBrainReadCardOn()) aixReadSrc = arc.aixReadSrcOf({ blocks: materialBlocks, holdSoftNext: holdSoftNextText });
+      if (arc.aixBrainReadCardOn()) aixReadSrc = arc.aixReadSrcOf({ blocks: materialBlocks, holdSoftNext: holdSoftNextText, aims: (await import("@/app/lib/turn-aims-after")).turnAimsForAixCard(unrepliedTurn.text ?? "") });
     } catch (e) { console.warn("[brain-core] aix-read-src skipped:", e instanceof Error ? e.message : String(e)); }
     return {
       action: finalAix ?? "",

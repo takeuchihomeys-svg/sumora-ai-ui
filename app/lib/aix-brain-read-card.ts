@@ -15,25 +15,27 @@ type Env = Record<string, string | undefined>;
 export const aixBrainReadCardOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => stagedOn("AIX_BRAIN_READ_CARD", env, STAGE_OFF);
 
 /** 判断の後に meta に残す材料の要約（決まった計算・ブレインの出力ではない） */
-export type AixReadSrc = { unanswered?: string; soft_next?: string; backplan?: string; station_state?: string };
+export type AixReadSrc = { unanswered?: string; soft_next?: string; backplan?: string; station_state?: string; aims?: { turnAim?: string; midAim?: string; plant?: string } };
 const MAX = 140;
 const cut = (s: string | null | undefined) => {
   const t = String(s ?? "").replace(/\s+/g, " ").replace(/^【|】$/g, "").trim();
   return t ? (t.length > MAX ? `${t.slice(0, MAX)}…` : t) : "";
 };
 /** ブレインの材料の塊（materialBlocks）と保留の柔らかい次の一手の文から、AIX に渡す分だけを短く取る */
-export function aixReadSrcOf(i: { blocks: ReadonlyArray<{ key: string; text: string }>; holdSoftNext?: string | null }): AixReadSrc | null {
+export function aixReadSrcOf(i: { blocks: ReadonlyArray<{ key: string; text: string }>; holdSoftNext?: string | null; aims?: { turnAim?: string; midAim?: string; plant?: string } | null }): AixReadSrc | null {
   const pick = (k: string) => cut(i.blocks.find((b) => b.key === k)?.text);
   const out: AixReadSrc = {};
   const ua = pick("unanswered"); if (ua) out.unanswered = ua;
   const bp = pick("route_backplan"); if (bp) out.backplan = bp;
   const ss = pick("station_state"); if (ss) out.station_state = ss;
   const sn = cut(i.holdSoftNext); if (sn) out.soft_next = sn;
+  if (i.aims && (i.aims.turnAim || i.aims.midAim || i.aims.plant)) out.aims = { ...(i.aims.turnAim ? { turnAim: cut(i.aims.turnAim) } : {}), ...(i.aims.midAim ? { midAim: cut(i.aims.midAim) } : {}), ...(i.aims.plant ? { plant: cut(i.aims.plant) } : {}) };
   return Object.keys(out).length ? out : null;
 }
 
 type MetaIn = {
-  turn_aims?: { turnAim?: string; midAim?: string; plant?: string; state?: string } | null;
+  // 2026-11-28 統括役: ブレインの出力の turn_aims（BRAIN_TURN_AIMS・11/12 に道を引いて凍結）は読まない。判断の後の決まった計算（TURN_AIMS_AFTER）の側だけ
+  turn_aims_after?: { turnAim?: string; midAim?: string; plant?: string; state?: string } | null;
   main_point?: unknown;
   apply_route?: { node?: string | null; branch?: string | null; substate?: unknown } | null;
   aix_read_src?: AixReadSrc | null;
@@ -46,7 +48,7 @@ const PLANT_NG = /確認|確かめ|管理会社|ご?連絡(?:し|させ|いた)|
 export function aixBrainReadCard(meta: MetaIn): string {
   if (!meta) return "";
   const rows: string[] = [];
-  const ta = meta.turn_aims;
+  const ta = meta.turn_aims_after ?? meta.aix_read_src?.aims ?? null;
   if (ta?.turnAim) rows.push(`この番の目的: ${cut(ta.turnAim)}`);
   if (ta?.midAim) rows.push(`次の2〜3番の狙い: ${cut(ta.midAim)}`);
   if (ta?.plant && !PLANT_NG.test(ta.plant)) rows.push(`先の番のための一言（入れるかは文の流れで・言い回しは手本のまま）: ${cut(ta.plant)}`);
