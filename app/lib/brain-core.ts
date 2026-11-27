@@ -3876,6 +3876,17 @@ ${sh}`;
   // 2026-10-29 AIX の統括からの差し戻し（opts.sendBack がある時だけ・決めるのはブレイン）
   // 2026-11-12 作業員16（CHECK_ORDER_GUIDE=on の時だけ・既定 off）: 場面と記録から選んだ竹内さんの型の「確かめる順番となぜ」を材料の1行で（道・次の一手の言葉は入れない・決め直さない）
   let checkOrderGuideRec: { type: string; steps: string[] } | null = null;
+  // 2026-11-27 作業員A（#821・統括役「事実だけ・すぐ AIX にするかはブレインが決める」・CHECK_NOW_POSSIBLE_LINE=on の時だけ・既定 off）: 今確かめられるか
+  //   （管理会社の営業時間の内か＝time-facts の決まりの値・同じ物件の 物件確認した の結果がもうあるか＝読み済みの aixLogs）。確かめる事が無い番は出さない。印 check_now_possible
+  if (!isPostApplyStatus(convStatus)) {
+    try {
+      const cnp = await import("@/app/lib/check-now-possible");
+      if (cnp.checkNowPossibleOn()) {
+        const ln = cnp.checkNowPossibleLine({ customerText: unrepliedTurn.text ?? "", aix: aixLogs as never, nowMs: Date.now(), hour: jstParts().hour });
+        if (ln) { customerStateBlockText += `\n${ln}`; materialMarks.check_now_possible = ln.length; materialBlocks.push({ key: "check_now_possible", text: ln, from: "cs" }); }
+      }
+    } catch (e) { console.warn("[brain-core] check-now-possible skipped:", e instanceof Error ? e.message : String(e)); }
+  }
   if (checkOrderGuideOn() && !isPostApplyStatus(convStatus)) {
     const f = brainLedger.facts;
     const g = checkOrderGuideFor(preBrainCues({

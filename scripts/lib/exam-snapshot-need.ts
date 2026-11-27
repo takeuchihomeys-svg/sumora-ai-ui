@@ -41,6 +41,7 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   CONDUCTOR_EXCHANGE_LEDGER: "exchange_intake", // 入口の統括に照らし合わせの1行を渡した番（ブレインの材料の側は CONDUCTOR_EXCHANGE_LEDGER_BRAIN＝exchange）
   CONDUCTOR_EXCHANGE_LEDGER_BRAIN: "exchange",
   CONDUCTOR_TODOS: "conductor_todos", // やる事の一覧の記録を作った番
+  CHECK_NOW_POSSIBLE_LINE: "check_now_possible", // 2026-11-27 #821 今確かめられるか（事実の1行を足した番）
   CHECK_ORDER_GUIDE: "check_order_guide", // 2026-11-27 #818 竹内さんの P0 7d6fe3eb（確かめる順番となぜの1行を材料に足した番）
   BRAIN_DEMOTE_ANSWERABLE_DIRECT: "demote_answerable_direct", // 2026-11-27 #821 すぐ AIX の決め打ちを下げた番（ブレインの答えと食い違った番だけ）
   BRAIN_DEMOTE_SIGNAL_DATE_WISH_S3: "demote_date_wish_s3", // 2026-11-27 #821 内覧の日の希望・保証人 S3 の信号を下げた番
