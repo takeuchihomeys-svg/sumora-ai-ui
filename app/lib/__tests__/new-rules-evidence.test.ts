@@ -56,12 +56,12 @@ console.log("\n■ 壊れない");
 
 console.log("\n■ 実物の決まり（今の AUTO_RULES）");
 {
-  const r = newRulesEvidence([], AUTO_RULES, { recent: 6 }); // 2.8.317: 直近3つの版では 2.8.313 の決まりが外れたので広げて見る
+  const r = newRulesEvidence([], AUTO_RULES, { recent: 12 }); // 2.8.317: 直近3つの版では 2.8.313 の決まりが外れたので広げて見る（2.8.321: 版が増えて 6 でも外れたので 12 へ）
   ok("今回の決まり reset_clean_no_force_place が新しい決まりに入る", r.some((x) => x.id === "reset_clean_no_force_place"), r.map((x) => x.id));
   ok("記録が無い今は全部 waiting_ext か no_verify（verified と偽らない）", r.every((x) => x.state === "waiting_ext" || x.state === "no_verify"), r.map((x) => x.state));
-  const real = newRulesEvidence([{ ext_version: "2.8.313", steps: [S("page:reset_clean_no_force_place", 1)] }], AUTO_RULES, { recent: 6 }).find((x) => x.id === "reset_clean_no_force_place");
+  const real = newRulesEvidence([{ ext_version: "2.8.313", steps: [S("page:reset_clean_no_force_place", 1)] }], AUTO_RULES, { recent: 12 }).find((x) => x.id === "reset_clean_no_force_place");
   ok("実物: 印が出て place_redo が無ければ verified", real?.state === "verified", real);
-  const real2 = newRulesEvidence([{ ext_version: "2.8.313", steps: [S("page:reset_clean_no_force_place", 1), S("page:place_redo", 2)] }], AUTO_RULES, { recent: 6 }).find((x) => x.id === "reset_clean_no_force_place");
+  const real2 = newRulesEvidence([{ ext_version: "2.8.313", steps: [S("page:reset_clean_no_force_place", 1), S("page:place_redo", 2)] }], AUTO_RULES, { recent: 12 }).find((x) => x.id === "reset_clean_no_force_place");
   ok("実物: place_redo が出たら ng", real2?.state === "ng", real2);
 }
 

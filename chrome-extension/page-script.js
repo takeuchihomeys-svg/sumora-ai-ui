@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.320";
+  var _AXLX_PAGE_VER = "2.8.321";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4205,6 +4205,7 @@ function _guideLikeAreaSkip(why) {
     "all_sent_advance_no_stuck",
     "zero_result_finish_reset",
     "reset_front_visible",
+    "human_move_arrive",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",
@@ -6390,7 +6391,47 @@ function _guideLikeAreaSkip(why) {
        * ★ 2026-11-17 通常録画: 操作間隔 p50≈1.1s。移動のあと着地〜押しも厚く。
        *   旧 110〜350ms は速すぎ → 対数正規中央≈280＋たまに長め。
        */
-      return _move().then(function () {
+      /**
+       * ★ 2.8.321 竹内さん「駅入れるところで直接入力が入ってしまう・1つ1つ人間のようにカーソル動かして押す」:
+       *   ⚠ 原因: pointer-ui の moveTo は、途中で打ち切られる（別の移動が始まる・ensure 失敗・欄の大きさ0）と
+       *     reject せず **false で終わる**。旧は _move().then(...) が戻り値を見ずに、待ち時間のあと押していた
+       *     ＝カーソルが着く前（途中で止まったまま）に駅のチェックが入る。
+       *   → 「着いた」（戻り値 true・かつ見えるカーソルが欄の近く）を確かめ、着かなければ**動かし直す**（最大3回）。
+       *     3回でも着かない時だけ押し（駅の選びを落とさない）、press_no_arrive を残して DB で数えられるようにする。
+       */
+      var _moveTry = 0;
+      var _arrivedAt = function (ok) {
+        if (ok !== true) return false;
+        try {
+          var _pp = _P.visiblePosition ? _P.visiblePosition() : null;
+          if (!_pp) return true; // 位置が読めない時は moveTo の「着いた」を信じる
+          var _rr = el.getBoundingClientRect();
+          return _pp.x >= _rr.left - 10 && _pp.x <= _rr.right + 10 && _pp.y >= _rr.top - 10 && _pp.y <= _rr.bottom + 10;
+        } catch (_) { return true; }
+      };
+      var _moveUntilArrived = function () {
+        _moveTry++;
+        var _pr;
+        try { _pr = Promise.resolve(_move()); } catch (_) { _pr = Promise.resolve(false); }
+        return _pr.then(function (ok) { return _arrivedAt(ok); }, function () { return false; }).then(function (arrived) {
+          if (arrived) return true;
+          if (_moveTry >= 3) {
+            try { if (_audit) _auditStepP("press_no_arrive", String(_opLabel(el)).slice(0, 40) + " カーソルが着かないまま3回→押した"); } catch (_) {}
+            return false;
+          }
+          try { if (_audit) _auditStepP("move_retry", String(_opLabel(el)).slice(0, 40) + " カーソルが着く前に止まった→動かし直す" + _moveTry); } catch (_) {}
+          return new Promise(function (resv) { setTimeout(resv, 160 + Math.floor(Math.random() * 240)); }).then(function () {
+            try {
+              r = el.getBoundingClientRect();
+              if (_aimPt && typeof _aimPt.fx === "number" && typeof _aimPt.fy === "number") {
+                _aimPt = { x: r.left + r.width * _aimPt.fx, y: r.top + r.height * _aimPt.fy, fx: _aimPt.fx, fy: _aimPt.fy };
+              }
+            } catch (_) {}
+            return _moveUntilArrived();
+          });
+        });
+      };
+      return _moveUntilArrived().then(function () {
         var _dwell = H && H.logNormalDelay ? H.logNormalDelay(280, 0.5) : (180 + Math.floor(Math.random() * 220));
         if (Math.random() < 0.22) _dwell += 200 + Math.floor(Math.random() * 480);
         if (Math.random() < 0.07) _dwell += 500 + Math.floor(Math.random() * 900);
@@ -6428,10 +6469,15 @@ function _guideLikeAreaSkip(why) {
             _doTap();
           }
         });
-      }, function () {
-        return Promise.resolve(_fireAt(el, fire, r, _aimPt)).then(function () { return true; }, function () { return true; });
       });
     }
+    // ★ 2.8.321: 見えるカーソルが無い（pointer-ui 未読込）まま押す時は、見えない押しとして印を残す（1ページ1回）
+    try {
+      if (!window.__axNoPtrUiNoted) {
+        window.__axNoPtrUiNoted = 1;
+        if (_audit) _auditStepP("press_no_cursor_ui", String(_opLabel(el)).slice(0, 40) + " 見えるカーソル無しで押した");
+      }
+    } catch (_) {}
     // ★ 2026-11-16: 狙う点も毎回ずらす（同じ欄でも同じピクセルに着かない）
     /**
      * ★ 2026-11-17: 学び無しでも毎回同じ「中央寄り」にならないよう帯を広げる（押す場所の人間化）。
@@ -9340,7 +9386,7 @@ function _guideLikeAreaSkip(why) {
      *   2.8.77 自動は aim無ばかり残り、反映関所の印が監査から消えて「連動していない」と誤認された。
      *   → 反映・学習連動の印は消さない。それ以外を間引く（上限100）。
      */
-    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open|place_xor|station_route_from_map|station_grasp_like_guide|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
+    var _PIN = /^(select_in_view|toggle_late_ok|ward_pace|fill_pause|fill_resume|motion_stats|learn_reflect_|learn_warm|learn_reflect_gate|learn_flow_reflect_|fill_start|fill_begin|btn_understand|switch_grasp|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|next_customer_grasp|next_move_grasp|loop_phase_grasp|loop_who_grasp|loop_task_list|loop_advance|cond_one_|task_now|task_done|task_next|guide_task_link|task_transition_grasp|task_transition_gate|task_api_refresh|screen_poll_|screen_task_grasp|stuck_shot_req|stuck_best_act|stuck_recover_retry|timeout_bridge_|clear_watch_|clear_stuck_timeout|silence_watch_|silence_stuck_|silence_task_advance|silence_flush|stale_grasp_drop|foundation_gate|foundation_aim_warm|score_gate|strengthen_loop|strengthen_aim_rewarm|flow_subdivide_|search_results_ready|search_press_wait_results|search_press_baseline|page_display_|page_displayed_|page_nav_|next_move_premature_block|clear_method_api_|clear_method_ledger|clear_method_ok|clear_method_gap|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|learn_refresh_res|learn_screen_late|learn_screen_kept|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_clear_retry|station_clear_open_retry|ward_clear_retry|press_hidden_scroll|move_retry|press_no_arrive|press_no_cursor_ui|aim_hit_fix|search_wait_view|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|clear_retry_press|sel_one_press|search_cursor|search_armed|guide_phase_|guide_clear_|flow_series_|guide_phase_one|guide_phase_ok|guide_phase_after_search|guide_detail_ledger|modal_confirm|confirm_press_ok|cursor_one|cursor_two|cursor_old|fallback_|area_all_done|ward_detail_skip|ward_btn_y_|walk_seal_|pet_panel_confirm|conditions_ready|next_step|ward_clear_one|ward_hidden_diag|clear_one|clear_field|station_clear_one|line_clear_one|leftover_soft_|clear_done|one_task_|now_action|place_keep|place_redo|cursor_resume|pointer_cancel|loop_task_list|clear_then_fill_|post_send_wait|post_send_cancel|clear_cancelled|ward_clear_open|place_xor|station_route_from_map|station_grasp_like_guide|location|place_mixed|place_side_clear|place_xor_plan|place_xor_gate|place_xor_miss|place_xor_violation)/;
     try {
       while (_audit.steps.length > 100) {
         var _dropAt = -1;
@@ -9373,7 +9419,7 @@ function _guideLikeAreaSkip(why) {
        *   → PIN・完了・押す済・外し原子は**即送信**。進捗は末尾40＋PIN印を必ず混ぜる。
        */
       var _pinFlush = _PIN.test(String(k));
-      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|cursor_one|cursor_two|cursor_old|guide_phase_|flow_series_|search_armed|guide_phase_after_search|guide_detail_ledger|guide_phase_one|guide_phase_ok/.test(String(k));
+      var _clearKey = /motion_stats|learn_refresh_res|learn_screen_late|stale_pending_reset|station_line_wait|station_line_repress|station_line_stuck|station_clear_before_ward|station_clear_confirm_before_ward|station_name_absent|ward_clear_before_station|ward_clear_open_retry|ward_clear_hidden_left|station_go_stuck|open_field_retry|open_field_timeout|station_place_clear_begin|station_clear_via_next|station_clear_cursor|line_clear_after_station|station_then_line_clear|station_clear_back|move_retry|press_no_arrive|press_no_cursor_ui|station_clear_blocked|station_intent_|line_intent_|_done_|_press_ok|switch_grasp|ward_scene|layout_scene|station_scene|btn_understand_ledger|learn_reflect_|learn_station_flow_|learn_flow_reflect_|fill_begin|learn_warm|learn_reflect_gate|page_ver|flow_done_|flow_gap_|flow_understand|now_customer|flow_map_ledger|flow_subdivide_|flow_atom_|clear_method_|line_station_map|station_per_line|station_select_ok|leftover_|post_send_clear|playbook_|hidden_press|clear_stage|cursor_one|cursor_two|cursor_old|guide_phase_|flow_series_|search_armed|guide_phase_after_search|guide_detail_ledger|guide_phase_one|guide_phase_ok/.test(String(k));
       if (_pinFlush || _clearKey || _nSt - _audit._progN >= 5 || _nowP - _audit._progAt >= 8000) {
         _audit._progN = _nSt;
         _audit._progAt = _nowP;

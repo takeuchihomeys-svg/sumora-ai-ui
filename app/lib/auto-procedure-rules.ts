@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.320";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.321";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -795,6 +795,16 @@ export const AUTO_RULES: AutoRule[] = [
     marker: "_bringRealproTabFront(_tab, _ridFront",
     file: "background.js",
     verify: { onlyIf: ["reset_vis"], mustHaveAny: ["reset_vis"] },
+  },
+  {
+    id: "human_move_arrive",
+    scene: "area",
+    text: "駅・区・町・ボタンなど、押す物は「カーソルが着いてから」押す（2.8.321 竹内さん「駅入れるところで直接入力が入ってしまう・1つ1つ人間のようにカーソル動かして押していく」）。カーソルの移動が途中で打ち切られた時（別の移動が始まった・見えるカーソルが作れない・欄の大きさが0）は、着いたことにして押さず、欄の位置を取り直して動かし直す（最大3回・move_retry）。3回でも着かない時だけ押し、press_no_arrive を残す。見えるカーソルが無いまま押した時は press_no_cursor_ui を1回残す",
+    since: "2.8.321",
+    kb: null,
+    marker: "_moveUntilArrived",
+    file: "page-script.js",
+    verify: { onlyIf: ["page:move_retry", "page:press_no_arrive"], mustHaveAny: ["page:move_retry", "page:press_no_arrive"] },
   },
   {
     id: "zero_result_finish_reset",

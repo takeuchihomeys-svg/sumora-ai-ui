@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.321: 押す物は「カーソルが着いてから」押す（移動が途中で打ち切られたら動かし直す・手順書 build_v 28）**
+竹内さん「駅入れるところで直接入力が入ってしまうところがあった　原因見つけて改善する　1つ1つ人間のようにカーソル動かして押していくようにする」。見た場面: 駅を1つ押す時、カーソルが着く前（または動かないまま）にチェックが入った（#1668・桜川/難波/大国町）。
+- **理解の書面（CLAUDE.md 8）**: ①形＝「順に行う手」の中の「着いてから押す」（動く→着く→少し見る→押す）。分かれ道ではない。②前提＝pointer-ui の moveTo は途中で打ち切られる（別の移動が始まる・ensure 失敗・欄の大きさ0）と reject せず false で終わる。③入れ物＝押す手（_humanPointerClick）が戻り値を見ない形だった。点検の印が KEEP に無いと間引かれ、後から数えられない。④言い直し＝「カーソルが着いたと確かめてから押す。着かないなら動かし直す」。
+- **原因（確認済み）**: _humanPointerClick は _move().then(待って押す)。moveTo が false（打ち切り）で終わっても then の成功側に入り、カーソルが途中で止まったまま押していた（reject 側の _fireAt 直行も同じ）。
+- **DB で確かめられたこと／確かめられなかったこと**: #1668 は steps が上限 120 件で間引かれ、駅を押した 25〜79秒の段が残っていなかった（駅の押しの印は KEEP に無い）。実際に打ち切りが起きたかは、この回の記録からは**確かめられない**。コードの経路としては確実に起こり得る（実機で move_retry／press_no_arrive が出るかで確かめる）。
+- **直し**: _humanPointerClick に _moveUntilArrived: moveTo が true・かつ見えるカーソルが欄の±10px以内で「着いた」。着かなければ欄の位置を取り直して最大3回動かし直す（move_retry）。3回でも着かない時だけ押し（駅を落とさない）press_no_arrive を残す。見えるカーソルが無いまま押す時は press_no_cursor_ui を1ページ1回残す。
+- **点検**: search-audit.js KEEP_STEP に page:move_retry／page:press_no_arrive／page:press_no_cursor_ui。ページ側 _PIN・_clearKey にも入れた（即送信・間引きで消えない）。決まり human_move_arrive（scene area・since 2.8.321・verify は move_retry／press_no_arrive が出た時）。PLAYBOOK_BUILD_V = 28。
+- **試験**: tests/chrome-extension/human-move-arrive-v2321.test.js 21本（偽のカーソルで「着く前に押さない」を順番で確認・3回で諦めて押す・旧の形に戻すと赤）。pre-commit に登録。
+- **まだ確かめていない（実機）**: 駅の押しで move_retry が出るか／press_no_arrive が出るか。出なければ別の経路（hidden_press＝見える欄が無い押し・toggle_direct）を DB で読む。**拡張の再読込→自動2客以上→check-playbook-sync ⑧が verified になるまで「反映済み」と言わない。**
+- **反映**: 版 2.8.321（manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO）。push・attach は竹内さんの OK の後。
 ## 2026-11-27 **拡張 2.8.320: リセットは押す前に背面のタブを前に出す／押せない時の印を消さず点検へ運ぶ／流れの地図に失敗の道と割り込みを足す（手順書 build_v 27）**
 - **なぜ（実測・本番 DB 読み取りのみ・id 指定）**: #1666（2.8.318）は 3s にリセットを開始→135s まで押されなかった（背景の待ち 130秒で切れ「返事=press_timeout」・押した印 `axlx_reset_pressed` も無し＝押す処理そのものが動かなかった）。#1661（2.8.314）も 27s「押せず」→後で押された（遅れ）。ページ側の「15秒で押せず」の印（reset_press_slow）は**一度も残らなかった**。
 - **原因（2つ・確からしさの区別）**: ①【確認済み】ページ側の点検（_audit）は次の入力の開始で作り直され、その前に出たリセットの印は前の点検ごと捨てられていた（_auditStepP は _audit が無いと黙って戻る）。②【強い仮説・記録では直接確かめられない】リセットの押す処理は人の動きの列（setTimeout 連鎖）で動く。タブが背面だとブラウザがタイマーを遅らせ（長く背面だと1分単位）、押す処理が 120秒経っても動かない。#1666 では tab_front が 270s にやっと入った（リセットより後）。

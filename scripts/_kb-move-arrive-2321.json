@@ -1,0 +1,13 @@
+[
+  {
+    "title": "【決定】押す物は「カーソルが着いてから」押す。移動が途中で打ち切られたら動かし直す（駅の直接入力を防ぐ）",
+    "category": "architecture",
+    "insight": "pointer-ui の moveTo は、別の移動が始まる・見えるカーソルが作れない・欄の大きさ0 の時、reject せず false で終わる。旧の _humanPointerClick は戻り値を見ずに待ち時間のあと押していたので、カーソルが着く前（途中で止まったまま）に駅のチェックが入った。着いたこと（true かつ見えるカーソルが欄の±10px以内）を確かめ、着かなければ欄の位置を取り直して最大3回動かし直す（move_retry）。3回でも着かない時だけ押し、press_no_arrive を残す。見えるカーソル無しで押す時は press_no_cursor_ui を1ページ1回残す。",
+    "rationale": "「1つ1つ人間のようにカーソルを動かして押す」は、押す前に『着いた』を確かめる手が無いと守れない。押す手の入れ物（戻り値を見ない then）が形を表せていなかった。3回で諦めて押すのは、駅の選びを落として検索条件がずれるより、記録を残して押す方が安全なため。印は KEEP に入れ、間引きで消えないので DB で数えられる。",
+    "context": "2026-11-27 竹内さん「駅入れるところで直接入力が入ってしまうところがあった　原因見つけて改善する　1つ1つ人間のようにカーソル動かして押していくようにする」。症状の確認: 「駅を1つ押す時、カーソルが着く前（または動かないまま）にチェックが入った」（#1668）。#1668 の記録は steps が上限で間引かれ駅の押しの段が残っておらず、実際の打ち切りは記録からは未確認（コードの経路としては確実に起こり得る）。",
+    "applied_to": "chrome-extension/page-script.js（_humanPointerClick の _moveUntilArrived）、chrome-extension/search-audit.js（KEEP_STEP）、app/lib/auto-procedure-rules.ts（human_move_arrive）、tests/chrome-extension/human-move-arrive-v2321.test.js",
+    "tags": ["Chrome拡張", "人間の動き", "カーソル", "駅", "AIX", "静かに壊れる", "直接入力"],
+    "priority": 1
+  }
+]
+

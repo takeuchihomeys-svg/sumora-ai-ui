@@ -16,7 +16,7 @@ import { AUTO_RULES, AUTO_RULES_REVIEWED_UP_TO, autoRulesVersion, fnv, type Rule
 /**
  * ITANDI の決まりの一覧を見直した拡張の版（リアプロの AUTO_RULES_REVIEWED_UP_TO とは別に管理する・2026-11-27）。
  */
-export const ITANDI_RULES_REVIEWED_UP_TO = "2.8.320";
+export const ITANDI_RULES_REVIEWED_UP_TO = "2.8.321";
 
 export type ItandiRuleFile = "itandi-page-script.js" | "itandi-bulk-dl.js";
 
