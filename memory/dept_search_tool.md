@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-27 **拡張 2.8.320: リセットは押す前に背面のタブを前に出す／押せない時の印を消さず点検へ運ぶ／流れの地図に失敗の道と割り込みを足す（手順書 build_v 27）**
+- **なぜ（実測・本番 DB 読み取りのみ・id 指定）**: #1666（2.8.318）は 3s にリセットを開始→135s まで押されなかった（背景の待ち 130秒で切れ「返事=press_timeout」・押した印 `axlx_reset_pressed` も無し＝押す処理そのものが動かなかった）。#1661（2.8.314）も 27s「押せず」→後で押された（遅れ）。ページ側の「15秒で押せず」の印（reset_press_slow）は**一度も残らなかった**。
+- **原因（2つ・確からしさの区別）**: ①【確認済み】ページ側の点検（_audit）は次の入力の開始で作り直され、その前に出たリセットの印は前の点検ごと捨てられていた（_auditStepP は _audit が無いと黙って戻る）。②【強い仮説・記録では直接確かめられない】リセットの押す処理は人の動きの列（setTimeout 連鎖）で動く。タブが背面だとブラウザがタイマーを遅らせ（長く背面だと1分単位）、押す処理が 120秒経っても動かない。#1666 では tab_front が 270s にやっと入った（リセットより後）。
+- **直し**:
+ 1. 背景 `_postSendResetRealpro`: 押す前に `_probeRealproTab` で見え方を確かめ（reset_vis）、背面なら `_bringRealproTabFront`（入力前の tab_front と同じ・ウィンドウは最小化を戻すだけ）で前に出す（reset_front）。見えなくても止まらない（そのまま押す）。
+ 2. ページ側 `_resetPress`: 押す処理の途中の印（reset_press_start／queued／slow／cancel）を専用の箱 `_resetStepBuf` に残し、押す処理の返事（fin・遅れた確かめ __axlxResetVerifyP）に載せる。背景が `page:` 付きで点検へ移す（ページの点検に依存しない）。
+ 3. search-audit.js: RULE_STEP に reset_vis／reset_front、KEEP_STEP に tab_front／tab_hidden／window_restore（点検が長い回でも落ちない）。
+ 4. 決まり `reset_front_visible`（scene clear・since 2.8.320・verify は reset_vis）。手順書のリセットの文に「押す前にタブが背面なら前に出す＝2.8.320」を足した（PLAYBOOK_BUILD_V = 27）。
+- **流れの地図（土台の続き）**: `app/lib/loop-flow-map.ts` に失敗の道を足した。リセットの分かれ道3本（返事が遅れた→押した跡があれば先へ／押せず→もう1回／もう1回も押せず→従来の外し）、読み直しの分かれ道1本（読めない→このお客さんを飛ばす）。割り込み3本（裏が起き直す i_sw_restart／入力の仕組みが応答しない i_tab_reload／タブが見えないまま止まる i_tab_hidden_stall）は流れの途中の分岐にせず別に持つ（どの段からも同じ回復）。分かれ道は 客完了・親の手・次客の読み直し（api_reload）にしか出られないと試験で止める。
+- **試験**: loop-flow-map.test.ts 87本（失敗の道・割り込み・点検の印の実在・悪い地図の自己点検を追加）、reset-front-visible-v2320.test.js 26本（新規・pre-commit に登録）、reset-press-late-grasp-v28315.test.js は試験の取り出しに _resetStepBuf／_resetStepP を足して 22 項目通過。ext-test-all は赤 2 本（基準どおり）。tsc-gate は基準 10 件のまま。
+- **まだ確かめていない（実機で確かめる）**: 背面のタブが本当に押す処理を遅らせていたか。次の自動の回で reset_vis が hidden かどうか・reset_press_start の hidden=1／slow・queued の印が残るかで見る。改善が出なければ仮説を捨てて次の原因を DB で読む。
+- **反映**: 版 2.8.320（manifest・page-script・itandi-page-script・AUTO_RULES_REVIEWED_UP_TO・ITANDI_RULES_REVIEWED_UP_TO）。push・attach（手順書を本番へ）・実機確認は竹内さんの OK の後。手順書は build_v 27 になり、本番の手順書はまだ 26 のまま。
+
 ## 2026-11-27 **拡張 2.8.319: 全部送付済み／次頁も全部送付済み／検索結果0件でも、客完了→リセット→次客へ（手順書 build_v 26）＋パネルの言葉を手順書と同じに**
 竹内さん「並べ替えした後物件取得するところで止まった／全部送付済みの場合次へで次のページにうつること手順書は把握しているのか／拡張ツールのアナウンスも手順書とあわせる（確認できるから）」「検索結果が0でも、すべて送付済みで次ページも送付済みでも、リセットして次のお客さんにうつる。リセットからの流れは同じ」。
 

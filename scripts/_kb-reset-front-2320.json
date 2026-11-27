@@ -1,0 +1,53 @@
+[
+  {
+    "title": "【決定】リアプロのリセットを押す前に、タブが背面なら前に出してから押す（押せないのを防ぐ）",
+    "category": "architecture",
+    "insight": "リセットの押す処理は人の動きの列（setTimeout 連鎖のキュー）で実行される。タブが背面（hidden）だとブラウザがタイマーを遅らせ、押す処理が2分経っても実行されないことがある（#1666・#1661）。押す前に見え方を確かめ、背面なら入力前の tab_front と同じ仕組みで前に出す。見えなくても止まらず押し、押す前後の見え方を点検に残す（reset_vis・reset_front）。",
+    "rationale": "押せないと従来の1つずつ外しへ落ち、流れが止まる（連続検索できない原因の有力候補）。前に出すのは人がタブを開くのと同じで、入力前に既にやっている操作。見え方の印で、仮説が正しいかを次の実機の回で確かめられる。",
+    "context": "2026-11-27 竹内さん「すすめてよい　細かく細部までこだわって構築する」（直前「OK　これで連続で検索できるようになったか　地図ちゃんとできているのか」）。本番 DB 読み取りのみ（search_audits id 1666・1663・1661・1659）。",
+    "applied_to": "chrome-extension/background.js（_postSendResetRealpro・_bringRealproTabFront）、chrome-extension/page-script.js（_resetPress の印）、chrome-extension/search-audit.js（RULE_STEP・KEEP_STEP）、app/lib/auto-procedure-rules.ts（reset_front_visible）",
+    "tags": [
+      "Chrome拡張",
+      "リセット",
+      "背面タブ",
+      "タイマー",
+      "AIX",
+      "2.8.320"
+    ],
+    "priority": 1
+  },
+  {
+    "title": "【決定】流れの地図には失敗の道（押せない・読めない）と割り込み（裏が起き直す・タブが見えない）も入れる。分かれ道は客完了・親の手・次客の読み直しにしか出さない",
+    "category": "architecture",
+    "insight": "流れの地図（app/lib/loop-flow-map.ts）は正常な流れだけでは止まり方を表せない。失敗の道は分かれ道（branch）として親の手にぶら下げ、どの段でも起きうる回復は割り込み（interrupt）として別に持つ。分かれ道の行き先は 客完了・親の手・次のお客さんの読み直し（api_reload）だけで、試験が勝手な飛び先を止める。",
+    "rationale": "失敗の道を地図に入れないと、直す人は止まり方を知らないまま改善する（前回の④の取り違えと同じ型）。行き先を縛ると、分かれ道が次の客へ飛ばして客完了を通らない、という失敗を試験で止められる。",
+    "context": "2026-11-27 竹内さん「なんで改善する際に…前提や流れを理解せずに変更したのか…今後改善する際、根本的な部分を理解して改善できるように仕組みをつくる。土台を強化する。ここの部分徹底的に行って改善する」「すすめてよい　細かく細部までこだわって構築する」",
+    "applied_to": "app/lib/loop-flow-map.ts（LOOP_FLOW_NODES・LOOP_INTERRUPTS・checkFlowMap・checkInterrupts）、app/lib/__tests__/loop-flow-map.test.ts、scripts/change-premise.ts（割り込みを表示）",
+    "tags": [
+      "Chrome拡張",
+      "流れの地図",
+      "失敗の道",
+      "割り込み",
+      "AIX",
+      "2.8.320"
+    ],
+    "priority": 1
+  },
+  {
+    "title": "【汎用】ページの点検は次の入力で作り直される。その前の押す処理の途中の印は、返事と一緒に呼び出し側へ運ぶ（ページの点検に頼らない）",
+    "category": "architecture",
+    "insight": "拡張のページ側の点検（_audit）は次の入力の開始で新しく作り直され、その前に出た印（押せず・取り消し等）は前の点検ごと捨てられる。_auditStepP は点検が無いと黙って戻るので、押す処理の途中の印が一度も残らなかった（#1666）。途中の印は専用の箱に残し、押す処理の返事に載せて背景の点検へ移す。",
+    "rationale": "黙って消える記録は、原因を調べる時に『記録が無い』と『起きなかった』の区別がつかない。返事と一緒に運べば、点検の作り直しの順番に依らない。",
+    "context": "2026-11-27 #1666 の調査（reset_press_slow が無いのに reset_press の返事は press_timeout）。『記録が無い＝起きなかった』と取り違えない為の型。",
+    "applied_to": "chrome-extension/page-script.js（_resetStepBuf・_resetStepP・_resetPress・__axlxResetVerifyP）、chrome-extension/background.js（page: 付きで移す）",
+    "tags": [
+      "Chrome拡張",
+      "点検",
+      "静かに壊れる",
+      "観測",
+      "AIX",
+      "2.8.320"
+    ],
+    "priority": 2
+  }
+]

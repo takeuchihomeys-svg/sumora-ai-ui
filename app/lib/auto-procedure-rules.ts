@@ -21,7 +21,7 @@
  *   拡張（manifest.json）の版を上げたら、この一覧を見直してからここも同じ版にする。
  *   上げ忘れはテスト（auto-procedure-rules.test.ts）が止める＝直したのに手順書が古いまま、を出さない。
  */
-export const AUTO_RULES_REVIEWED_UP_TO = "2.8.319";
+export const AUTO_RULES_REVIEWED_UP_TO = "2.8.320";
 
 /** 決まりが効く場面（手順書の場面＋自動だけの場面） */
 export type RuleScene = "switch" | "clear" | "area" | "cond" | "pet" | "search" | "list" | "press";
@@ -785,6 +785,16 @@ export const AUTO_RULES: AutoRule[] = [
         "dl:list_no_next_advance",
       ],
     },
+  },
+  {
+    id: "reset_front_visible",
+    scene: "clear",
+    text: "リセットを押す前に、リアプロのタブが背面（hidden）なら前に出してから押す（2.8.320 竹内さん「押せないのはなぜか」・実測 #1666 #1661: 背面のタブではリセットの押す処理が遅れ、120秒待っても押されなかった）。押す前の見え方を点検に残す（reset_vis）。背面なら前に出した後の見え方も残す（reset_front）。見えなくても止まらず押す",
+    since: "2.8.320",
+    kb: null,
+    marker: "_bringRealproTabFront(_tab, _ridFront",
+    file: "background.js",
+    verify: { onlyIf: ["reset_vis"], mustHaveAny: ["reset_vis"] },
   },
   {
     id: "zero_result_finish_reset",

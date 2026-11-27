@@ -98,7 +98,8 @@ function makeEnv(clickDelayMs) {
   env.now = () => now;
   vm.createContext(ctx);
   const consts = "var _RESET_PRESS_SOFT_MS = 15000;\nvar _RESET_PRESS_HARD_MS = 120000;\nvar _RESET_PRESS_POLL_MS = 2000;\n";
-  vm.runInContext(consts + cut(ps, "  function _resetPress(done) {") + "\nthis._resetPress = _resetPress;", ctx);
+  // 2.8.320: 押す処理の途中の印の箱（_resetStepBuf・_resetStepP）も一緒に取り出す（_resetPress が使う）
+  vm.runInContext(consts + cut(ps, "  var _resetStepBuf = [];") + cut(ps, "  function _resetPress(done) {") + "\nthis._resetPress = _resetPress;", ctx);
   env.start = () => ctx._resetPress((r) => { env.result = r; env.doneAt = now; });
   return env;
 }

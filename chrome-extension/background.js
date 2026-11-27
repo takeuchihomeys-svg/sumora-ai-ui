@@ -11095,6 +11095,21 @@ async function _postSendResetRealpro(customerId, auditRunId) {
       await chrome.storage.session.remove(["axlx_pending_auto_send", "axlx_auto_next_page", "axlx_search_grasped", "axlx_ad_sort_pending"]);
       _stamp("reset_clear_marks", "リセット前に前客の続きの印を消した");
     } catch (_) {}
+    // ★ 2.8.320 押す前にリアプロのタブの見え方を確かめ、背面（hidden）なら前に出す。
+    //   実測（#1666・#1661）: リセットの押す処理は人の動きの列（setTimeout）で動く。背面のタブではブラウザがタイマーを遅らせ、
+    //   120秒経っても押されなかった（ページ側の15秒の印も残らず＝タイマーが動いていなかった）。入力前の tab_front と同じやり方で前に出す。
+    //   見え方の印（reset_vis／reset_front）を残す。見えなくても止まらない（そのまま押す・結果は印で確かめる）。
+    var _ridFront = auditRunId || _auditOpenRunId(String(customerId), "realpro");
+    try {
+      var _pv0 = await _probeRealproTab(_tab.id);
+      var _vis0 = (_pv0 && _pv0.vis) || "不明";
+      _stamp("reset_vis", "押す前の見え方=" + _vis0 + (_pv0 && _pv0.pong ? "" : "（返事なし）"));
+      if (_vis0 === "hidden") {
+        await _bringRealproTabFront(_tab, _ridFront, "hidden");
+        var _pv1 = await _probeRealproTab(_tab.id);
+        _stamp("reset_front", "背面だったので前に出した→見え方=" + ((_pv1 && _pv1.vis) || "不明"));
+      }
+    } catch (_) {}
     // ① 完了の小窓を閉じて、リセットを押す（読み直しで切れても押した扱い→③④で確かめる）
     var _press = null;
     try {
@@ -11123,6 +11138,8 @@ async function _postSendResetRealpro(customerId, auditRunId) {
      *   （人の動きのクリックはキューに残って後で実行される。タブが背面だと遅い）。押した印（axlx_reset_pressed の bootAt）が
      *   いまのページの起動と違う＝読み直された、なら「押した（遅れて）」として先へ進む（もう1回押さない・従来の外しへ行かない）。
      */
+    // ★ 2.8.320 ページ側の押す処理の途中の印を、背景側の点検へ移す（ページの点検は次の入力で捨てられるため）
+    try { if (_press && Array.isArray(_press.steps)) _press.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
     if (!_press || (_press.ok === false && !_press.skipped && /^press_timeout/.test(String(_press.why || "")))) {
       try {
         var _lateWhy = String((_press && _press.why) || "no_answer");
@@ -11138,6 +11155,7 @@ async function _postSendResetRealpro(customerId, auditRunId) {
           args: [String(customerId || "")],
         }), 8000, "reset_late_press_probe");
         var _lr = (_lv && !_lv.__timeout && _lv[0] && _lv[0].result) || null;
+        try { if (_lr && Array.isArray(_lr.steps)) _lr.steps.forEach(function (s) { _stamp("page:" + String((s && s.k) || "").slice(0, 40), String((s && s.d) || "")); }); } catch (_) {}
         if (_lr && _lr.reloaded) {
           _stamp("reset_press", "押した（遅れて・返事は" + _lateWhy + "だったが画面は読み直されていた）→先へ進む");
           _press = { ok: true, pressed: true, cut: true, late: true, why: "late_press:" + _lateWhy };

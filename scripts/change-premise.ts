@@ -14,7 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOOP_FLOW_NODES, checkFlowMap, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
+import { LOOP_FLOW_NODES, LOOP_INTERRUPTS, checkFlowMap, checkInterrupts, branchesOf, flowNode, type FlowNode } from "../app/lib/loop-flow-map";
 import { AUTO_RULES } from "../app/lib/auto-procedure-rules";
 
 const args = process.argv.slice(2);
@@ -29,7 +29,7 @@ if (args.includes("--check")) {
 
 const AREAS: Record<string, { ids: string[]; scenes: string[]; kb: string }> = {
   list: { ids: ["sort", "list_press", "b_all_sent_next", "b_all_sent_last", "b_zero", "customer_done"], scenes: ["list", "next"], kb: "一覧 全部送付済み 次ページ 0件 客完了" },
-  reset: { ids: ["customer_done", "reset", "api_reload", "fill"], scenes: ["clear", "switch"], kb: "リセット 次客 API読み直し" },
+  reset: { ids: ["customer_done", "reset_front", "reset", "b_reset_late", "b_reset_retry", "b_reset_fallback", "api_reload", "b_api_skip", "fill"], scenes: ["clear", "switch"], kb: "リセット 次客 API読み直し 押せない 背面 タブ" },
   all: { ids: LOOP_FLOW_NODES.map((n) => n.id), scenes: ["clear", "switch", "cond", "search", "list", "next"], kb: "お客さん1人ぶんの流れ" },
 };
 const area = arg("area") || "all";
@@ -60,6 +60,16 @@ for (const id of def.ids) {
 }
 const prob = checkFlowMap();
 console.log(prob.length ? `\n❌ 地図に問題:\n  - ${prob.join("\n  - ")}` : "\n✅ 地図の形は正しい（分かれ道は全部 客完了→リセットへ合流）");
+
+// 割り込み（どの段でも起きうる回復）。流れの途中の分岐ではなく、ここに別に並ぶ
+console.log(`\n■ ①b 割り込み（どの段からも起きうる・止まった段へ戻って続ける）\n`);
+for (const i of LOOP_INTERRUPTS) {
+  console.log(`・${i.id} ${i.label}`);
+  console.log(`    どの段で: ${i.applies}　／　起きた後: ${i.resume}`);
+  console.log(`    コード: chrome-extension/${i.evidence.file}（${i.evidence.token}）　実測: ${i.seen}`);
+}
+const probI = checkInterrupts();
+if (probI.length) console.log(`❌ 割り込みに問題:\n  - ${probI.join("\n  - ")}`);
 
 console.log(`\n■ ② この場面の決まり（AUTO_RULES・scene = ${def.scenes.join("/")}）\n`);
 for (const r of AUTO_RULES.filter((x) => def.scenes.includes(x.scene))) {

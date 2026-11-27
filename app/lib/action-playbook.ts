@@ -46,7 +46,8 @@ export const PLAYBOOK_MAX_STEPS = 12;
  *     flow_series の before_clear／clear_then_fill／after_clear にリセットの印（reset_press／reset_wait／reset_verified 等）、
  *     extra_guides の clear／switch をリセット→30秒以上のラグ待ち→空の確認→入れへ。1つずつ外すのは「リセットが効かない時の最後の保険」だけ。
  */
-export const PLAYBOOK_BUILD_V = 26;
+export const PLAYBOOK_BUILD_V = 27;
+// 27（2026-11-27 竹内さん「押せないのはなぜか・失敗の道も地図に」）: リセットを押す前に、タブが背面なら前に出す（reset_front_visible）。押す前後の見え方の印（reset_vis・reset_front）と、押す処理の途中の印を点検へ移す。流れの地図に失敗の道（リセットが押せない・読み直せない）と割り込み（裏が起き直す・タブが見えない）を足した。
 // 26（2026-11-27 竹内さん「全部送付済み→次へで次のページ／次ページも全部送付済み・検索結果0件でも、リセットして次のお客さんへ。リセットからの流れは同じ」「アナウンスも手順書とあわせる」）: 一覧の手に ④の場合分け（④の1 全部送付済み→次へ／④の2 次頁も全部送付済み→客完了／④の3 0件→客完了）と ⑤客完了→リセットして次客へ を足した。パネルの言葉も手順書と同じ（PANEL_PHASE_WORDS）。
 // 25（2026-11-27 竹内さん「読み直しが失敗したら、古い条件では検索せず、その客を飛ばして理由を残す」）: 次客の条件を読み直せなかったら、古い条件で検索せず飛ばす（拡張 2.8.318・customer_api_reload に理由）。手順書の文もそれに合わせた。
 // 24（2026-11-27 竹内さん「リセットは多すぎてバグる・30〜34秒だけに／1人目はリセットしない／検索前10秒／並べ替え40〜50秒＋猶予15秒〜／次客の条件を毎回APIから読み直す」）:
@@ -92,10 +93,10 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   /** ★ build_v12: 外す前の把握が一連から抜けていた（after_clear だけだと「外してから」しか測れない） */
   {
     id: "before_clear",
-    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない）`,
+    label: `リセットを押す（送付のあと1回だけ・左の「リセット」→${RESET_PRESS_WAIT_TEXT}→読み直し→${RESET_WAIT_TEXT}待つだけ＝空とみなす。最初のお客さんと前客リセット済みの客は入れる前に押さない。押す前にタブが背面なら前に出す＝2.8.320）`,
     scene: null,
     // ★ build_v14: 外しは「1つずつ外す」ではなくリセットボタン。押下・待ち・空確認の印を先頭に（旧の外す前把握の印も残す＝古い拡張の記録も拾う）
-    grasp: ["reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
+    grasp: ["reset_vis", "reset_front", "reset_press", "reset_wait", "reset_before_fill", "page:guide_clear_grasp", "page:guide_clear_detail", "page:leftover_scan", "page:guide_clear_clean"],
     next: "clear_then_fill",
   },
   {

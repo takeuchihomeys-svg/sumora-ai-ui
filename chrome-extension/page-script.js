@@ -4140,7 +4140,7 @@ function _guideLikeAreaSkip(why) {
    *   自動開始前に束を強制取込→warm→場面手順を読み、反映関所を残す。
    *   空のまま押し始めない（キュー先頭で待つ）。
    */
-  var _AXLX_PAGE_VER = "2.8.319";
+  var _AXLX_PAGE_VER = "2.8.320";
   try { window.__axlxPageVer = _AXLX_PAGE_VER; } catch (_) {}
   /**
    * ★ 2.8.274 竹内さん「重くて固まったと思う」: 一括が止まった時、PC が重かったのかを後から DB で確かめられるようにする計測。
@@ -4204,6 +4204,7 @@ function _guideLikeAreaSkip(why) {
     "task_gate_no_forced_refetch",
     "all_sent_advance_no_stuck",
     "zero_result_finish_reset",
+    "reset_front_visible",
     "armed_grasp_no_overwrite",
     "pipeline_silence_screen_strengthen",
     "station_grasp_like_guide",
@@ -12557,6 +12558,20 @@ function _guideLikeAreaSkip(why) {
   var _RESET_PRESS_SOFT_MS = 15000;
   var _RESET_PRESS_HARD_MS = 120000;
   var _RESET_PRESS_POLL_MS = 2000;
+  /**
+   * ★ 2.8.320 リセット押下の途中の印（ページ側）。
+   *   実測（#1666・2.8.318）: ページ側の「押せず15秒の印」が一度も残らなかった。原因は、ページの点検（_audit）が
+   *   次の入力の開始で作り直され、リセットの途中の印が前の点検ごと捨てられていたため。
+   *   → リセットの印は専用の箱（_resetStepBuf）に残し、押す処理の返事（fin）に載せて背景側へ返す（背景が点検に移す）。
+   */
+  var _resetStepBuf = [];
+  function _resetStepP(k, d) {
+    try {
+      _resetStepBuf.push({ k: String(k).slice(0, 40), d: String(d == null ? "" : d).slice(0, 120), at: Date.now() });
+      if (_resetStepBuf.length > 20) _resetStepBuf.shift();
+    } catch (_) {}
+    try { _auditStepP(k, d); } catch (_) {}
+  }
   function _resetPress(done) {
     var finished = false;
     var fired = false;
@@ -12565,10 +12580,13 @@ function _guideLikeAreaSkip(why) {
     var slowNoted = false;
     var guard = null;
     var tStart = Date.now();
+    _resetStepBuf = [];
+    _resetStepP("reset_press_start", "hidden=" + (document.hidden ? 1 : 0) + " vis=" + document.visibilityState + " qlen=" + _clickQueue.length + " busy=" + (isClickQueueBusy() ? 1 : 0));
     var fin = function (r) {
       if (finished) return;
       finished = true;
       try { clearTimeout(guard); } catch (_) {}
+      try { if (r && typeof r === "object") r.steps = _resetStepBuf.slice(); } catch (_) {}
       try { done(r); } catch (_) {}
     };
     var cancelQueued = function () {
@@ -12592,11 +12610,11 @@ function _guideLikeAreaSkip(why) {
       }
       if (!slowNoted) {
         slowNoted = true;
-        try { if (_audit) _auditStepP("reset_press_slow", Math.round(age / 1000) + "秒たってもまだ押していない（人の動きの待ち）→最大" + Math.round(_RESET_PRESS_HARD_MS / 1000) + "秒まで待つ btn=" + (btnQ ? "queued" : "not_yet") + " busy=" + (isClickQueueBusy() ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
+        try { _resetStepP("reset_press_slow", Math.round(age / 1000) + "秒たってもまだ押していない（人の動きの待ち）→最大" + Math.round(_RESET_PRESS_HARD_MS / 1000) + "秒まで待つ btn=" + (btnQ ? "queued" : "not_yet") + " busy=" + (isClickQueueBusy() ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
       }
       if (age < _RESET_PRESS_HARD_MS) { guard = setTimeout(guardTick, _RESET_PRESS_POLL_MS); return; }
       var cut = cancelQueued();
-      try { if (_audit) _auditStepP("reset_press_cancel", Math.round(age / 1000) + "秒押せず→積んだクリックを取り消した=" + (cut ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
+      try { _resetStepP("reset_press_cancel", Math.round(age / 1000) + "秒押せず→積んだクリックを取り消した=" + (cut ? 1 : 0) + " hidden=" + (document.hidden ? 1 : 0)); } catch (_) {}
       fin({ ok: false, why: "press_timeout" + Math.round(age / 1000) });
     };
     guard = setTimeout(guardTick, _RESET_PRESS_SOFT_MS);
@@ -12626,6 +12644,7 @@ function _guideLikeAreaSkip(why) {
             // ★ 2.8.315: 押した瞬間を捉える（キューが空くのを待つ間に15秒を過ぎても「押した」と数える）
             var _fireReset = function (el) { fired = true; firedAt = Date.now(); return _clickEl(el); };
             var _enq = enqueueHumanClick(btn, _fireReset, _uiGapMin(), _uiGapMax(), null, _rOpts);
+            _resetStepP("reset_press_queued", "enq=" + (_enq === false ? "refused" : "ok") + " qlen=" + _clickQueue.length + " hidden=" + (document.hidden ? 1 : 0));
             if (_enq === false) { fin({ ok: false, why: "enqueue_refused" + (_axHumanTookOver ? ":human" : ":pending") }); return; }
             whenClickQueueIdle(function () { fin({ ok: true, pressed: true, closed: closed, before: before.detail, via: _resetVia, aim: _rPick.kind + (_rPick.aim ? " " + _rPick.aim.x + "/" + _rPick.aim.y : ""), countBefore: cntBefore ? cntBefore.n : null, bootAt: window.__axlxBootAt || 0 }); });
           } catch (e) { fin({ ok: false, why: "exception:" + String(e && e.message || e).slice(0, 60) }); }
@@ -12638,7 +12657,7 @@ function _guideLikeAreaSkip(why) {
     var maxMs = Number(o.maxMs) > 0 ? Number(o.maxMs) : 12000;
     var t0 = Date.now();
     var finished = false;
-    var fin = function (r) { if (finished) return; finished = true; try { done(r); } catch (_) {} };
+    var fin = function (r) { if (finished) return; finished = true; try { if (r && typeof r === "object") r.steps = _resetStepBuf.slice(); } catch (_) {} try { done(r); } catch (_) {} };
     (function poll() {
       try {
         var ready = document.readyState === "complete" && !!document.querySelector('select[name="rental_cost1"], div.go_search, div.go_search_submit');

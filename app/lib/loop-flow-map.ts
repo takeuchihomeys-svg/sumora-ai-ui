@@ -1,26 +1,26 @@
 /**
- * お客さん1人ぶんの流れの地図（正本）— 2.8.319 の後の土台強化
+ * お客さん1人ぶんの流れの地図（正本）— 2.8.319 の後の土台強化（失敗の道・2.8.320）
  *
- * なぜ作ったか（竹内さん 2026-11-27「なんで改善する際に今回のように前提や流れを理解せずに変更したのか。
+ * なぜ作ったか（竹内さん 2026-11-27「なんで改善する際に前提や流れを理解せずに変更したのか。
  *   根本的な部分を理解すれば④の分かれ目だと理解できる。今後改善する際、根本的な部分を理解して改善できるように
  *   仕組みをつくる。土台を強化する」）。
  *
- * 起きた事: 「全部送付済み／次頁も全部送付済み／0件でもリセットして次のお客さんへ」を手順書に足す時、
- *   既存の入れ物（PLAYBOOK_LIST_AD_SORT_STEPS＝文字の一列・PlaybookFlowPhase.next＝次は1つだけ）の形に合わせて
- *   ⑤⑥⑦⑧と通し番号で書き足した。でも中身は「④（印刷用PDFを押す）で押す物が無い時の分かれ道」で、
- *   順に行う手ではない。入れ物が「分かれ道」を表せなかったので、形を確かめずに一列に入れてしまった。
- *   しかも試験は自分が書いた文言があるかだけを見ていたので、紛らわしくても通った。
+ * 起きた事: 「全部送付済み／次頁も／0件でもリセットして次のお客さんへ」を手順書に足す時、入れ物（文字の一列・
+ *   next が1つ）に合わせて ⑤⑥⑦⑧ と通し番号で書き足した。中身は「④で押す物が無い時の分かれ道」だった。
+ *
+ * 2.8.320 で足したこと: 正常な流れだけでは、実際に止まった所（リセットが押せない・読み直せない・裏が起き直す・
+ *   タブが見えない）を表せなかった。失敗の道を「分かれ道（branch）」として親の手にぶら下げ、
+ *   割り込み（interrupt）は「どの段でも起きうる回復の決まり」として別に持つ。
  *
  * この地図の約束:
- *   1. 流れの「形」を3つに分けて持つ: step（順に行う手）／branch（ある手の場合分け・順に行う手ではない）／join（合流点）。
- *   2. 手順書の一覧の手（④の場合分け・⑤）はこの地図から作る（手で書き足さない）。番号は step と join だけに付き、
- *      branch は「④の1」のように親の手にぶら下がる。分かれ道を一列に並べることが出来ない。
- *   3. 全ての分かれ道は客完了（customer_done）に合流し、客完了は必ずリセット（reset）へ戻る
- *      （竹内さん「リセットからの流れは同じ」）。合流しない分かれ道は試験が止める。
+ *   1. 形は3つ: step（順に行う手）／branch（ある手の場合分け・順に行う手ではない）／join（合流点）。
+ *   2. 手順書の一覧の手（④から先）はこの地図から作る（手で書き足さない）。
+ *   3. どの分かれ道も客完了（join）に合流し、客完了はリセット（reset_front）へ戻る（「リセットからの流れは同じ」）。
+ *      失敗の道（分かれ道）は、もう1回押す・従来の外し・次のお客さんへ飛ばす、のどれかで次の手へ戻る。
  *   4. 各ノードは拡張のコードに実在する目印（evidence）と、点検に残る印（audit）を持つ。無い物は試験が止める。
- *   5. 流れを変える時は、先にこの地図を直す（コードや手順書の文より先）。手順は `scripts/change-premise.ts` が出す。
+ *   5. 流れを変える時は、先にこの地図を直す（コードや手順書の文より先に）。道具: scripts/change-premise.ts。
  *
- * 試験: app/lib/__tests__/loop-flow-map.test.ts（形・合流・実在・手順書との一致・悪い地図を止める自己点検）
+ * 試験: app/lib/__tests__/loop-flow-map.test.ts（形・合流・実在・手順書との一致・失敗の道・割り込み・悪い地図の自己点検）
  */
 
 export type FlowKind = "step" | "branch" | "join";
@@ -40,10 +40,27 @@ export type FlowNode = {
   next: string[];
   /** 拡張のコードに実在する目印 */
   evidence: { file: string; token: string };
-  /** 点検（search_audits.steps）に残る印。KEEP_STEP／RULE_STEP に落ちない物だけ */
+  /** 点検（search_audits.steps）に残る印。search-audit.js の KEEP_STEP／RULE_STEP に落ちない物だけ */
   audit: string[];
   /** 補足（例: 最初のお客さんはリセットしない） */
   note?: string;
+};
+
+/**
+ * 割り込み: どの段でも起きうる回復の決まり（流れの途中に分岐として置かない）。
+ *   resume = 起きた後どこから続けるか。必ず「止まった段へ戻る」か「次のお客さんへ飛ばす」。
+ */
+export type FlowInterrupt = {
+  id: string;
+  label: string;
+  /** どの段で起きうるか */
+  applies: string;
+  /** 起きた後の動き */
+  resume: string;
+  evidence: { file: string; token: string };
+  audit: string[];
+  /** 実測（いつ・どの回で見えたか） */
+  seen: string;
 };
 
 /** 一覧の手の番号（①〜は ①②③＝並べ替え。④から先をこの地図が作る） */
@@ -52,11 +69,21 @@ const CIRCLED = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "�
 export const LIST_PRESS_FIRST_NO = 4;
 
 export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
+  // ── 1人ぶんの終わりから次の客へ ─────────────────────────────
+  {
+    id: "reset_front",
+    kind: "step",
+    label: "押す前にリアプロのタブを確かめ、背面なら前に出す",
+    next: ["reset"],
+    evidence: { file: "background.js", token: "_bringRealproTabFront(_tab, _ridFront" },
+    audit: ["reset_vis", "reset_front"],
+    note: "2.8.320: 背面のタブではリセットの押す処理（タイマー）が遅れて押されなかった（#1666）。見え方の印を残す",
+  },
   {
     id: "reset",
     kind: "step",
     label: "リセットを押す（送付のあと1回）",
-    next: ["api_reload"],
+    next: ["api_reload", "b_reset_late", "b_reset_retry", "b_reset_fallback"],
     evidence: { file: "background.js", token: "_postSendResetRealpro" },
     audit: ["reset_press", "reset_settled"],
     note: "最初のお客さんと前客リセット済みの客は入れる前に押さない（first_customer_no_reset）",
@@ -65,10 +92,10 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     id: "api_reload",
     kind: "step",
     label: "次客の条件をAPIから読み直す",
-    next: ["fill"],
+    next: ["fill", "b_api_skip"],
     evidence: { file: "background.js", token: "_refreshCustomerBeforeSearch" },
     audit: ["customer_api_reload"],
-    note: "読めなければ古い条件では検索せずこの客を飛ばす（2.8.318）＝飛ばした客は客完了を通らず次の客の reset へ",
+    note: "読めなければ古い条件では検索せずこの客を飛ばす（2.8.318）",
   },
   {
     id: "fill",
@@ -100,11 +127,11 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     kind: "step",
     label: "印刷用PDFを押す（④）",
     playbook: "並べ替え後に印刷用PDFを押す",
-    // 押したあと: 次のページがあれば次へ（同じ④を繰り返す）・無ければ客完了。押す物が無い頁は④の1・④の2
     next: ["list_press", "customer_done", "b_all_sent_next", "b_all_sent_last"],
     evidence: { file: "bulk-dl.js", token: "_startAutoPressRun" },
     audit: ["dl:list_flow_grasp"],
   },
+  // ── 分かれ道（順に行う手ではない）─────────────────────────────
   {
     id: "b_all_sent_next",
     kind: "branch",
@@ -139,15 +166,95 @@ export const LOOP_FLOW_NODES: ReadonlyArray<FlowNode> = [
     audit: ["dl:zero_count0_finish"],
   },
   {
+    id: "b_reset_late",
+    kind: "branch",
+    label: "押す返事が遅れた→押した跡があれば先へ",
+    parent: "reset",
+    when: "押す処理の返事が時間切れ（press_timeout）だったが、読み直しで押した跡（reset_pressed）が見つかった",
+    playbook: "返事が遅れても押した跡があれば押したとして先へ進む（もう1回押さない・従来の外しへ行かない・2.8.315）",
+    next: ["api_reload"],
+    evidence: { file: "background.js", token: "押した（遅れて・返事は" },
+    audit: ["reset_press", "reset_press_late_check"],
+  },
+  {
+    id: "b_reset_retry",
+    kind: "branch",
+    label: "押せず→もう1回押す",
+    parent: "reset",
+    when: "押す処理が押せず（返事なし・押した跡なし）、押した跡もまだ無い",
+    playbook: "押せなかったら、もう1回押す（reset_retry・押す前の見え方を残す）",
+    next: ["api_reload"],
+    evidence: { file: "background.js", token: "reset_retry" },
+    audit: ["reset_retry"],
+  },
+  {
+    id: "b_reset_fallback",
+    kind: "branch",
+    label: "リセットが押せない・空にならない→従来の1つずつ外し",
+    parent: "reset",
+    when: "もう1回押しても押せない、または押しても空にならない（最後の保険）",
+    playbook: "最後の保険として、従来の1つずつ外しへ（reset_fallback・外す前後は残りを名前付きで確かめる）",
+    next: ["api_reload"],
+    evidence: { file: "background.js", token: "reset_not_pressed:" },
+    audit: ["reset_stuck_shot", "reset_stuck_grasp"],
+  },
+  {
+    id: "b_api_skip",
+    kind: "branch",
+    label: "条件を読み直せない→このお客さんを飛ばして次へ",
+    parent: "api_reload",
+    when: "API から3回読んでも読めない、または読み直した一覧にそのお客さんが居ない",
+    playbook: "読めなければ古い条件では検索せず、このお客さんを飛ばして理由を残し、次のお客さんへ（2.8.318・customer_api_reload）",
+    next: ["api_reload"],
+    evidence: { file: "background.js", token: "AXLX_API_RELOAD_FAILED" },
+    audit: ["customer_api_reload"],
+    note: "飛ばした客は客完了を通らない（前客の送付後のリセットは済んでいる）。次の客の読み直しへ進む",
+  },
+  // ── 合流 ──────────────────────────────────────────────────
+  {
     id: "customer_done",
     kind: "join",
     label: "客完了→リセットして次のお客さんへ",
     playbook:
       "リセットを押して次のお客さんへ。リセットからの流れは同じ（リセット→30〜34秒待つ→空とみなす→次客の条件をAPIから読み直して入れる→検索）",
-    next: ["reset"],
+    next: ["reset_front"],
     evidence: { file: "bulk-dl.js", token: "_sendBatchDone" },
     audit: ["post_send_clear", "handoff_loop"],
     note: "最後のお客さんは完了を待たせず裏でリセットして終わる",
+  },
+];
+
+/**
+ * 割り込み（どの段でも起きうる回復）。流れの途中の分岐にはしない（どの段から来ても同じ回復をするため）。
+ *   実測の回は search_audits の #id。
+ */
+export const LOOP_INTERRUPTS: ReadonlyArray<FlowInterrupt> = [
+  {
+    id: "i_sw_restart",
+    label: "拡張の裏（サービスワーカー）が起き直した",
+    applies: "どの段でも",
+    resume: "開いていた回を戻し、止まった段から続ける（前の段の記録は消えない）",
+    evidence: { file: "background.js", token: "sw_restart_restored" },
+    audit: ["sw_restart_restored"],
+    seen: "#1659 #1663 #1666（並べ替え・検索・リセットの途中）",
+  },
+  {
+    id: "i_tab_reload",
+    label: "ページの入力の仕組みが応答しない",
+    applies: "入力・検索・並べ替えの段",
+    resume: "同じ検索画面を読み直して、同じ段から続ける（トップへ戻さない）",
+    evidence: { file: "background.js", token: "tab_reload" },
+    audit: ["tab_reload"],
+    seen: "#1661 #1666",
+  },
+  {
+    id: "i_tab_hidden_stall",
+    label: "タブが見えないまま進捗が止まる",
+    applies: "押す・入れる・待つの段（背面のタブ）",
+    resume: "ウィンドウを元の大きさに戻して前に出し、同じ段へ（戻せなければ理由を残して先へ）",
+    evidence: { file: "background.js", token: "tab_hidden_stall" },
+    audit: ["tab_hidden_stall"],
+    seen: "#1661（180・240・310秒の見張り）",
   },
 ];
 
@@ -178,10 +285,11 @@ export function canReach(from: string, to: string, nodes: ReadonlyArray<FlowNode
 /**
  * 地図の形の点検（悪い地図を止める）。問題があれば文の一覧を返す（空なら良い）。
  *   ・id が重ならない／next の行き先が実在する
- *   ・branch は 親（step）・条件（when）・行き先を持つ。親は step で、親の next から外れた道ではない
- *   ・どの branch からも 客完了（join）に着き、客完了から reset に戻る（リセットからの流れは同じ）
- *   ・reset から全部に着ける（行き止まり・孤立が無い）
- *   ・join は 1つだけ（客の終わり方が何通りも出来ない）
+ *   ・branch は 親（step）・条件（when）・手順書の文・行き先を持つ。親は step
+ *   ・どの branch からも 客完了（join）に着き、客完了から reset_front→reset に戻る（リセットからの流れは同じ）
+ *   ・最初の手から全部に着ける（行き止まり・孤立が無い）
+ *   ・join は 1つだけ
+ *   ・割り込みは目印と点検の印を持つ（interrupts は別に検査: checkInterrupts）
  */
 export function checkFlowMap(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): string[] {
   const out: string[] = [];
@@ -193,6 +301,7 @@ export function checkFlowMap(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): 
   for (const n of nodes) {
     for (const x of n.next) if (!ids.has(x)) out.push(`${n.id} の next が実在しない: ${x}`);
     if (!n.evidence || !n.evidence.file || !n.evidence.token) out.push(`${n.id} にコードの目印（evidence）が無い`);
+    if (!n.audit.length) out.push(`${n.id} に点検の印（audit）が無い＝何が起きたか残らない`);
     if (n.kind === "branch") {
       if (!n.parent) { out.push(`${n.id}（branch）に親の手（parent）が無い＝一列の手に見えてしまう`); continue; }
       const p = flowNode(n.parent, nodes);
@@ -209,10 +318,18 @@ export function checkFlowMap(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): 
   if (joins.length !== 1) out.push(`join（合流点＝客完了）は1つだけ。今は ${joins.length}`);
   const join = joins[0];
   const first = nodes.find((n) => n.kind === "step");
+  // 分かれ道は勝手に別の手へ飛ばない。出てよいのは 客完了（合流）・親の手（もう一度）・次のお客さんの読み直し（api_reload）だけ
+  for (const b of nodes.filter((n) => n.kind === "branch")) {
+    for (const x of b.next) {
+      const ok = (join && x === join.id) || x === b.parent || x === "api_reload";
+      if (!ok) out.push(`${b.id} の行き先 ${x} は許されない（分かれ道は客完了・親の手・次のお客さんの読み直しへだけ出る）`);
+    }
+  }
   if (join) {
     if (!join.next.length || !join.next.every((x) => flowNode(x, nodes)?.kind === "step")) {
       out.push(`${join.id}（客完了）の次は step（リセット）でなければならない`);
     }
+    if (!join.next.includes("reset_front")) out.push(`${join.id}（客完了）の次はリセット（reset_front）でなければならない（リセットからの流れは同じ）`);
     for (const b of nodes.filter((n) => n.kind === "branch")) {
       if (!canReach(b.id, join.id, nodes)) out.push(`${b.id}（分かれ道）が客完了に合流しない＝リセットして次のお客さんへ行けない`);
     }
@@ -224,11 +341,26 @@ export function checkFlowMap(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): 
   return out;
 }
 
+/** 割り込みの形の点検（目印・点検の印・回復の決まりが在るか） */
+export function checkInterrupts(list: ReadonlyArray<FlowInterrupt> = LOOP_INTERRUPTS): string[] {
+  const out: string[] = [];
+  const ids = new Set<string>();
+  for (const i of list) {
+    if (ids.has(i.id)) out.push(`割り込みの id が重なっている: ${i.id}`);
+    ids.add(i.id);
+    if (!i.evidence || !i.evidence.file || !i.evidence.token) out.push(`${i.id} にコードの目印（evidence）が無い`);
+    if (!i.audit.length) out.push(`${i.id} に点検の印（audit）が無い`);
+    if (!i.resume || !i.resume.trim()) out.push(`${i.id} に起きた後の動き（resume）が無い`);
+    if (!i.applies || !i.applies.trim()) out.push(`${i.id} にどの段で起きるか（applies）が無い`);
+  }
+  return out;
+}
+
 /**
  * 手順書の一覧の手のうち ④から先（④・④の場合分け・⑤客完了）を、地図から作る。
  *   ・④ の文に「押す物が無い時は下の『④の1〜n』＝④の場合分け。順に行う手ではない」を自動で入れる
  *   ・branch は「④の k（④の場合分け）」。通し番号は付けない
- *   ・join は次の通し番号（⑤）。文の中の「④の1〜n」も枝の数から作る
+ *   ・join は次の通し番号（⑤）
  */
 export function renderListPressSteps(
   nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES,
