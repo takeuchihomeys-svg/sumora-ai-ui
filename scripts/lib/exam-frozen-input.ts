@@ -223,6 +223,15 @@ export function installDbSnapshot(opts: { dir: string; excludeIds: () => string[
     const h = new Headers(res.headers); h.delete("content-length"); h.delete("content-encoding");
     return new Response(text, { status: res.status, statusText: res.statusText, headers: h });
   };
+  // 2026-11-27 作業員L（統括役の了承 A）: 前の包みの印（別クラウドの __sumoraAltProvider・内側の箱・記録の Symbol 等）を写す。
+  //   写さないと、一番外に印が無い＝別クラウドの包みが外れたと見て（willRouteAlt）一番外に包み直し、録音の包みが内側に入る。
+  //   その後の呼び出しは録音に名札（conductor_intake・brain_full 等）が付かず、DeepSeek に回した後の要求が「名札なし」の別の鍵で録られていた
+  //   （層 prod の夜の試験で入口の読みの録音が残らず、昼の strict の確かめが「録音なし」になった元）。写し方は llm-cassette.wrapGlobalFetch と同じ
+  const prevMarks = inner as unknown as Record<string | symbol, unknown>, nextMarks = wrapped as unknown as Record<string | symbol, unknown>;
+  for (const k of [...Object.getOwnPropertyNames(prevMarks), ...Object.getOwnPropertySymbols(prevMarks)]) {
+    if (k === "length" || k === "name" || k === "prototype") continue;
+    try { if (!(k in nextMarks)) nextMarks[k] = prevMarks[k]; } catch { /* */ }
+  }
   globalThis.fetch = wrapped;
   return stats;
 }
