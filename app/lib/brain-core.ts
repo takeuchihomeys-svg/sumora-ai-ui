@@ -3313,13 +3313,14 @@ ${catalogBlockForBrain(brainScene, { sceneUncertain: brainSceneUncertain })}
 
   // 2026-11-18 作業員L（BRAIN_ESTIMATE_RECORDS・既定 off）: 送った御見積書の記録（estimate_records）を材料に（見積書そのものの AIX は estimate_sent が立たず【御見積書 送付済み】が出ない）
   let estimateRecordsText = "";
+  let estimateReactionMarkLen = 0; // 2026-11-28 作業員L（統括役の頼み・作業員A の気付き）: BRAIN_ESTIMATE_REACTION=on で見積の後の反応の型を足した番だけの印 estimate_reaction（字数）
   try {
     const erb = await import("@/app/lib/estimate-records-block");
     if (erb.estimateRecordsBlockOn()) {
       const { data: erRows } = await supabase.from("estimate_records").select(`${erb.estimateDiscountOn() ? "property_name, room_no, initial_cost_yen, discount_yen, created_at" : "property_name, room_no, initial_cost_yen, created_at"}${erb.estimateItemsOn() ? ", cost_items, items_source" : ""}`).eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(20);
       estimateRecordsText = erb.estimateRecordsBlock((erRows ?? []) as never);
       // 2026-11-26 作業員L（BRAIN_ESTIMATE_REACTION・既定 off）: 新しい見積の後のお客様の反応の1行（会話の通から・決まった語）
-      if (erb.estimateReactionOn() && estimateRecordsText) { const rl = erb.estimateReactionLine(((erRows ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null, typedMessages as never); if (rl) estimateRecordsText += `\n${rl}`; }
+      if (erb.estimateReactionOn() && estimateRecordsText) { const rl = erb.estimateReactionLine(((erRows ?? []) as Array<{ created_at?: string | null }>)[0]?.created_at ?? null, typedMessages as never); if (rl) { estimateRecordsText += `\n${rl}`; estimateReactionMarkLen = rl.length; } }
     }
   } catch (e) { console.warn("[brain-core] estimate-records block skipped:", e instanceof Error ? e.message : String(e)); }
   const tasksText = (openTasks.length > 0
@@ -3786,6 +3787,7 @@ ${turnElapsedLine(turnElapsedNow)}`; console.log(JSON.stringify({ tag: "brain:tu
   if (aixCardMarkLen) materialMarks.aix_state_card = aixCardMarkLen;
   if (checkFlowMarkLen) materialMarks.check_promise_flow = checkFlowMarkLen;
   if (moveInMarkLen) materialMarks.move_in_line = moveInMarkLen;
+  if (estimateReactionMarkLen) materialMarks.estimate_reaction = estimateReactionMarkLen; // 2026-11-28 作業員L（BRAIN_ESTIMATE_REACTION=on の番だけ・off は付かない）
   if (karteMarkLen) materialMarks.customer_karte = karteMarkLen; // 2026-11-27 作業員L（#806・CUSTOMER_KARTE=on の番だけ） // 2026-11-27 作業員L（MOVE_IN_LINE=on の番だけ）
   if (aixBoundaryMarkLen) materialMarks.aix_boundary = aixBoundaryMarkLen;
   if (pickupFlowMarkLen) materialMarks.pickup_promise_flow = pickupFlowMarkLen; // 2026-11-26 作業員A（BRAIN_PICKUP_PROMISE_FLOW=on の番だけ） // 2026-11-25 作業員A（BRAIN_CHECK_PROMISE_FLOW=on の番だけ・記録だけ） // 2026-11-25 作業員A（#688・AIX_STATE_CARD=on の番だけ・記録だけ）

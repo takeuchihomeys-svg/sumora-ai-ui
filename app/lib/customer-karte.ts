@@ -15,8 +15,14 @@ export type KartePc = { preferences?: string | null; ng_points?: string | null; 
 export type KarteSent = { property_name: string; room_no?: string | null; sent_at: string; rent?: number | null };
 export type Karte = { priorities: string | null; noGo: string | null; decider: string | null; replySpeed: string | null; wording: string | null; cost: string | null; declined: string | null; dropped: string[] };
 
-const DECIDER_RE = /(家族|主人|夫|妻|旦那|嫁|彼氏|彼女|パートナー|親|両親|母|父|同居人)(?:と|に|へ|が)?(?:相談|確認|聞いて|話して|決め|見せ)/;
-const COST_RE = /初期費用|費用|安く|値下|割引|予算|高い|お得|抑え/;
+// 2026-11-28 作業員L（#806・統括役「埋まりの低い2つの欄を直す」）: 決める人の埋まり 3.4%。実物（前の60日・申込以降と申込の書類を外した通）で、
+//   「友人の方に相談」「相方と色々と協議」「母と相談中」のように 相手と言葉の間に数字が入る・相手が友人や相方・言葉が協議／話し合い の形を拾えていなかった。
+//   相手の後に 6字まで挟める・相手に 友人・友達・相方・兄弟姉妹・彼 を足す・言葉に 協議・話し合・意見・一緒に見る を足す。
+//   「親切」「親身」は親ではない（誤って拾う）＝外す。「旦那の名義」「嫁が保証人」のように言葉が無い番は拾わない（審査の事情に寄るため）
+export const DECIDER_RE = /(家族|ご主人|主人|夫|妻|旦那|嫁|彼氏|彼女|彼|パートナー|相方|友人|友達|両親|親(?!切|身|戚|子|指)|母|父|兄弟|姉(?!妹)|(?<!姉)妹|同居人)(?:さん)?(?:の方)?(?:と|に|へ|が|とも)?[^。！!？?\n]{0,6}?(?:相談|確認|聞いて|聞いてみ|話して|話し合|協議|決め|見せ|意見|一緒に(?:見|内覧|内見|行))/;
+/** カルテだけで足す断りの言い方（前の60日の実物から・#806） */
+export const KARTE_DECLINE_RE = /見送(?:り|ります|らせ)|パスで(?:お願い|おねがい)|(?:今回は|ここは|こちらは)?やめ(?:て)?(?:おき|とき)ます|微妙(?:です|なので|かな)|別の(?:ところ|物件|部屋|お部屋)で(?:お願い|おねがい)|別(?:を)?探します|(?:こちら|ここ|そちら)?(?:なし|無し)で[、,]?(?:お願い|おねがい)/;
+const COST_RE =/初期費用|費用|安く|値下|割引|予算|高い|お得|抑え/;
 const clip = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const median = (xs: number[]) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 /** カルテ（純関数）。msgs は会話の通（新旧どちらの並びでもよい）・sent は送った物件・names は伏せる名前 */
@@ -54,7 +60,21 @@ export function karteOf(i: { pc: KartePc; msgs: readonly KarteMsg[]; sent?: read
     const rx: RxMsg[] = cust.map((m) => ({ conv: "c", at: m.created_at, text: m.text }));
     const st = buildReactionNegatives({ sends, msgs: rx, now: i.nowIso });
     const dec2 = Object.entries(st.perProperty).filter(([, v]) => v.declined).slice(0, 3).map(([k, v]) => `${k.split("|")[0]}${v.attrs.length ? `（${v.attrs.map((a) => REACTION_ATTR_JA[a]).join("・")}）` : ""}`);
-    if (dec2.length) declined = dec2.join("／");
+    // 2026-11-28 作業員L（#806）: 前に断った物件の埋まり 3.4%。共通の DECLINE_RE（reaction-negatives・本番の物件の並べ替えにも効く＝ここでは変えない）が
+    //   「パスでお願いします」「今回はやめておきます」「微妙なので見送ります」「別のところでお願いします」「こちらなしでお願いします」を取りこぼしていた。
+    //   カルテの中だけで足す: 送ってから 48時間以内のお客様の通で、断りの言い方があり、物件名（頭4字）が入っているか、その時に送った物件が1件だけの時。
+    //   「明日は厳しいですか」（日にち）・「ちょっと気になって」（気がかり）・「他の物件も見たい」（追加の依頼）は断りではない＝入れない
+    const extra: string[] = [];
+    for (const p of i.sent) {
+      const t0 = Date.parse(p.sent_at); if (!Number.isFinite(t0)) continue;
+      const sameBlock = i.sent.filter((q) => Math.abs(Date.parse(q.sent_at) - t0) <= 30 * 60_000).length;
+      const head = p.property_name.replace(/\s+/g, "").slice(0, 4);
+      const hit = cust.some((m) => { const t = Date.parse(m.created_at); const tx = String(m.text ?? "").replace(/\s+/g, ""); return t > t0 && t - t0 <= 48 * 3_600_000 && KARTE_DECLINE_RE.test(tx) && (sameBlock === 1 || (head.length >= 3 && tx.includes(head))); });
+      const name = p.property_name.trim();
+      if (hit && !extra.includes(name) && !dec2.some((d) => d.startsWith(name))) extra.push(name);
+    }
+    const all = [...dec2, ...extra].slice(0, 3);
+    if (all.length) declined = all.join("／");
   }
   return {
     priorities: safe("優先する条件", pri ? clip(pri) : null), noGo: safe("譲れない線", pc.ng_points ? clip(String(pc.ng_points)) : null),
