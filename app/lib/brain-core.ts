@@ -3882,7 +3882,7 @@ ${sh}`;
       pickupPromisedUnfulfilled: !!f.pickupPromisedUnfulfilled, confirmationPromisedUnfulfilled: !!f.confirmationPromisedUnfulfilled, estimatePromisedUnfulfilled: !!f.estimatePromisedUnfulfilled,
       pickupReady: pickupReadyMaterial, firstContact: f.propertiesSentCount === 0 && f.lastStaffEntry == null,
     }));
-    if (g) { customerStateBlockText += `\n${g.text}`; checkOrderGuideRec = { type: g.type, steps: g.steps }; }
+    if (g) { customerStateBlockText += `\n${g.text}`; checkOrderGuideRec = { type: g.type, steps: g.steps }; materialMarks.check_order_guide = g.text.length; /* 2026-11-27 作業員A（#818）: 届きの印（on で1行を足した番だけ） */ }
     console.log(JSON.stringify({ tag: "brain:check-order-guide", conversationId, type: g?.type ?? null, steps: g?.steps.length ?? 0 }));
   }
   // 2026-11-27 作業員A（#814・竹内さんの決定 11/12 KB 6d457f12 の「まだ答えていない問い・まだ果たしていない約束」）: 前の番までの問いのうち答えになっていない物と、
