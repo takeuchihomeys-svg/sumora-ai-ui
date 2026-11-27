@@ -122,7 +122,7 @@ export const PLAYBOOK_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
   { id: "sort_ad", label: "①並べ替え→②AD→③高→低", scene: "list", grasp: ["dl:sort_head_hover", "dl:sort_ad_hover", "dl:sort_hilo", "dl:sort_done", "dl:sort_menu"], next: "list" },
   { id: "list", label: "一覧・印刷用PDF（並べ替え後）", scene: "list", grasp: ["dl:list_flow_grasp", "page:guide_phase_ok", "dl:auto_pdf_start"], next: "next" },
   { id: "next", label: "次ページ", scene: "next", grasp: ["dl:next_flow_grasp"], next: "handoff" },
-  { id: "handoff", label: "客完了→次客へ", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
+  { id: "handoff", label: "客完了→次客へ（次客の条件は毎回APIから読み直して入れる＝customer_api_reload）", scene: null, grasp: ["dl:handoff_grasp", "flow_handoff_ok", "page:flow_done_ready_next"], next: null },
 ];
 
 /**
@@ -175,7 +175,7 @@ export const PLAYBOOK_AREA_CONFIRM_STEPS: ReadonlyArray<string> = [
 
 /** 条件場面が録画に無い時の薄いガイド（連続客で所在地外しだけで止まらない） */
 export const PLAYBOOK_COND_GUIDE_STEPS: ReadonlyArray<string> = [
-  "①賃料・間取り・徒歩など条件を1つずつ入れる",
+  "①【毎回・全員】入れる条件は、その客の最新を拡張ツールがAPIから読み直した値（古い手元のコピーでは入れない・customer_api_reload・next_customer_api_reload）。その条件の賃料・間取り・徒歩などを空のフォームへ1つずつ入れる（最初の客も2人目以降も同じ）",
   "②検索前に手順書×画面で入忘れ・外し忘れを確かめる",
   "③揃ったら検索ボタンへ進む（外しだけで終わらない）",
 ];
@@ -253,9 +253,10 @@ export const ITANDI_EXTRA_GUIDES: ReadonlyArray<PlaybookExtraGuide> = [
     steps: [
       "①次のお客さんに切り替える",
       "②前のお客さんの条件を外す（上の手順）",
-      "③空と確かめてから、新しい条件を入れる（fill_start）",
+      "③【毎回】次のお客さんの条件を、拡張ツールからAPIで最新を読み直す（古い手元のコピーでは入れない・失敗は2秒・4秒あけて最大3回・customer_api_reload）",
+      "④空と確かめてから、読み直した新しい条件を入れる（fill_start）",
     ],
-    rules: [],
+    rules: ["next_customer_api_reload"],
   },
 ];
 
@@ -929,7 +930,7 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   injectGuideSceneEarly(
     "cond",
     PLAYBOOK_COND_GUIDE_STEPS,
-    ["guide_clear_fill_gate", "continuous_customer_loop"],
+    ["guide_clear_fill_gate", "continuous_customer_loop", "next_customer_api_reload"],
     "条件場面: 録画が無いため①条件入れ→②照合→③検索へ を薄いガイド場面として手順書に足した（外しだけで終わらない）",
   );
   // 検索・一覧の手（並べ替え AD・印刷用PDF）はリアプロだけ。itandi には並べ替えが無いので載せない

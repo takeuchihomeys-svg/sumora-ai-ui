@@ -13,6 +13,7 @@
 - **検索**（page-script `_searchReviewMs` 9〜12秒・`search_review_wait`）。見直し予約の二重ガードを 30秒に拡大。
 - **並べ替え**（bulk-dl）: 検索把握から **40〜50秒**（`SORT_AFTER_SEARCH_*`）・押した後の猶予 **15〜20秒**（`LAG_GRACE`）・マウス移動の取り消しは1回やり直し（`dl:sort_mouse_retry`）。`SORT_WAIT_OWN_MAX_MS` 90→**120秒**。
 - **次客の条件を毎回 API から読み直す**（`_refreshCustomerBeforeSearch`・最大3回・段 `customer_api_reload`）。手順書の決まり `next_customer_api_reload`・`first_customer_no_reset`・`search_review_wait`・`sort_mouse_retry` を追加。
+- **手順書の追記（同日・build_v 24 のまま・未配信）**: 竹内さん「次客のとき必ずAPIで拡張ツールいれるように手順書ちゃんとする」。「条件場面」の①に【毎回・全員】API読み直しを入れ（最初の客も同じ）、ITANDI の次客切り替えにも③として入れ、一連の流れ末尾（客完了→次客）の名前にも書いた。決まり `next_customer_api_reload` を条件場面・ITANDI 切り替えにも紐づけ。確かめ方（verify）は客1回ごとに `customer_api_reload` の段が必須（一括の回）。
 - **版**: manifest・page-script・itandi-page-script・`AUTO_RULES_REVIEWED_UP_TO`・`ITANDI_RULES_REVIEWED_UP_TO` すべて 2.8.317。
 - **未確認（実機）**: 拡張再読込 → 自動で2客以上 → `check-playbook-sync` ⑧ が verified になるまで「反映済み」と言わない。ITANDI の一回の通しも未確認。popup 単発の入力前リセット（`axlx-reset-before-fill`）は今回変えていない。
 
