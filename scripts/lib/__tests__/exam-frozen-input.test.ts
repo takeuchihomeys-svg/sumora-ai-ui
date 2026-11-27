@@ -125,6 +125,20 @@ ok("鍵の要る読みの対象", keyedTarget(base + "rpc/match_conductor_focus"
       ok("配線: 頼みのファイル名は外した形の鍵（外す前の古い控えには当たらない）", files[0] === `k-${k1}.json` && k1 !== keyedKey("https://x.supabase.co/rest/v1/rpc/match_conductor_focus", "POST", fb, ["yuma3", "pc-yuma"], "q371"));
     } finally { globalThis.fetch = orig2; rmSync(dir2, { recursive: true, force: true }); }
   }
+  // 2026-11-27 前の包みの印を写す（写さないと別クラウドの包みが一番外に包み直し、録音の名札が付かなくなる）
+  {
+    const dir3 = mkdtempSync(join(tmpdir(), "exam-snap3-"));
+    const orig3 = globalThis.fetch;
+    const prev = (async () => new Response("[]", { status: 200 })) as unknown as typeof fetch & Record<string | symbol, unknown>;
+    const box = Symbol.for("sumora.altInnerBox");
+    prev.__sumoraAltProvider = true; prev[box] = { fn: prev };
+    globalThis.fetch = prev;
+    try {
+      installDbSnapshot({ dir: dir3, excludeIds: () => [] });
+      const top = globalThis.fetch as unknown as Record<string | symbol, unknown>;
+      ok("包みの印を写す（別クラウドの印・内側の箱）", top !== (prev as unknown) && top.__sumoraAltProvider === true && top[box] === prev[box]);
+    } finally { globalThis.fetch = orig3; rmSync(dir3, { recursive: true, force: true }); }
+  }
   console.log(`${pass} pass / ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })();

@@ -20,6 +20,8 @@ export function brainMsgWindow(env: Record<string, string | undefined> = process
 // ── 2026-11-13 作業員1（点検役「会話の流れの読み」・見張り 12370）: 窓を「文の通の数」で数え、AIX の物件の画像の束は1つに数える ──
 //   旧: 新しい順に20通。AIX【物件ピックアップした】の画像1枚も1通に数え、ピックアップ1回で10通前後を占めて数日前のお客様の事情が窓から落ちていた
 //   （12370 は前8通のうち画像5通）。既定 off（BRAIN_MSG_WINDOW_UNITS=on の時だけ・読む上限は窓の3倍・60通まで）
+// ❄ 凍結（2026-11-27 統括役の決め・台帳 #134 blocked・#816）: 既定 off のまま残す。長い会話で効くかもしれないが、窓の数え方はほとんどの番に関わり、効く番が絞れない
+//   （11/27 の晩: 効く4問 q068・q407・q416・q434 が off で全部合格＝値打ちの関所で止まった）。効く番が絞れるようになったら試す。退役ではない
 export function brainMsgWindowUnitsOn(env: Record<string, string | undefined> = process.env): boolean {
   return (env.BRAIN_MSG_WINDOW_UNITS ?? "").trim().toLowerCase() === "on";
 }

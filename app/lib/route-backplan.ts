@@ -7,6 +7,7 @@
 //   道の選び方の元: 作業員L の #728 成約データ（申込の約65%は内覧の記録なし＝推定の申込27件を外して 77/119・内覧に入った件の申込到達は約2倍・申込→成約の中央 21.8日）
 //   スイッチ APPLY_ROUTE_BACKPLAN: 既定 off（材料に入れない）／on
 import { MAIN_ROUTE, ROUTE_NODES, type RouteNodeId } from "./apply-route-map";
+import { APPLY_LEAD_DAYS } from "./time-map";
 
 export function applyRouteBackplanOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
   return (env.APPLY_ROUTE_BACKPLAN ?? "").trim().toLowerCase() === "on";
@@ -88,8 +89,10 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   ];
   const ahead = aheadOf(f.node, path);
   const plant = ahead[1] ? PLANT[ahead[1]] ?? null : ahead[0] ? PLANT[ahead[0]] ?? null : null;
-  // 申込の目安（11/26 統括役の注意）: 申込→成約の 21.8日は「成約の印まで」で入居日とは限らない＝入居希望日から幅で出す（申込から入居まで普通は3〜4週間・目安）
-  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -28)}〜${ymdAdd(f.moveInYmd, -21)}` : null;
+  // 申込の目安（11/27 統括役の確かめで出所をそろえた・前の「3〜4週間前」は出所の無い作業員A の見積りだった）:
+  //   竹内さんの決定 10/20（KB 9b8dbfca）「お申込みからご入居まで1ヶ月以内でのご入居がほとんど…12月末ごろお引っ越しご予定ですと1ヶ月前の11月末ごろにお部屋のお申し込み」＝入居の約1ヶ月前
+  //   審査期間 14日（KB 5bd1480b「今日の日付＋審査期間（14日）」）＝遅くとも入居の2週間前 → 幅は 入居の30〜14日前（目安・言い切らない）
+  const applyBy = f.moveInYmd && f.moveInYmd > f.todayYmd ? `${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.from)}〜${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.to)}` : null;
   // ゴール側: この先の中で一番先の 見積か申込準備（無ければ申込準備）
   const goalNode = [...ahead].reverse().find((n) => GOAL_PLANT[n]) ?? (MAIN_ROUTE.indexOf(f.node) < MAIN_ROUTE.indexOf("apply_prep") ? "apply_prep" : null);
   const goalPlant = goalNode ? GOAL_PLANT[goalNode] ?? null : null;
@@ -97,7 +100,7 @@ export function backplanOf(f: BackplanFacts): Backplan | null {
   const dates: string[] = [], asks: string[] = [];
   if (f.moveInYmd && f.moveInYmd > f.todayYmd) {
     if (applyBy) dates.push(`申込の目安 ${applyBy} 頃`);
-    if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled) dates.push(`内覧の目安 ${ymdAdd(f.moveInYmd, -35)}〜${ymdAdd(f.moveInYmd, -24)} 頃（申込の目安の少し前）`);
+    if (path === "内覧あり" && !f.viewingDone && !f.viewingScheduled) dates.push(`内覧の目安 ${ymdAdd(f.moveInYmd, -(APPLY_LEAD_DAYS.from + 7))}〜${ymdAdd(f.moveInYmd, -APPLY_LEAD_DAYS.from)} 頃（申込の目安の少し前）`);
     if (!f.focus && f.propertiesSent === 0) dates.push("物件出しは今週");
     asks.push("今のお住まいの解約の予告の時期（1か月前の所が多い・目安）");
   } else asks.push("ご入居の時期（いつ頃までに住み始めたいか）");
@@ -123,9 +126,20 @@ export function backplanWriterNote(rec: unknown): string {
     + "。入れる時は文の終わりの方に自然に1文だけ（言い切らない・お客様が聞いていない内覧や申込を押し付けない・期日は「頃」「目安」）。合わない番は入れない";
 }
 /** 材料の1行（当たらない時は ""）。道はブレインが決める＝「例」「目安」と書く */
+/**
+ * 2026-11-27 作業員A（竹内さん 11/27「他の部分にも逆算組み合わせて連携させていけば」・統括役の頼み）: 逆算の1行に、今の駅の次の石（route-next-stone）を同じ1行で添える。
+ *   逆算の この先（太い道）の1手目と次の石は 9駅中 9駅で同じ向き（提案中→見積・見積→内覧の調整…）＝別々の2行にすると同じ事を2回言う。次の石の1行（ROUTE_NEXT_STONE_LINE）は未配線のまま、ここで1行に束ねる
+ *   スイッチ BACKPLAN_NEXT_STONE: 既定 off（逆算の1行は今と同じ）／on（「／次の石: …」を末尾に1つ足す）
+ */
+export function backplanNextStoneOn(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
+  return (env.BACKPLAN_NEXT_STONE ?? "").trim().toLowerCase() === "on";
+}
+export function backplanNextStoneTail(stoneLabel: string | null | undefined): string {
+  return stoneLabel ? `／次の石（一歩ずつ・申込のご案内へ飛ばさない）: ${stoneLabel}` : "";
+}
 export function backplanLine(p: Backplan | null): string {
   if (!p) return "";
   const ahead = p.ahead.map((n) => ROUTE_NODES[n].name).join("→");
   return `【申込から逆算した計画（決まった計算・材料・道はあなたが決める）】道: ${p.path}（${p.why}）／申込までに要る物: ${p.needs.map((n) => `${n.label} ${n.state}`).join("・")}`
-    + `${ahead ? `／この先（成約データの太い道）: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.goalPlant ? `／ゴール側の一言の例: ${p.goalPlant}` : ""}${p.dates.length ? `／日付の目安（幅・言い切らない）: ${p.dates.join("・")}` : ""}${p.asks.length ? `／分からないので聞く事: ${p.asks.join("・")}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃（目安・申込から入居まで普通は3〜4週間・言い切らない）` : ""}`;
+    + `${ahead ? `／この先（成約データの太い道）: ${ahead}` : ""}${p.plant ? `／2手先へ向けて今の番で仕込む一言の例: ${p.plant}` : ""}${p.goalPlant ? `／ゴール側の一言の例: ${p.goalPlant}` : ""}${p.dates.length ? `／日付の目安（幅・言い切らない）: ${p.dates.join("・")}` : ""}${p.asks.length ? `／分からないので聞く事: ${p.asks.join("・")}` : ""}${p.applyBy ? `／申込の目安: ${p.applyBy} 頃（目安・申込から入居まで普通は約1ヶ月前〜2週間前・言い切らない）` : ""}`;
 }

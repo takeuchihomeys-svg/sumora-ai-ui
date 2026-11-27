@@ -87,6 +87,12 @@ it("古い番の判定: この分析が見た発言より新しいお客様の�
   expect(strategyRefreshIsStale({ analyzedMsgTs: null, latestCustomerTs: "2026-11-10T06:55:35.486Z" })).toBe(false);
   expect(strategyRefreshIsStale({ analyzedMsgTs: "2026-11-10T06:55:35Z", latestCustomerTs: null })).toBe(false);
 });
+it("2026-11-27 #821 ピッカーの書き換え digest.rp（物件確認した だけ・同じなら付けない）", () => {
+  expect(toFreshDigest({ action: "property_check_result", check_pattern: "unavailable", llm_raw: { action: "property_check_result", cpat: "available" } }, null).rp).toBe("available→unavailable");
+  expect(toFreshDigest({ action: "property_check_result", check_pattern: "available", llm_raw: { action: "property_check_result", cpat: "available" } }, null).rp).toBe(undefined);
+  expect(toFreshDigest({ action: "estimate_sheet", check_pattern: null, llm_raw: { action: "estimate_sheet", cpat: "available" } }, null).rp).toBe(undefined);
+  expect(toFreshDigest({ action: "property_check_result", check_pattern: "available", llm_raw: { action: "property_check_result" } }, null).rp).toBe("-→available");
+});
 it("スイッチ: 既定 shadow・off・on", () => {
   expect(strategyStaleDeferMode({})).toBe("shadow");
   expect(strategyStaleDeferMode({ BRAIN_STRATEGY_STALE_DEFER: " ON " })).toBe("on");

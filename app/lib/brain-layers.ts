@@ -139,6 +139,8 @@ export type FreshDigest = {
   la?: string | null; ds?: string | null;
   /** 2026-11-03: 後ろの決まりの書き換え（"LLMのAIX→最終@出どころ"）と、下げた上書きの数（記録だけ） */
   rw?: string; dm?: number;
+  /** 2026-11-27 作業員A（#821「判定ごとにブレインの答えを記録に残す」・記録だけ）: 物件確認した のピッカー（check_pattern）の書き換え（"LLMのピッカー→最終"）。同じなら付けない */
+  rp?: string;
   /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
   nd?: string; pa?: string; cf?: string;
   /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
@@ -205,6 +207,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-11-03 作業員2（指揮役: 後ろの決まりの書き換えを記録・既定 on・記録だけ）: LLM の AIX（la）と最終（aix）が違う番は「何から何へ・どの決まりで」を1つの欄に。
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
+    ...((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),
     ...((() => { const pa = planAheadDigest(meta.plan_ahead as PlanAhead | null | undefined); return pa ? { pa } : {}; })()),
@@ -232,7 +235,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     // 2026-11-26 作業員L（台帳 #747 MATERIAL_PRIORITY）: 版|mode|入口が間に合ったか|選んだキー|動かしたキー（毎朝の1枚の物差し①②の材料）
     // 2026-11-26 作業員L（#749）: 入口を始めた秒|材料を組み終えた秒|その時に答えがあったか（記録だけ）
     // 2026-11-26 作業員A（#747 の使った目印）: L の塊（itm・mpr）に cpf・ppf・bpn を足した（欄を増やすと union の型が大きすぎて tsc が落ちる）
-    ...(((): Record<string, string> => { const o: Record<string, string> = {}; const t = meta.intake_timing as { start?: number | null; matEnd?: number; ready?: boolean } | undefined; if (t && typeof t.matEnd === "number") o.itm = `${t.start == null ? "-" : (t.start / 1000).toFixed(1)}|${(t.matEnd / 1000).toFixed(1)}|${t.ready ? 1 : 0}`; const mpr = materialPriorityDigest(meta.material_priority as Parameters<typeof materialPriorityDigest>[0]); if (mpr) o.mpr = mpr; const fm = meta.flow_marks as { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string } | null | undefined; if (fm?.cpf) o.cpf = fm.cpf; if (fm?.ppf) o.ppf = fm.ppf; if (fm?.bpn) o.bpn = fm.bpn; if (fm?.abd) o.abd = fm.abd; if (fm?.dct) o.dct = fm.dct; const mkk = Object.keys((meta.material_marks as Record<string, number> | null | undefined) ?? {}); if (mkk.length && (process.env.DIGEST_MATERIAL_KEYS ?? "on").trim().toLowerCase() !== "off") o.mtk = mkk.slice(0, 30).join(","); /* mk は材料の自己申告の鍵（brain-decision-ledger）＝別の欄 */ /* 2026-11-26 作業員A（#662 統括の受け持ち表の①持つ・記録だけ・既定 on） */ return o; })()),
+    ...(((): Record<string, string> => { const o: Record<string, string> = {}; const t = meta.intake_timing as { start?: number | null; matEnd?: number; ready?: boolean } | undefined; if (t && typeof t.matEnd === "number") o.itm = `${t.start == null ? "-" : (t.start / 1000).toFixed(1)}|${(t.matEnd / 1000).toFixed(1)}|${t.ready ? 1 : 0}`; const mpr = materialPriorityDigest(meta.material_priority as Parameters<typeof materialPriorityDigest>[0]); if (mpr) o.mpr = mpr; const fm = meta.flow_marks as { cpf?: string; ppf?: string; bpn?: string; abd?: string; dct?: string; msm?: string } | null | undefined; if (fm?.cpf) o.cpf = fm.cpf; if (fm?.ppf) o.ppf = fm.ppf; if (fm?.bpn) o.bpn = fm.bpn; if (fm?.abd) o.abd = fm.abd; if (fm?.dct) o.dct = fm.dct; if (fm?.msm) o.msm = fm.msm; /* 2026-11-26 作業員L #795 */ const mkk = Object.keys((meta.material_marks as Record<string, number> | null | undefined) ?? {}); if (mkk.length && (process.env.DIGEST_MATERIAL_KEYS ?? "on").trim().toLowerCase() !== "off") o.mtk = mkk.slice(0, 30).join(","); /* mk は材料の自己申告の鍵（brain-decision-ledger）＝別の欄 */ /* 2026-11-26 作業員A（#662 統括の受け持ち表の①持つ・記録だけ・既定 on） */ return o; })()),
     // 2026-11-12 作業員22: 統括の指示書（conductor-brief.conductorBriefDigest・meta.conductor_brief がある番だけ）
     ...((() => { const cb = conductorBriefDigest(meta.conductor_brief); return cb ? { cb } : {}; })()),
     // 2026-11-15 作業員I: 気持ち・状況の表の当たった行と判断（FEELING_CONDUCTOR_TABLE=shadow|on の時だけ）

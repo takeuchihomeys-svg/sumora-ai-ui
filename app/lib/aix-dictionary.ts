@@ -4,6 +4,7 @@
 //     ① 前提（押す前にそろっている要る物）② 竹内さん本人の手本（お客様の発言 → 竹内さんが送った AIX の要約）の2つ。境目は aix-boundary。
 //   手本の出所: 申込までの地図の json（11/26 06:33・竹内さん本人の番 226）で AIX の一手の後に駅が進んだ番、
 //     無い種類は aix_usage_logs の60日でお客様が反応し・直しの無い番。本文は要約・お名前と物件名は伏せる。
+//   2026-11-26 午後: 手本の無かった4種類（おすすめ・集合場所・内覧のご挨拶・聞き取り）を竹内さん本人の番（申込までの地図の照らしの json の AIX の一手）から足した＝DICT_GAPS は空
 //   60日の送信数: おすすめ 379・確認した 254・送る 246・内覧の誘い 103・見積 100・集合場所 73・内覧のご挨拶 68・申込の案内 41・電話 39・聞き取り 23（ほかは 5 以下）
 //   ブレインには材料の1行で渡す（地図の次の一手の候補の AIX だけ・答えの規則ではない）。控えの行（キー aix_dictionary・from "route"）。
 //   スイッチ AIX_DICTIONARY_LINE: 既定 off／on
@@ -14,7 +15,9 @@ export type DictExample = { customer: string; takeuchi: string; from: string };
 export type DictEntry = { aix: string; premise: string; examples: DictExample[] };
 export const AIX_DICTIONARY: Record<string, DictEntry> = {
   property_recommendation: { aix: "property_recommendation", premise: "条件（エリア・家賃・間取り）がそろっていて、スタッフが選んだ物件がある",
-    examples: [] },
+    examples: [
+      { customer: "「もう少し家賃を上げて、他の部屋も」", takeuchi: "部屋の見出し＋（オススメポイント）の箇条（家賃と管理費の合計・間取り・敷金礼金・築年数・最寄り駅と徒歩・設備）", from: "竹内さん本人の番（95019eb8）" },
+      { customer: "（条件をもらった後・探す約束の続き）", takeuchi: "「1件かなりオススメ出来るお部屋が募集に出ております」＋広さと間取り・予算に収まる事・収納・設備の良い点を文で", from: "竹内さん本人の番（fc32c8f3）" }] },
   property_send: { aix: "property_send", premise: "条件がそろっている・送れる候補（ピックアップ）が揃っている",
     examples: [{ customer: "エリアと家賃の目安と「綺麗めの部屋を探して・見つかり次第連絡を」", takeuchi: "「お待たせいたしました」＋聞いた条件（エリア・家賃・間取り）を言い直して「オススメできるお部屋ピックアップさせて頂きました・お手隙の際にご査収ください」", from: "地図 json・進んだ番（4f1df513）" }] },
   property_check_result: { aix: "property_check_result", premise: "お客様が送ってきた物件か聞かれた条件を、管理会社などに確認して結果が出ている（まだなら確認の約束の返信）",
@@ -33,9 +36,13 @@ export const AIX_DICTIONARY: Record<string, DictEntry> = {
       { customer: "内覧の場に「到着しました」（内覧の後の流れ）", takeuchi: "申込者様の記入欄と緊急連絡先の記入欄を送る", from: "地図 json・進んだ番（79f97cea）" }] },
   phone_call: { aix: "phone_call", premise: "文より電話の方が早い説明（申込の手続き・契約者の変更など）がある",
     examples: [{ customer: "「契約者を知人にできますか」（申込の前の手続きの質問）", takeuchi: "「お申込みに関しまして5分程お電話でご説明させて頂ければ」＋電話をかけるボタンの案内", from: "aix_usage_logs・反応あり直しなし（c40e1625）" }] },
-  meeting_place: { aix: "meeting_place", premise: "内覧の日時が決まっている", examples: [] },
-  greeting_viewing: { aix: "greeting_viewing", premise: "内覧の日が今日か済んだ（内覧前／内覧後）", examples: [] },
-  condition_hearing: { aix: "condition_hearing", premise: "物件を探すのに要る条件（エリア・家賃・間取り・入居時期）がそろっていない", examples: [] },
+  meeting_place: { aix: "meeting_place", premise: "内覧の日時が決まっている", examples: [
+    { customer: "前の部屋の感想（狭い・駅から遠い）＋「よろしくお願いいたします」（内覧の日が決まった後）", takeuchi: "「本日○時よりお部屋ご案内させて頂きます」＋日付と時刻・物件の現地エントランスでお待ち合わせ・住所", from: "竹内さん本人の番（f2967621）" }] },
+  greeting_viewing: { aix: "greeting_viewing", premise: "内覧の日が今日か済んだ（内覧前／内覧後）", examples: [
+    { customer: "内覧の時刻の返事（「○時でお願いします」「わかりました」）", takeuchi: "当日に「本日○時お部屋ご案内させて頂きます」＋「本日は何卒よろしくお願い致します」（短く）", from: "竹内さん本人の番（13f37ce2）" }] },
+  condition_hearing: { aix: "condition_hearing", premise: "物件を探すのに要る条件（エリア・家賃・間取り・入居時期）がそろっていない", examples: [
+    { customer: "友だちに追加した直後の一言（「追加させて頂きました」）", takeuchi: "（ご希望のお部屋探しご条件）①入居時期〜⑨入居人数の9項目の型", from: "竹内さん本人の番（9a713754）" },
+    { customer: "広告の物件の画像＋「これの詳細を知りたい」（条件はまだ聞いていない）", takeuchi: "同じ9項目の条件の型（物件の答えより先に条件をそろえる）", from: "竹内さん本人の番（1048773d）" }] },
 };
 /** 手本がまだ無い種類（60日で反応あり直しなしの番も地図の進んだ番も無い・夜に増やす） */
 export const DICT_GAPS = Object.values(AIX_DICTIONARY).filter((e) => !e.examples.length).map((e) => e.aix);

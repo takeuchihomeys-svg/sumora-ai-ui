@@ -6374,6 +6374,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
     // 3巡目（10/07 竹内さん「必要な場面では物件検索ブレインから分析してもらうのもあり」）: 決め手の条件（物件検索ブレインと同じ値）を返信の材料に。
     //   REPLY_PROPERTY_BRAIN=on（既定 off）・テストは testFlags.property_brain。場面: お礼・検討中・条件・質問・その他（物件を送ってきた番・見積・内覧・申込は渡さない）
     const propertyBrainReplyNote = await (async () => {
+      // ⛔ 退役（2026-11-27 統括役の決め・台帳 #156 dropped・#816）: 既定 off のまま。理由＝代わりあり（物件の検索の材料 propertySearchText）・試験で差なし（off-g2-r-r 5問で良く0・悪化0）。コードを消すのは後でまとめて
       const on = testFlags.property_brain ? testFlags.property_brain === "on" : (process.env.REPLY_PROPERTY_BRAIN ?? "").toLowerCase() === "on";
       if (!on || isTemplateOptimize || !replyScene || !["ack", "considering", "conditions", "question", "other"].includes(replyScene)) return "";
       try {
@@ -8001,6 +8002,26 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             // 2026-11-13 作業員5（CONDUCTOR_STAFF_CHECK）: 統括が人に回した番の理由を画面の注記と影の関所に（下書きは変えない）
             if (staffCheckRec && finalCheck) finalCheck.staff_check = { reasons: staffCheckRec.reasons, note: staffCheckRec.note, gate: staffCheckRec.gate, ...(staffCheckRec.ref_detail ? { ref_detail: staffCheckRec.ref_detail } : {}) };
             if (finalDraftText) controller.enqueue(encoder.encode(finalDraftText));
+            // 2026-11-26 作業員A（台帳 #787・記録だけ・REPLY_DIRECTION_RECORD=off で止める）: 下書きの締めの型と、判断の記録の駅から決まった計算で石の向きを付け、
+            //   同じ会話の最新の判断の記録の digest に rdir・rst を足す（ブレインには書かせない＝q406 の前例・fail-open）
+            if (persist && conversationId && finalDraftText && !isTemplateOptimize) {
+              const draftForDir = finalDraftText;
+              // 付け先の確かめ（統括役 11/26）: 下書きの元になった判断が見たお客様の通の時刻（analyzed_msg_ts）と同じ判断の記録の行にだけ付ける。分からない・合う行が無い時は付けない
+              const decTsForDir = (brainDecisionSrc as { analyzed_msg_ts?: string | null } | null)?.analyzed_msg_ts ?? null;
+              after(async () => {
+                try {
+                  const rd = await import("@/app/lib/reply-direction");
+                  if (!rd.replyDirectionRecordOn()) return;
+                  const win = rd.decisionTsWindow(decTsForDir);
+                  if (!win) return;
+                  const { data: lastDec } = await supabase.from("brain_decision_logs").select("id, digest, analyzed_msg_ts").eq("conversation_id", conversationId).gte("analyzed_msg_ts", win.lo).lte("analyzed_msg_ts", win.hi).order("created_at", { ascending: false }).limit(1).maybeSingle();
+                  const dg = (lastDec?.digest ?? null) as Record<string, unknown> | null;
+                  if (!lastDec?.id || !dg || dg.rdir) return;
+                  const { rdir, rst } = rd.replyStoneOf(typeof dg.ar === "string" ? dg.ar : null, draftForDir);
+                  await supabase.from("brain_decision_logs").update({ digest: { ...dg, rdir, rst } }).eq("id", lastDec.id);
+                } catch (e) { console.warn("[generate-reply] reply-direction record failed:", conversationId, e instanceof Error ? e.message : e); }
+              });
+            }
             // FINAL_CHECK トレーラー（メタ行1行目は出力済みのためトレーラーが唯一の伝達手段。
             // クライアントは SUGGESTED_AIX と同様に内部タグとして除去・解析する。STOP_REASON は必ず最後）
             if (!isTemplateOptimize && finalCheck) {

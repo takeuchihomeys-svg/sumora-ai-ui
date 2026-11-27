@@ -440,4 +440,8 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   { q: "自動の印をボタンの処理が await の後に読んで手動扱いになる", gold: ["b9949cbb"], ho: true, from: "owner-reset-dup-1127" },
   { q: "町をピンポイントで選んだ後に本当にチェックが付いたかを確かめるか", gold: ["abc82e4e"], from: "owner-pick-effect-1127" },
   { q: "管理費・共益費込みや構造の選択が効かなかった時に検索を止めるか", gold: ["abc82e4e"], ho: true, from: "owner-pick-effect-1127" },
+  // 2026-11-27 作業員A（#821 竹内さん「ブレインに任せる」5c170a5c）
+  {q: "管理会社に確かめれば分かる問いはすぐ AIX で返すのか約束の返信か",gold: ["5c170a5c"],from: "decision-1127"},
+  {q: "answerable_direct の決め打ちを材料に下げる",gold: ["5c170a5c"],from: "decision-1127"},
+  {q: "内覧の日の希望の信号と保証人 S3 の信号は上書きか材料か",gold: ["5c170a5c"],from: "decision-1127"},
 ];
