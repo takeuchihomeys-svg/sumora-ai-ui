@@ -3,7 +3,8 @@
 //   判断は app/lib/rollout-watch.ts。env（統括役の決定）は書き換えない＝表の上書きだけ。戻した事は画面の上の印と作業員の表に出る
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { decideRollout, watchedSwitches, isMatchVerdict, isJudgedVerdict, rolloutWatchMode, type GroupRate, type WatchDecision } from "@/app/lib/rollout-watch";
+import { STAGED_SWITCHES, codeDefaultOnDayOf } from "@/app/lib/switch-stage";
+import { allSinceMs, decideRollout, watchedSwitches, isMatchVerdict, isJudgedVerdict, rolloutWatchMode, type GroupRate, type WatchDecision } from "@/app/lib/rollout-watch";
 import { stageOf, stageOn, loadRolloutOverrides } from "@/app/lib/rollout";
 import { isTestConversation } from "@/app/lib/test-conversations";
 import { readRowsUpTo } from "@/app/lib/read-all-rows";
@@ -22,7 +23,7 @@ async function handleGET(req: NextRequest) {
   if (!url || !key) return NextResponse.json({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY が無い" }, { status: 500 });
   const db = createClient(url, key, { auth: { persistSession: false } });
   try {
-    const names = watchedSwitches(process.env);
+    const names = watchedSwitches(process.env, STAGED_SWITCHES); // 2026-11-27 作業員A: 段階で読む名簿も見る（名簿が空なら前と同じ）
     if (!names.length) return NextResponse.json({ ok: true, mode, names: [], note: "pct:N か all の _STAGE が無い" });
     const now = Date.now();
     const overrides = await loadRolloutOverrides(now);
@@ -37,17 +38,16 @@ async function handleGET(req: NextRequest) {
     const { data: vers } = await db.from("brain_switch_versions").select("switches, first_seen_at").order("first_seen_at", { ascending: true }).limit(2000);
     const decisions: WatchDecision[] = [];
     for (const name of names) {
-      const stage = stageOf(name, process.env, overrides);
+      const defStage = STAGED_SWITCHES.find((r) => r.name === name)?.defaultStage; // 名簿の物はコードの既定も同じに（名簿に無い物は前と同じ off）
+      const stage = stageOf(name, process.env, overrides, defStage);
       if (stage.kind === "pct") {
         const week = judged.filter((t) => Date.parse(t.customer_turn_at) >= now - 7 * DAY);
-        const on = week.filter((t) => stageOn(name, t.conversation_id, process.env, overrides)), off = week.filter((t) => !stageOn(name, t.conversation_id, process.env, overrides));
+        const on = week.filter((t) => stageOn(name, t.conversation_id, process.env, overrides, defStage)), off = week.filter((t) => !stageOn(name, t.conversation_id, process.env, overrides, defStage));
         decisions.push(decideRollout({ name, stage, on: tally(on), off: tally(off), mode: "pct" }));
       } else if (stage.kind === "all") {
         // all に上がった時: 版の記録で「all を含まない最後の版」の次の版が初めて見えた時刻
-        const has = (s: string) => new RegExp(`^${name}_STAGE=all$|^${name}=on$`, "m").test(s);
-        const vs = (vers ?? []) as Array<{ switches: string; first_seen_at: string }>;
-        let lastWithout = -1; vs.forEach((v, i) => { if (!has(v.switches)) lastWithout = i; });
-        const changeAt = lastWithout >= 0 && vs[lastWithout + 1] ? Date.parse(vs[lastWithout + 1].first_seen_at) : null;
+        //   2026-11-27 作業員A: 計算を rollout-watch.allSinceMs に（env の道は同じ答え）・版に出ない物はコードの既定が入った日（版の変わり目）
+        const changeAt = allSinceMs(name, (vers ?? []) as Array<{ switches: string; first_seen_at: string }>, codeDefaultOnDayOf(name));
         if (!changeAt || now - changeAt > 7 * DAY) { decisions.push({ name, action: "keep", from: "all", why: changeAt ? "all に上がって7日より前（前後比べはしない）" : "all に上がった時が版の記録に無い", dropPt: null }); continue; }
         const after = judged.filter((t) => Date.parse(t.customer_turn_at) >= changeAt), before = judged.filter((t) => { const x = Date.parse(t.customer_turn_at); return x < changeAt && x >= changeAt - 7 * DAY; });
         decisions.push(decideRollout({ name, stage, on: tally(after), off: tally(before), mode: "all_change" }));
