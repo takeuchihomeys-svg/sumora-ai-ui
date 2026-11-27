@@ -4370,6 +4370,9 @@ ${l}`; materialMarks.silent_since_ours = l.length; } }
         conditionSetAt: pc?.move_in_time && propertyCustomerId ? await conditionMoveInSetAt(propertyCustomerId, pc as unknown as { updated_at?: string | null; created_at?: string | null }) : null,
         staffHistory: typedMessages.filter((m) => m.sender !== "customer").map((m) => ({ text: m.text, at: m.created_at })),
       });
+      // 2026-11-28 作業員A（#737・竹内さんの決定 11/28「約110日」・ROUTE_MOVE_IN_LATER_SPLIT=on の時だけ）: 入居まで約110日以内は「連絡の日の約束」の決め打ちにしない＝今から探す（線 time-map.MOVE_IN_SEARCH_NOW_DAYS）。
+      //   rule:far_move_in_contact は 22c7e985（1ヶ月半前）の線で入居まで約52日より先を約束の番にしていた＝竹内さんの番（57・61・108日で今から探す）と食い違う。off は今まで通り
+      if (farMoveInEarly) { try { const ml = await import("@/app/lib/route-move-in-later-split"); const tm = await import("@/app/lib/time-map"); if (ml.routeMoveInLaterSplitOn()) { const dMv = Math.round((Date.parse(`${ymdStrOf(farMoveInEarly.moveIn)}T00:00:00+09:00`) - Date.now()) / 86_400_000); if (dMv <= tm.MOVE_IN_SEARCH_NOW_DAYS) { console.log(JSON.stringify({ tag: "brain:far-move-in-search-now", conversationId, days: dMv })); farMoveInEarly = null; materialMarks.far_move_in_search_now = 1; } } } catch { /* 今まで通り */ } }
       if (farMoveInEarly) {
         // 15通より前に約束していてもカレンダーの連絡の日の行が残っていれば約束済み
         const { data: openContact } = await supabase.from("calendar_events").select("notes").eq("conversation_id", conversationId).eq("is_done", false).like("notes", "【必ず】%【連絡日%").limit(5);
@@ -4498,7 +4501,9 @@ ${l}`; materialMarks.silent_since_ours = l.length; } }
         viewingUnconfirmed: customerState?.stage === "viewed" && customerState?.stageDetail === "実施は未確認", // 2026-11-23 作業員R（#621）: VIEWING_LAPSED_BRANCH=on の時だけ読む
       });
       // 2026-11-28 作業員A（#804・ROUTE_ESTIMATE_NEXT_REPLY・既定 off・段階で読む）: 見積の駅の次の一手の候補を返信へ（材料の言葉だけ・off は ar0 のまま）
-      const ar = await (async () => { try { const re = await import("@/app/lib/route-estimate-next"); const r = re.withEstimateNextReply(ar0, re.routeEstimateNextOn()); if (r.changed) materialMarks.route_estimate_next = 1; return { text: r.text, loc: r.loc }; } catch { return ar0; } })();
+      const ar1 = await (async () => { try { const re = await import("@/app/lib/route-estimate-next"); const r = re.withEstimateNextReply(ar0, re.routeEstimateNextOn()); if (r.changed) materialMarks.route_estimate_next = 1; return { text: r.text, loc: r.loc }; } catch { return ar0; } })();
+      // 2026-11-28 作業員A（#737・竹内さんの決定 11/28・ROUTE_MOVE_IN_LATER_SPLIT・既定 off・段階で読む）: 分かれ道 入居時期が先 の次の一手を入居までの日数で2つに（線 time-map.MOVE_IN_SEARCH_NOW_DAYS）
+      const ar = await (async () => { try { const ml = await import("@/app/lib/route-move-in-later-split"); const on = ml.routeMoveInLaterSplitOn(); if (!on || ar1.loc?.branch !== "move_in_later") return ar1; const nowIso = new Date().toISOString(); const mvT = resolveConditionMoveIn(unrepliedTurn.text ?? null, { nowIso, setAtIso: nowIso }); const mv = mvT.kind === "future" ? mvT : resolveConditionMoveIn((pc as { move_in_time?: string | null } | null)?.move_in_time ?? null, { nowIso }); const days = mv.kind === "future" ? Math.round((Date.parse(`${ymdStrOf(mv.start.ymd)}T00:00:00+09:00`) - Date.now()) / 86_400_000) : null; const r = ml.withMoveInLaterSplit(ar1, true, days); if (r.mark) materialMarks.route_move_in_later_split = r.mark; return { text: r.text, loc: r.loc }; } catch { return ar1; } })();
       // 2026-11-12 作業員7: 駅の中の細かい状態（APPLY_ROUTE_SUBSTATE・既定 off）。一般の手続きの問い（PROCEDURE の網）では出さない（q065）
       // 2026-11-24 作業員A（#648 の点検の印・記録だけ）: 道筋の言い方の1行（APPLY_ROUTE_PATH_LINE）・駅の中の状態（APPLY_ROUTE_SUBSTATE）が材料に入った番
       { const { applyRoutePathLineOn } = await import("@/app/lib/route-path"); if (ar.loc && applyRoutePathLineOn()) materialMarks.route_path_line = 1; }

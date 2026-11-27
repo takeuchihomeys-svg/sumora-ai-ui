@@ -36,6 +36,9 @@ export function prevBusinessDay(ymd: string): string { let x = ymd; for (let i =
 /** 申込の目安の幅（入居の何日前から何日前まで）。L の move-in-line（MOVE_IN_LINE）もここから import する＝同じ数を2か所で持たない
  *   出所: 竹内さんの決定 10/20（KB 9b8dbfca・申込から入居まで約1ヶ月）・審査期間 14日（KB 5bd1480b） */
 export const APPLY_LEAD_DAYS = { from: 30, to: 14 } as const;
+/** 2026-11-28 竹内さんの決定（#737・AskUserQuestion「約110日にする」）: 入居まで この日数以内（日が分からない時も）は今から探してお送りする約束、それより先は時期を伝えて約束。
+ *  竹内さん本人の120日の番で外れが一番少ない線（13番で外れ 2・全員 22番で 3）。地図の分かれ道 move_in_later（route-move-in-later-split.ts）が読む・1か所で持つ */
+export const MOVE_IN_SEARCH_NOW_DAYS = 110;
 /** 予定表（純関数）: 今日より後の日を並べる。申込の目安は入居の APPLY_LEAD_DAYS（30〜14日前・逆算と同じ幅・言い切らない＝soft）を営業日に寄せる
  *   出所: 竹内さんの決定 10/20（KB 9b8dbfca・申込から入居まで約1ヶ月＝12月末入居なら11月末ごろ申込）・審査期間 14日（KB 5bd1480b） */
 export function buildTimeMap(i: { todayYmd: string; moveIn?: MoveInInput | null; viewings?: readonly ViewingInput[]; promises?: readonly PromiseDue[] }): TimeEvent[] {
