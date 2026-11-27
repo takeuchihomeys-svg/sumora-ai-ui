@@ -42,7 +42,7 @@ export const KB_EVAL: KbEvalQ[] = [
   { q: "従業員が送ったAIXの文を手本にしていいか", gold: ["ce349a3f"], ho: true },
   { q: "物件オススメのピッカーは何種類", gold: ["450965aa"] },
   { q: "送った中から1件推す形はいつ使う", gold: ["450965aa", "c72d8792"], ho: true },
-  { q: "入居が3ヶ月先のお客様にいつから物件を送る", gold: ["22c7e985"], scene: "conditions" },
+  { q: "入居が3ヶ月先のお客様にいつから物件を送る", gold: ["442426b2", "22c7e985"], scene: "conditions" }, // 2026-11-28 竹内さんの決定（約110日以内は今から探す）で 442426b2 が先
   { q: "引越しがまだ先の人に連絡する日を約束してカレンダーに入れる", gold: ["22c7e985"] },
   { q: "内覧当日の朝に挨拶の要対応を立てるcron", gold: ["fca29a19"] },
   { q: "今日内覧のお客様に朝の挨拶を出す条件", gold: ["fca29a19", "6c38daca"], scene: "viewing", ho: true },
@@ -458,4 +458,8 @@ export const KB_EVAL_LEGACY: Array<KbEvalQ & { from: string }> = [
   {q: "管理会社に確かめれば分かる問いはすぐ AIX で返すのか約束の返信か",gold: ["5c170a5c"],from: "decision-1127"},
   {q: "answerable_direct の決め打ちを材料に下げる",gold: ["5c170a5c"],from: "decision-1127"},
   {q: "内覧の日の希望の信号と保証人 S3 の信号は上書きか材料か",gold: ["5c170a5c"],from: "decision-1127"},
+  // 2026-11-28 作業員A（#737 竹内さん「約110日にする」442426b2）
+  {q: "入居時期が先のお客様に今から探すか時期を伝えて待つかの線は何日",gold: ["442426b2"],from: "decision-1128"},
+  {q: "入居まで2ヶ月先のお客様に連絡の日を約束するか今から物件を探すか",gold: ["442426b2"],from: "decision-1128"},
+  {q: "入居時期が分からないお客様は探す約束か時期の約束か",gold: ["442426b2"],from: "decision-1128"},
 ];
