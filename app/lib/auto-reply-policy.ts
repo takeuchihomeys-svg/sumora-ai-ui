@@ -19,6 +19,7 @@ import { findViewingDateReask } from "./viewing-reask";
 import { MEETING_PROMISE_RE } from "./meeting-promise";
 import { budgetSentenceKept } from "./rent-question";
 import { findUngroundedFacts, groundingKinds } from "./draft-fact-grounding";
+import { stageOn } from "./rollout";
 
 /** 送ってよい時間帯（JST）。この外では1通も送らない */
 export const AUTO_REPLY_WINDOW = { startHour: 9, endHour: 21 } as const;
@@ -152,6 +153,8 @@ export type AutoReplyInput = {
   twoStageKind?: string | null;
   /** 2026-10-02 ⑫: ブレインが受けた予算の中の目安の文（meta.rent_market.budgetSentence）。あれば要の語が下書きに残っているかを見る */
   rentBudgetSentence?: string | null;
+  /** 2026-11-27 作業員A（#812）: 見張りと同じ場面のキー（"返信:条件提示" 等・line-watch-turn の watchSceneFromTpo／watchSceneFromCustomer）。AUTO_GATE_SCENE_ALLOW・AUTO_GATE_POSTAPPLY_SCENE の時だけ使う */
+  sceneKey?: string | null;
 };
 
 /** 2段の場面の下書きに約束（ピックアップ・確認・御見積書の宣言）が入っているか。行動台帳が promised と読むのと同じ式（reply-context） */
@@ -165,6 +168,17 @@ export type AutoReplyVerdict = { ok: boolean; reason: string };
  * この会話の下書きを自動で送ってよいか。
  * **1つでも欠けたら送らない**（迷ったら人に残す）。理由はログに出して後から追えるようにする。
  */
+/** 2026-11-27 作業員A（#812）: 関所の穴を塞ぐ3つ（どれも既定 off・段階で読む）。場面の許しは AUTO_GATE_SCENE_ALLOW_LIST（"、"か","区切りの場面のキー）に無い場面を止める＝影で AIX の番が0だった場面だけを入れる */
+export function gateSceneStops(o: { sceneKey: string | null; finalCheckState?: string }, env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): string | null {
+  if (stageOn("AUTO_GATE_POSTAPPLY_SCENE", null, env, []) && /^対象外:申込以降/.test(o.sceneKey ?? "")) return "post_apply_scene";
+  if (stageOn("AUTO_GATE_SCENE_ALLOW", null, env, [])) {
+    const allow = new Set(String(env.AUTO_GATE_SCENE_ALLOW_LIST ?? "").split(/[,、]/).map((x) => x.trim()).filter(Boolean));
+    if (!o.sceneKey || !allow.has(o.sceneKey)) return "scene_not_allowed";
+  }
+  if (stageOn("AUTO_GATE_REQUIRE_FC_STATE", null, env, []) && o.finalCheckState == null) return "final_check_unknown";
+  return null;
+}
+
 export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   // ① 切り替えていない会話は絶対に送らない（NULL も false 扱い＝勝手に自動にしない）
   if (i.autoSendEnabled !== true) return { ok: false, reason: "auto_off" };
@@ -176,6 +190,12 @@ export function canAutoReply(i: AutoReplyInput): AutoReplyVerdict {
   // ④ 申込以降は人が対応する
   const st = (i.status ?? "").trim();
   if (st && AUTO_REPLY_SKIP_STATUSES.has(st)) return { ok: false, reason: `status:${st}` };
+  // ④-2 2026-11-27 作業員A（#812・竹内さんの決定 11/12 KB 2cd3c1c1 ①「関所の穴を塞ぐ」・どれも既定 off＝自動送信を on にする前の必須の条件として台帳に）:
+  //   影の自動返信の数え（30日）で、関所を通る番の 26% はスタッフが AIX を押した番（返信か AIX かの外れ）・5番は場面が申込以降なのに status がまだ申込以降でない番だった
+  {
+    const g = gateSceneStops({ sceneKey: i.sceneKey ?? null, finalCheckState: i.finalCheckState });
+    if (g) return { ok: false, reason: g };
+  }
   // ⑤ 送れる本文があるか
   const draft = (i.draft ?? "").trim();
   if (!draft) return { ok: false, reason: "no_draft" };

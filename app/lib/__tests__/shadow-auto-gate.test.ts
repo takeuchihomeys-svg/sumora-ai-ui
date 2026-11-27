@@ -14,7 +14,9 @@ function eq(a: unknown, b: unknown, msg = "") { if (JSON.stringify(a) !== JSON.s
 
 // 本番の条件提示の番の形（名前は伏せた）
 const DRAFT = "条件の方ありがとうございます😊！！\nご条件でお部屋の方ピックアップさせて頂きます！！\n少々お待ちくださいませ🌟";
-const FC_HIGH = { ok: true, issues: [], confidence: { v: "dc", score: 100, band: "high", reasons: [] } };
+// 2026-11-27 sg-2026-11-27: 見張りの写しの形（passes＝3パス完走）を持たせる（本物の関所と同じく完走の証拠が要る）
+const PASSES = ["rule_check", "anomaly_scan", "context_check"];
+const FC_HIGH = { ok: true, issues: [], passes: PASSES, confidence: { v: "dc", score: 100, band: "high", reasons: [] } };
 const base = { draft: DRAFT, draftSrc: "last", convStatus: "hearing", brainReplyMode: "text", brainAction: null, finalCheck: FC_HIGH, groundText: "大国町 7万円まで", env: {} };
 
 console.log("影の関所");
@@ -36,7 +38,7 @@ it("最終チェックの block は送らない", () => {
   eq(g.reason, "final_check_block");
 });
 it("自信が低い番は送らない（DRAFT_CONFIDENCE 既定 on）・off なら当てない", () => {
-  const fc = { ok: true, issues: [], confidence: { score: 40, band: "low", reasons: [] } };
+  const fc = { ok: true, issues: [], passes: PASSES, confidence: { score: 40, band: "low", reasons: [] } };
   eq(shadowAutoGate({ ...base, finalCheck: fc }).reason, "low_confidence");
   eq(shadowAutoGate({ ...base, finalCheck: fc, env: { DRAFT_CONFIDENCE: "off" } }).would_send, true);
 });
@@ -63,6 +65,7 @@ it("影は本物の auto_send_enabled を見ない（入力に無い）・送信
   const src = readFileSync(path.join(__dirname, "..", "shadow-auto-gate.ts"), "utf8");
   eq(/scheduled_messages|send-scheduled|pushMessage|supabase/.test(src.replace(/\/\/.*$/gm, "")), false, "送信・DB に触れる語");
 });
+it("2026-11-27 最終チェックを完走していない下書き（passes が3未満）は本物と同じく止める", () => { const g = shadowAutoGate({ ...base, finalCheck: { ok: true, issues: [], passes: ["rule_check"] } }); eq(g.would_send, false); eq(g.lines.includes("final_check_incomplete"), true); });
 it("finalCheckHasBlock は ok=false も block", () => { eq(finalCheckHasBlock({ ok: false, issues: [] }), true); eq(finalCheckHasBlock({ ok: true, issues: [{ severity: "warning" }] }), false); });
 it("根拠の文は番の最後のお客様の発言までの通だけ（後のスタッフの返事を入れない）", () => {
   const g = watchGroundText([{ created_at: "2026-11-10T10:00:00Z", text: "7万まで" }, { created_at: "2026-11-10T10:30:00Z", text: "6.5万円の物件です" }], "2026-11-10T10:00:00Z", { rent_max: 70000 });

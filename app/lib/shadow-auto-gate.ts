@@ -18,8 +18,16 @@ import { APPLICATION_FORMAT_RE } from "./apply-sub-mode";
 import { draftToSendableText } from "./draft-text";
 import { confidenceFromCheck, draftConfidenceEnabled } from "./draft-confidence";
 import { staffCheckOf } from "./conductor-staff-check";
+import { autoGateFinalCheckEnabled, finalCheckStateOf } from "./auto-gate-final-check";
 
-export const SHADOW_GATE_VERSION = "sg-2026-11-11";
+// sg-2026-11-27: 本物の関所と同じ最終チェックの完走（finalCheckState）を渡す（#812・統括役 11/27・影が本物より甘かった）
+export const SHADOW_GATE_VERSION = "sg-2026-11-27";
+/** 見張りの写しの final_check（migrate-schema で passes_completed→passes・checked_text_hash→text_hash に改名して残す）を、本物の ai_draft_check の形に戻して完走を読む */
+export function watchFinalCheckState(check: unknown, env?: Record<string, string | undefined>): "ok" | "missing" | "incomplete" | "stale" {
+  if (!check || typeof check !== "object" || Array.isArray(check)) return finalCheckStateOf(check, { env });
+  const c = check as Record<string, unknown>;
+  return finalCheckStateOf({ ...c, passes_completed: c.passes_completed ?? c.passes, checked_text_hash: c.checked_text_hash ?? c.text_hash }, { env });
+}
 
 /** 戻す: SHADOW_AUTO_GATE=off（記録しない）。記録だけのスイッチ＝既定 on（KB e805f15e） */
 export function shadowAutoGateEnabled(env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}): boolean {
@@ -124,6 +132,8 @@ export function shadowAutoGate(i: ShadowGateInput): ShadowGate {
     suggestedAixAction: action || null,
     draft: draftForGate,
     draftHasBlock: finalCheckHasBlock(i.finalCheck),
+    // 2026-11-27 作業員A（#812）: 本物の auto-reply-dispatch と同じく、最終チェックを3パス完走した証拠（AUTO_GATE_FINAL_CHECK=off なら渡さない＝本物と同じ）
+    finalCheckState: autoGateFinalCheckEnabled(env) ? watchFinalCheckState(i.finalCheck, env) : undefined,
     draftConfidenceLow: draftConfidenceEnabled(env) && conf?.band === "low",
     status: i.convStatus ?? null,
     hasPendingScheduled: false,

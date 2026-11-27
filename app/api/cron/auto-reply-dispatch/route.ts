@@ -14,6 +14,8 @@ import { extractDraftFacts } from "@/app/lib/draft-fact-grounding";
 import { loadDraftGroundExtra } from "@/app/lib/draft-fact-grounding-server";
 import { draftConfidenceEnabled, confidenceFromCheck } from "@/app/lib/draft-confidence";
 import { autoGateFinalCheckEnabled, finalCheckStateOf } from "@/app/lib/auto-gate-final-check";
+import { sceneKeyOf } from "@/app/lib/line-watch-turn";
+import { stageOn } from "@/app/lib/rollout";
 
 export const maxDuration = 60;
 
@@ -141,6 +143,10 @@ async function handleGET(req: NextRequest) {
       groundText,
       twoStageKind: twoStage,
       rentBudgetSentence: ((c.suggested_aix_meta as { rent_market?: { budgetSentence?: string | null } } | null)?.rent_market?.budgetSentence) ?? null,
+      // 2026-11-27 作業員A（#812・場面の許し／申込以降の場面の関所の時だけ・既定 off）: 見張りと同じ場面のキー（ブレインの判断・下書きの TPO・status から sceneKeyOf）
+      sceneKey: stageOn("AUTO_GATE_SCENE_ALLOW", null, process.env, []) || stageOn("AUTO_GATE_POSTAPPLY_SCENE", null, process.env, [])
+        ? sceneKeyOf({ brainAction: action, brainReplyMode: replyMode, tpoLabel: ((c.ai_draft_check as { tpo_debug?: { tpo_label?: string | null } } | null)?.tpo_debug?.tpo_label) ?? null, convStatus: c.status }).key
+        : null,
     };
     const verdict = canAutoReply(input);
     if (!verdict.ok) { skipped[verdict.reason] = (skipped[verdict.reason] ?? 0) + 1; continue; }
