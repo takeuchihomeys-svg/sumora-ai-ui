@@ -16,6 +16,11 @@
 // ここは「どちらの層が作るか」の分類。両者が食い違っても下流の挙動は変えない（作り手だけを分ける）。
 
 // 2026-09-23: 戦略の項目にも家賃交渉の守りを通す（純関数同士なので依存なしのまま）
+/** 影の届き（#823）の digest（shadow-reach.shadowReachDigest と同じ形・ここは node の入れ物を持つ shadow-reach を import しない） */
+function shadowReachDigestOf(r: { parts?: Record<string, unknown>; ms?: number }): string | null {
+  const xs = Object.entries(r.parts ?? {}).filter(([, v]) => v !== 0 && v !== "on").map(([k, v]) => `${k}:${v}`);
+  return `${xs.join(",") || "-"}|${Math.round(Number(r.ms ?? 0))}ms`.slice(0, 200);
+}
 import { needDigest, planAheadDigest, threeLayerDigest, type BrainNeed, type PlanAhead, type ThreeLayer } from "./brain-need";
 import { conductorMetaDigest, type ConductorMeta } from "./conductor-meta";
 import { intakeDigestLine } from "./conductor-intake";
@@ -143,6 +148,8 @@ export type FreshDigest = {
   rp?: string;
   /** 2026-11-27 作業員A（AFTER_DECISION_RECORDS・判断の後の記録）: 入居の期限に向いた一手か（1語）・次に来やすい通の種類の上位2つ（"・"でつなぐ） */
   mif?: string; nl?: string;
+  /** 2026-11-27 作業員A（#823）: 影の届き（"印:字数,…|ms"・SHADOW_REACH） */
+  shr?: string;
   /** 2026-11-03（brain-need.ts・どれも既定 off）: need（難しさ・自信・足りない材料）／次の数手の計画（goal|先頭の手|変）／材料の食い違い（stage,sent） */
   nd?: string; pa?: string; cf?: string;
   /** 2026-11-03 3段の奥の心配（先頭20字）／一番の要点／流れの合図 */
@@ -210,6 +217,7 @@ export function toFreshDigest(meta: Record<string, unknown>, shift: string | nul
     //   下げた上書き（規則は当たったがブレインのまま）の数も残す。毎週の line-watch-miss-causes の「返信か AIX か」の章で a を数える
     ...((() => { const la0 = str(meta.aix_llm, 30) ?? str((meta.llm_raw as { action?: unknown } | undefined)?.action, 30); const fin = str(meta.action, 30); const by = str(meta.decision_source, 40) ?? str(meta.decision_source_no_aix, 40); return la0 !== fin && (la0 || fin) ? { rw: `${la0 ?? "返信"}→${fin ?? "返信"}@${by ?? "-"}` } : {}; })()),
     ...((() => { if (str(meta.action, 30) !== "property_check_result") return {}; const b = str((meta.llm_raw as { cpat?: unknown } | undefined)?.cpat, 30); const f = str(meta.check_pattern, 30); return b !== f && (b || f) ? { rp: `${b ?? "-"}→${f ?? "-"}` } : {}; })()),
+    ...((() => { const r = meta.shadow_reach as { parts?: Record<string, unknown>; ms?: number } | undefined; if (!r) return {}; const d = shadowReachDigestOf(r); return d ? { shr: d } : {}; })()),
     ...((() => { const ar = meta.after_records as { mif?: unknown; nl?: unknown } | undefined; if (!ar) return {}; const mif = str(ar.mif, 12); const nl = Array.isArray(ar.nl) ? (ar.nl as unknown[]).map(String).join("・").slice(0, 24) : null; return { ...(mif ? { mif } : {}), ...(nl ? { nl } : {}) }; })()),
     ...(Array.isArray(meta.demoted_overrides) && (meta.demoted_overrides as unknown[]).length ? { dm: (meta.demoted_overrides as unknown[]).length } : {}),
     ...((() => { const nd = needDigest(meta.need as BrainNeed | null | undefined); return nd ? { nd } : {}; })()),

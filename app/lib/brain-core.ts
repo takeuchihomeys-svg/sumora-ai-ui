@@ -540,6 +540,8 @@ export type SuggestedAixMeta = {
   turn_aims_after?: import("@/app/lib/brain-turn-aims").TurnAims;
   /** 2026-11-27 作業員A: 判断の後に決まった計算で作る記録（入居の期限に向いた一手か・次に来やすい通の上位2つ・AFTER_DECISION_RECORDS） */
   after_records?: import("@/app/lib/after-decision-records").AfterRecords;
+  /** 2026-11-27 作業員A（#823）: 影の届き（既定 off の部品の1行を LLM の後に記録だけで組んだ字数・SHADOW_REACH） */
+  shadow_reach?: import("@/app/lib/shadow-reach").ShadowReachRecord;
   main_point?: string;
   flow_signals?: string[];
   /** 2026-11-03 決定 No.15・17・19・21 の材料を渡した番（n15/n17/n19/n21） */
@@ -4398,6 +4400,7 @@ ${sh}`;
   // 2026-11-21 作業員M（台帳 #467・竹内さん「地図の部分も細かく」）: 地図の駅・分かれ道は毎番求めてログに出すだけで meta に残っていなかった（連携の切れ）。
   //   APPLY_ROUTE_RECORD=on の時だけ meta.apply_route に残す（記録だけ・プロンプトは1文字も変えない）。お客様ごとの計画・指示書が段の語を1つにして読む
   let applyRouteLocRec: { node: string | null; branch: string | null; next: string | null; next_aix: string[] } | null = null;
+  let shadowLoc: import("@/app/lib/shadow-reach").ShadowReachCtx["loc"] = null; // 2026-11-27 作業員A（#823 影の届き）: 地図の位置を LLM の後の影の組みに渡すだけ（材料には使わない）
   let routeBackplanRec: import("@/app/lib/route-backplan").BackplanRec | null = null; // 2026-11-26 作業員A（#745・BACKPLAN_TO_WRITER=on の時だけ meta.route_backplan に・書き手への渡し）
   if (applyRouteMapEnabled()) {
     try {
@@ -4484,6 +4487,7 @@ ${sh}`;
       // 2026-11-27 作業員A: 次の一手を番で選び直した番の印（APPLY_ROUTE_NEXT_BY_TURN=on の時だけ evidence に出る＝off は付かない）
       if (ar.loc?.evidence?.some((e: string) => e.startsWith("次の一手を番で選び直し:"))) materialMarks.route_next_by_turn = 1;
       if (ar.loc) console.log(JSON.stringify({ tag: "brain:apply-route", conversationId, node: ar.loc.node, branch: ar.loc.branch, evidence: ar.loc.evidence, chars: ar.text.length }));
+      shadowLoc = ar.loc ? { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next ? { aix: ar.loc.next.aix ?? [] } : null } : null;
       if (ar.loc && applyRouteRecordOn()) applyRouteLocRec = { node: ar.loc.node, branch: ar.loc.branch, next: ar.loc.next?.label?.slice(0, 40) ?? null, next_aix: (ar.loc.next?.aix ?? []).slice(0, 3) };
       // 2026-11-27 作業員A（届きの印・SUBSTATE_CONTEXT=on の時だけ）: 細かい状態を前提つきで読んだ番に substate_context=1・前提で外した番に substate_context_dropped=1。
       //   下の記録（apply_route.substate）の中で付けていた印は material_marks を写した後だったので残っていなかった＝ここで先に付ける（off は何も変えない）
@@ -7206,6 +7210,21 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
     }
     // 2026-11-27 作業員A（統括役の頼み・受け持ち表の土台の穴①②・AFTER_DECISION_RECORDS=on の時だけ・既定 off）: 判断の後に決まった計算で作る記録（ブレインの出力の欄にはしない）。
     //   入居の期限に向いた一手か（1語）・この場面で次に来やすい通の種類の上位2つ（#804 の分かれ道の表）→ meta.after_records → digest.mif・digest.nl
+    // 2026-11-27 作業員A（#823 ①・竹内さん 11/27「ブレインと連携したらさらに試験の費用節約して質上げれないのか」・SHADOW_REACH=on の時だけ・既定 off）: 影の届き。
+    //   ブレインの LLM の後で、既定 off の部品の1行を今の番の値だけで組み、届いたか（字数）を記録する。プロンプト・材料・印には書かない（LLM の後なので届かない）。
+    //   部品ごとに try・全体の上限 50ms（runShadowReach）。失敗しても返す物と判断は変えない
+    let shadowReachRec: import("@/app/lib/shadow-reach").ShadowReachRecord | null = null;
+    try {
+      const sr = await import("@/app/lib/shadow-reach");
+      if (sr.shadowReachOn()) shadowReachRec = await sr.runShadowReach({
+        loc: shadowLoc, since: customerState?.since ?? null, ledgerMessages: (brainLedgerInput.messages ?? []) as never, recentAixRows: (brainLedgerInput.recentAixRows ?? []) as never,
+        viewingHistory: viewingHistoryRows as never, lineTasks: (brainLedgerInput.lineTasks ?? []) as never, ledgerFacts: brainLedger.facts as never,
+        unrepliedText: unrepliedTurn.text ?? "", unrepliedHasImage: !!unrepliedTurn.hasImage, scene: brainSceneRes?.scene ?? null, pickupReady: pickupReadyMaterial,
+        typedMessages: typedMessages as never, aixLogs: aixLogs as never,
+        prevMindset: ((opts?.prevMeta as { customer_mindset?: { state?: string | null } | null } | null | undefined)?.customer_mindset?.state) ?? null,
+        turnAtMs: typedMessages[0]?.created_at ? Date.parse(typedMessages[0].created_at) + 1 : Date.now(),
+      });
+    } catch (e) { console.warn("[brain-core] shadow-reach skipped:", e instanceof Error ? e.message : String(e)); }
     let afterRecords: import("@/app/lib/after-decision-records").AfterRecords | null = null;
     try {
       const adr = await import("@/app/lib/after-decision-records");
@@ -7320,7 +7339,8 @@ ${MATERIAL_SELF_REPORT_INSTRUCTION}` : coreUserText) },
       //   BRAIN_TURN_AIMS（ブレインの出力の欄）は道を引いたので off のまま（11/12）。ここは道の後の決まった計算＝お客様ごとの計画・指示書の中期の狙いの元
       //   substate: お客様の今の連投の言葉で当たる駅の中の細かい状態の id（道に関係なく・記録だけ・指示書の route の欄が読む・ROUTE_TO_BRIEF）
       ...(routeBackplanRec ? { route_backplan: routeBackplanRec } : {}),
-      ...(afterRecords ? { after_records: afterRecords } : {}), // 2026-11-27 作業員A: 判断の後の記録（AFTER_DECISION_RECORDS）
+      ...(afterRecords ? { after_records: afterRecords } : {}),
+      ...(shadowReachRec ? { shadow_reach: shadowReachRec } : {}), // 2026-11-27 作業員A: 影の届き（SHADOW_REACH） // 2026-11-27 作業員A: 判断の後の記録（AFTER_DECISION_RECORDS）
       ...(Object.keys(flowMarks).length ? { flow_marks: flowMarks } : {}),
       ...(applyRouteLocRec ? { apply_route: { ...applyRouteLocRec, substate: (() => { try { if (substateContextOn()) { const sc = substateInContext(unrepliedTurn.text ?? "", { estimateSent: !!brainLedger.facts.estimateSent, propertiesSent: (brainLedger.facts.propertiesSentCount ?? 0) > 0 }); if (sc.droppedBy) materialMarks.substate_context_dropped = 1; return sc.id; } return matchSubstateOf(unrepliedTurn.text ?? "")?.id ?? null; } catch { return null; } })() } } : {}),
       ...(applyRouteLocRec ? (() => { try { const route: "reply" | "aix" = String((parsed as { reply_mode?: unknown }).reply_mode ?? "") === "aix" && String((parsed as { action?: unknown }).action ?? "").trim() ? "aix" : "reply"; const ta = deriveTurnAimsAfter({ customerText: unrepliedTurn.text ?? "", route }); return ta ? { turn_aims_after: ta } : {}; } catch { return {}; } })() : {}),
