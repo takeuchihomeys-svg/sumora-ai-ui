@@ -54,7 +54,7 @@ t("入れ物の外では表は読まない（env だけ）", stagedOn("X", { X: 
     t(`移した ${name}: 空の入れ物の中でも同じ`, runWithSwitchStage({ conversationId: "c2", overrides: [], loadedAt: 0, fellBack: false }, () => VALUES.every((v) => fn({ [name]: v }) === oldDefaultOn(v))));
     t(`移した ${name}: 夜の見張りが off を書けば戻る`, runWithSwitchStage({ conversationId: "c3", overrides: [{ switch_name: name, stage: "off" }], loadedAt: 0, fellBack: false }, () => fn({ [name]: "on" })) === false);
   }
-  t("名簿は移した2本（既定 all）", STAGED_SWITCHES.map((r) => r.name).join() === "BRAIN_RAG_STATE_FILTER,BRAIN_DIGEST_SITUATION" && STAGED_SWITCHES.every((r) => r.defaultStage.kind === "all"));
+  t("名簿: 移した2本（既定 all）＋今日の既定 off の3本（既定 off）", STAGED_SWITCHES.map((r) => r.name).join() === "BRAIN_RAG_STATE_FILTER,BRAIN_DIGEST_SITUATION,AFTER_DECISION_RECORDS,PICKUP_SPEC_SHARED,SEARCH_CONDITION_VIEW" && STAGED_SWITCHES.slice(0, 2).every((r) => r.defaultStage.kind === "all") && STAGED_SWITCHES.slice(2).every((r) => r.defaultStage.kind === "off"));
   t("見張りの名簿に入る（本番の env=on）", watchedSwitches({ BRAIN_RAG_STATE_FILTER: "on", BRAIN_DIGEST_SITUATION: "on" }, STAGED_SWITCHES).join() === "BRAIN_DIGEST_SITUATION,BRAIN_RAG_STATE_FILTER");
   console.log(`switch-stage: ${pass} pass / ${fail} fail`);
   process.exit(fail ? 1 : 0);

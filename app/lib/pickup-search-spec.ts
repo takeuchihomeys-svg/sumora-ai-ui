@@ -10,9 +10,11 @@
 // 新しい列は無い（payload は jsonb・ピックアップの行は search_command_id で命令につながる）＝migrate-schema の変更は要らない。
 import type { RegisteredConditions, SearchOverride } from "./search-override";
 import { parseConditionSource, type ConditionWriter } from "./condition-history";
+import { stagedOn, STAGE_OFF } from "./switch-stage";
 
 type Env = Record<string, string | undefined>;
-export const pickupSpecSharedOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PICKUP_SPEC_SHARED ?? "").trim().toLowerCase() === "on";
+// 2026-11-27 作業員A（竹内さんの決め 11/27「これから on にする部品は段階で読む」・stage-coverage の点検）: 今の読み（=== "on"）と同じ答えを段階で読む＝夜の見張りが1段戻せる
+export const pickupSpecSharedOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => stagedOn("PICKUP_SPEC_SHARED", env, STAGE_OFF);
 
 /** 文に出す欄（登録の行の写し・探す欄より広い＝入居・こだわり・NG・その他も） */
 export type SpecRow = RegisteredConditions & { move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; other_requests?: string | null };

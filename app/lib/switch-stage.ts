@@ -21,6 +21,10 @@ export const STAGED_SWITCHES: ReadonlyArray<{ name: string; defaultStage: Stage;
   // 2026-11-27 移す1・2本目（統括役の条件: 明日の push で本番に出して1日見てから残りを移す）。どちらも env=on（brain_switch_versions に 11/03 から）＝all に上がった日は版の記録から
   { name: "BRAIN_RAG_STATE_FILTER", defaultStage: { kind: "all" } },
   { name: "BRAIN_DIGEST_SITUATION", defaultStage: { kind: "all" } },
+  // 2026-11-27 今日作った既定 off の部品（stage-coverage の点検で「新しいスイッチを env だけで読む」と出た物・on にした時に夜の見張りが戻せるように）
+  { name: "AFTER_DECISION_RECORDS", defaultStage: { kind: "off" } },
+  { name: "PICKUP_SPEC_SHARED", defaultStage: { kind: "off" } },
+  { name: "SEARCH_CONDITION_VIEW", defaultStage: { kind: "off" } },
 ];
 
 /** コードの既定を on にした部品の「版の変わり目」（その既定が入った commit の日・JST）。brain_switch_versions に出ない物の all に上がった日 */

@@ -11,6 +11,7 @@
 //   状態は「候補の網」。どの状態か・何番先まで見るかはブレインが会話を読んで選ぶ（材料の文にもそう書く）。道（返信か AIX か）はこの表で決めない。
 //   既定 off（APPLY_ROUTE_SUBSTATE=on）。off の時は空文字＝プロンプトは1バイトも変わらない。
 import type { RouteNodeId, RouteBranchId, ApplyRouteLocation } from "./apply-route-map";
+import { stageOn } from "./rollout";
 
 type Env = Record<string, string | undefined>;
 // ⛔ 2026-11-12 凍結（統括役の決め・既定 off のまま・消すのは後でまとめて）: ブレインの材料に渡すと効かなかった。
@@ -95,10 +96,10 @@ export function substatesFor(loc: Pick<ApplyRouteLocation, "node" | "branch"> | 
   // 2026-11-27 作業員A（作業員L の ACK_SOFT_NEXT と同じ番の向きを1つに）: ACK_SOFT_NEXT（物件への反応の番の柔らかい次の一手・内覧か申込か）が on の時は、
   //   足した駅の「1件に好意」の次の2〜3番（内覧・見積へ）を駅の次の一手に従うに替える＝向きの言葉は ACK_SOFT_NEXT の1行だけ（両方が on の時だけ・どちらかが off なら今と同じ）
 }
-/** ACK_SOFT_NEXT（作業員L・段階で読む）が少しでも on か（=on か _STAGE が off 以外）。画面からも読まれるので switch-stage（node の入れ物）は使わない */
+/** ACK_SOFT_NEXT（作業員L・段階で読む）が on か。rollout.stageOn（同期・表は渡さない＝env と _STAGE）で読む（stage-coverage の点検が数える形・画面からも読めるよう switch-stage の入れ物は使わない）。
+ *  会話 id は渡さない＝pct・yuma の段は off 扱い（全部に on＝all の時だけ向きを1つにする・安全側） */
 export function ackSoftNextOnAny(env?: Env): boolean {
-  const e = env ?? (typeof process !== "undefined" ? process.env : {});
-  return (e.ACK_SOFT_NEXT ?? "").trim().toLowerCase() === "on" || /^(?:yuma|all|on|pct:\d+)$/i.test((e.ACK_SOFT_NEXT_STAGE ?? "").trim());
+  return stageOn("ACK_SOFT_NEXT", null, env ?? (typeof process !== "undefined" ? process.env : {}), []);
 }
 /** 足した駅では今の1手だけ合う状態（次の2〜3番は駅の次の一手に従う）。照らし: 審査の不安をヒアリング・問い合わせで当てた番の竹内さんの一手は、申込ではなく探す約束（＋審査のサポートの1文）だった */
 export const SUBSTATE_ALSO_TURN_ONLY: ReadonlySet<string> = new Set(["apply_screening_worry"]);
@@ -114,7 +115,8 @@ export function substateAlsoHit(loc: Pick<ApplyRouteLocation, "node" | "branch">
 //   1件に好意が提案中 2・ピックアップ 2）。足したのは2番以上出た駅だけ（1番だけの物は足さない＝揺れを置き場にしない）。数え: scripts/audit-substate-stations.ts
 //   スイッチ SUBSTATE_MULTI_STATION: 既定 off（置き場の駅1つのまま＝substatesFor も今と同じ）
 export function substateMultiStationOn(env: Env = typeof process !== "undefined" ? process.env : {}): boolean {
-  return (env.SUBSTATE_MULTI_STATION ?? "").trim().toLowerCase() === "on";
+  // 2026-11-27 作業員A（段階で読む・画面からも読まれうるので rollout.stageOn の同期の読み＝env と _STAGE・会話 id なし＝pct は off 扱い）
+  return stageOn("SUBSTATE_MULTI_STATION", null, env, []);
 }
 /** 状態 → 置き場のほかに出てよい駅（駅の id・分かれ道の id） */
 export const SUBSTATE_ALSO_AT: Readonly<Record<string, readonly string[]>> = {

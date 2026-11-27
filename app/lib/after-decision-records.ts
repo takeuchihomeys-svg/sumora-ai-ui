@@ -6,9 +6,11 @@
 //   ② 次に来やすい通の種類の上位2つ: #804 の分かれ道の表（竹内さん本人の番・60日・木の深さ3の数）から。予想の当て物ではなく「備え」＝次の通が来た時に当たったかを数える
 // スイッチ AFTER_DECISION_RECORDS（既定 off）: on の時だけ meta.after_records に残す（digest.mif・digest.nl）
 import { APPLY_LEAD_DAYS } from "./time-map";
+import { stagedOn, STAGE_OFF } from "./switch-stage";
 
 type Env = Record<string, string | undefined>;
-export const afterDecisionRecordsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.AFTER_DECISION_RECORDS ?? "").trim().toLowerCase() === "on";
+// 2026-11-27 作業員A（竹内さんの決め 11/27「これから on にする部品は段階で読む」・stage-coverage の点検）: 今の読み（=== "on"）と同じ答えを段階で読む＝夜の見張りが1段戻せる
+export const afterDecisionRecordsOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => stagedOn("AFTER_DECISION_RECORDS", env, STAGE_OFF);
 
 // ── ① 入居の期限に向いた一手か ───────────────────────────
 /** 申込へ向かう一手（物件確認・見積・内覧・待ち合わせ・申込の案内） */

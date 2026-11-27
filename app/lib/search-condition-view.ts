@@ -9,8 +9,11 @@
 //   ② 欄ごとの強さ（絶対／できれば）を言った文
 // スイッチ SEARCH_CONDITION_VIEW（既定 off）: on の時だけ探す命令の payload.search_view に残す（検索・欄・文は変えない）。
 
+import { stagedOn, STAGE_OFF } from "./switch-stage";
+
 type Env = Record<string, string | undefined>;
-export const searchConditionViewOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.SEARCH_CONDITION_VIEW ?? "").trim().toLowerCase() === "on";
+// 2026-11-27 作業員A（竹内さんの決め 11/27「これから on にする部品は段階で読む」・stage-coverage の点検）: 今の読み（=== "on"）と同じ答えを段階で読む＝夜の見張りが1段戻せる
+export const searchConditionViewOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => stagedOn("SEARCH_CONDITION_VIEW", env, STAGE_OFF);
 
 export type RentBasis = { basis: "rent_only" | "with_fee" | "with_parking"; amountMan: number | null; from: "form_label" | "text"; quote: string };
 const N = (s: string) => String(s ?? "").normalize("NFKC");
