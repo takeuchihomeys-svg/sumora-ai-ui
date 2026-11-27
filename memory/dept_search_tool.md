@@ -71,7 +71,8 @@
   - **町・管理費・構造**（page-script.js）: 本番の直近60回（読むだけ）で町を入れた回は1回（#1658 detail_area=上本町・段の記録0件）、構造・管理費は0回＝本番ではまだ確かめた事が無い。実機では町・構造のある客で `cond_effect_*` を見る。旧は「押す列が空いた」を選べた証拠にしていた。`_condEffectCheck` で列が空いてから画面の印を読み直す（管理費 `_feeEffect`・構造 `_structureEffect`＝欲しい数・付いた数・足りない・余計・町 `_townPickedState`＝町ごと）。付いていなければ**1回だけ**選び直し（町は付かない町だけ）→それでも付かなければ `press_ng_cond_effect` を残して次へ（**検索は止めない**・2026-11-27 竹内さんが「記録して次へ進む」を選んで承認）。町は確定の前、管理費・構造は1欄ずつの列の中。町を選ぶ時と確かめる時は同じ当て方（`_townLabelMatches`）。印 `cond_pick_idle`／`cond_effect_ok`／`cond_effect_retry` は KEEP・RULE・`_PIN` に入れた。枠は `_setPressNote` の pick。
   - 地図: fill の押す物に「町（ピンポイント）」（駅の設定へ進む と 確定 の間）・「管理費・共益費込み」「構造」（確定の後）。手順書は所在地②と条件①に地図から把握の文（`PLAYBOOK_BUILD_V = 35`）。道具 `scripts/pick-effect-check.ts`（本番の町・構造の回を数える・読むだけ）。
   - 試験: 新 `reset-dup-burst-v28328`（21・3本同時のリセットを動かして押すのは1回）・`pick-effect-v28328`（31・確かめる手を4通りで動かす）。形の変化に合わせた古い試験: auto-run（await より前を構造で見る）・realpro-guide-town・resume-lag-wait-v2324・search-nav-pending-light-scan-v28264・sort-pressed-then-list-v2322・switch-once。拡張 358本中 356 青（基準の赤2）・地図162・型エラー基準10。
-- **未実施（竹内さんの OK 待ち）**: コミット・push・attach。実機（再読込→自動2客以上→`check-playbook-sync` ⑧が verified）まで「反映済み」と言わない。`git worktree` の `%TEMP%\axbase` は残っている（`git worktree remove --force` で消せる・竹内さんが実行）。
+- **2026-11-27 済**: 竹内さんの OK でコミット `09d4e1d89`→origin/main を取り込み `71ee0d7b8`（衝突は kb-eval-set.ts の問いの足し合いだけ・取り込んだ Claude Code 側の試験2本の型エラー3件を型だけ直した＝exam-intake-openai・substate-multi-station・動きは同じ）→ `ext-release.ts --all`（main・cursor-ext へ push・本番 2.8.328・手順書 attach 3行）。
+- **未実施（人の手）**: 実機（拡張の再読込→リアプロ／ITANDI のタブを開き直す→自動2客以上→`check-playbook-sync` ⑧が verified）まで「反映済み」と言わない。同期点検の残り: itandi の手順書の抜け1件（③揃ったら検索ボタンへ進む・押す位置の票が3回未満）＝今回の変更とは別。`git worktree` の `%TEMP%\axbase` は残っている（`git worktree remove --force` で消せる・竹内さんが実行）。
 
 ---
 
