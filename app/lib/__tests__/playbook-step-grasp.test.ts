@@ -9,7 +9,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { buildPlaybook, flowPressesForPlaybook, normalizePlaybookSteps, PLAYBOOK_FIELD_JA, PLAYBOOK_BUILD_V, PLAYBOOK_MARKER_RE } from "../action-playbook";
+import { branchOnlyScenes, buildPlaybook, flowPressesForPlaybook, normalizePlaybookSteps, PLAYBOOK_FIELD_JA, PLAYBOOK_BUILD_V, PLAYBOOK_MARKER_RE } from "../action-playbook";
 import { checkPresses, LOOP_FLOW_NODES, pressLine } from "../loop-flow-map";
 
 let n = 0;
@@ -180,6 +180,25 @@ assert(PLAYBOOK_BUILD_V >= 37, "build_v は 37 以上");
   const norm = normalizePlaybookSteps(["所在地絞り込み＋", "次タスクAPI結果", "city_code[]", "流れ台帳", "確定してリストへ"]);
   assert(norm.steps.join(" > ") === "所在地絞り込みを開く > 区の欄（チェック） > 確定してリストへ" && norm.steps.length === norm.fields.length && !norm.unknown.length, "印を落としても並びと欄名は揃う: " + norm.steps.join(" > "));
   console.log("  ✓ 録画に混ざる点検の印（_STEP_JA/_STEP_JA2）は手にしない・新しい名前は仕分けを求める");
+}
+
+// 7. 分かれ道の場面（次のページ＝全部送付済みの時だけ）は回数で「薄い」と言わない。分かれ道でない場面は今まで通り言う
+{
+  const br = branchOnlyScenes();
+  assert(br.has("next"), "次のページは分かれ道の場面（地図の branch）");
+  assert(!br.has("area") && !br.has("search") && !br.has("list"), "順に行う手の場面は分かれ道にしない");
+  const flows = [
+    flow("area", ["所在地絞り込み＋", "city_code[]", "確定してリストへ"]),
+    { ...flow("next", ["次"]), runs: 2 },
+    { ...flow("search", ["検索"]), runs: 2 },
+  ];
+  const pb = buildPlaybook(bundleOf(flows), "realpro");
+  assert(!pb.gaps.some((g) => /次のページへ：検索\d回だけ/.test(g)), "分かれ道の次のページは『検索2回だけ』と出さない: " + pb.gaps.filter((g) => /次のページ/.test(g)).join(" / "));
+  assert(!pb.gaps.some((g) => /一連の流れ「次ページ.*が薄い/.test(g)), "分かれ道の次ページは一連の流れの『薄い』に出さない");
+  const search = pb.scenes.find((s) => s.scene === "search")!;
+  assert(search.confidence === "thin", "分かれ道でない検索（2回）は thin のまま");
+  assert(pb.gaps.some((g) => /検索2回だけ/.test(g)), "分かれ道でない検索は回数で薄いと出る（今まで通り）: " + pb.gaps.join(" / ").slice(0, 300));
+  console.log("  ✓ 分かれ道の場面は回数で薄いと言わない・順に行う手の場面は今まで通り");
 }
 
 console.log(`playbook-step-grasp: ${n} 件 OK`);

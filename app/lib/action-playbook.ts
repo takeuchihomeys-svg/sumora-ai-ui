@@ -20,7 +20,7 @@ import { SCENE_JA } from "./learn-flow-steps";
 import { AUTO_RULES, RULE_SCENE_JA, RULES_CODE_ONLY, verifyKeysOf, type RuleScene } from "./auto-procedure-rules";
 import { ITANDI_AUTO_RULES, rulesReviewedUpToFor, rulesVersionFor } from "./auto-itandi-rules";
 import { itandiAliasesOf } from "./itandi-field-aliases";
-import { flowNode, LOOP_FLOW_NODES, pressLine, pressLinesOf, renderListPressSteps, type FlowPress } from "./loop-flow-map";
+import { flowNode, LOOP_FLOW_NODES, pressLine, pressLinesOf, renderListPressSteps, type FlowNode, type FlowPress } from "./loop-flow-map";
 import { LAG_GRACE_TEXT, RESET_BUTTON_SIZE, RESET_PRESS_WAIT_TEXT, RESET_WAIT_TEXT, SEARCH_REVIEW_TEXT, SORT_AFTER_SEARCH_TEXT } from "./reset-facts";
 import { isAllowedMotionFieldName, sanitizeLearnedForSite } from "./human-motion-sanitize";
 
@@ -164,6 +164,22 @@ export const ITANDI_FLOW_SERIES: ReadonlyArray<PlaybookFlowPhase> = [
 function pressLineOf(nodeId: string, button: string): string {
   const p = (flowNode(nodeId)?.presses || []).find((x) => x.button === button);
   return p ? pressLine(p) : "";
+}
+
+/**
+ * 分かれ道だけに使われる場面（地図の branch の押す物の場面のうち、順に行う手の押す物にも使われない物）。
+ *   例: 次のページ（この頁が全部送付済み→次へ）は「全部送付済みの時だけ」起きるので、回数が少ないのは設計どおり。
+ *   回数で「薄い」と言わない（押す位置が学べているかで見る）。2026-11-27 竹内さん「4階と2回のパターン」＝分かれ道の設計
+ */
+export function branchOnlyScenes(nodes: ReadonlyArray<FlowNode> = LOOP_FLOW_NODES): Set<string> {
+  const branch = new Set<string>();
+  const step = new Set<string>();
+  for (const n of nodes) {
+    for (const p of n.presses || []) {
+      for (const s of p.playbookStep?.scenes ?? []) (n.kind === "branch" ? branch : step).add(s);
+    }
+  }
+  return new Set([...branch].filter((s) => !step.has(s)));
 }
 
 /** 地図の押す物のうち、手順書の手と結んだ物（playbookStep が在る物） */
@@ -1107,8 +1123,10 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
   if (!learned.has("next")) gaps.push(`次のページ送り（場面 next）はまだ学んでいない${next_n ? `（束の next は押す順番の${next_n}件で、次のページ送りの記録ではない）` : ""}`);
   if (siteKind === "itandi" && !itandi_flow.length) gaps.push("ITANDI の押す順番（site_flow.itandi）がまだ無い");
   if (!scenes.length) gaps.push("場面の手順が1つも無い（まだ学んでいない）");
+  const branchScenes = branchOnlyScenes();
   for (const s of scenes) {
-    if (s.confidence === "thin") gaps.push(`${s.label}：検索${s.runs}回だけ（3回未満・人が1回通して確かめる候補）`);
+    // 分かれ道の場面は回数で薄いと言わない（起きるのは条件の時だけ）。押す位置が学べていないかは下で見る
+    if (s.confidence === "thin" && !branchScenes.has(s.scene)) gaps.push(`${s.label}：検索${s.runs}回だけ（3回未満・人が1回通して確かめる候補）`);
     // 順番の数が0は「数えていない」（束の欠け）。0通りとは読まない
     if (s.runs > 0 && s.variants === 0) gaps.push(`${s.label}：順番の数が束に入っていない（0と書かれている・学習側の欠けの疑い）`);
     // 順番の数は値（区名など）の違いも数えている＝「迷い」と言い切れない
@@ -1153,13 +1171,14 @@ export function buildPlaybook(bundle: BundleLike, site?: string | null): Playboo
 
   // 一連の流れ: itandi は itandi 用の段（点検の印が実際に出る物だけ）。リアプロは従来どおり
   const flowSeries = realproHands ? PLAYBOOK_FLOW_SERIES : ITANDI_FLOW_SERIES;
+  const branchFlowScenes = branchOnlyScenes();
   const flow_series = flowSeries.map((p) => ({ ...p, grasp: [...p.grasp] }));
   // 一連の流れに紐づく場面が薄い／無い時は gaps に出す（場面の並びだけ見て「流れOK」と誤解しない）
   for (const ph of flow_series) {
     if (!ph.scene) continue;
     const sc = scenes.find((s) => s.scene === ph.scene);
     if (!sc) gaps.push(`一連の流れ「${ph.label}」に紐づく場面 ${ph.scene} が手順に無い`);
-    else if (sc.confidence === "thin") gaps.push(`一連の流れ「${ph.label}」の場面 ${sc.label} が薄い（検索${sc.runs}回）`);
+    else if (sc.confidence === "thin" && !branchFlowScenes.has(ph.scene)) gaps.push(`一連の流れ「${ph.label}」の場面 ${sc.label} が薄い（検索${sc.runs}回）`);
   }
   // 点検の印が1つも無い段は「把握できない」と明示する（itandi の検索・一覧・次客は拡張の印がまだ無い）
   const noMark = flow_series.filter((p) => !p.grasp.length).map((p) => p.label);
