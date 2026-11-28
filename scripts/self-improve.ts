@@ -708,6 +708,18 @@ async function main() {
   if (!only || doCandidates) {
     try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
   }
+  // 2026-11-28 作業員L（#811 任せられる度）: 一番新しい日の deleg:*:全体（そのまま送れた割合・危ない間違い・AIX の番を返信で済ませた数）と、そのまま送れた割合の高い場面の上位3
+  if (!only || doCandidates) {
+    const { data: dl0 } = await sb.from("quality_daily").select("day, metric, value, n").eq("scope", "all").like("metric", "deleg:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(200);
+    const dl = ((dl0 ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (dl.length) {
+      const g = (m: string) => dl.find((r) => r.metric === m);
+      const asIs = g("deleg:as_is:全体"), danger = g("deleg:danger:全体"), aixr = g("deleg:aix_as_reply:全体");
+      const top = dl.filter((r) => r.metric.startsWith("deleg:as_is:") && !r.metric.endsWith(":全体") && (r.n ?? 0) >= 5 && r.value != null).sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 3).map((r) => `${r.metric.slice("deleg:as_is:".length)} ${r.value}%（${r.n}番）`);
+      lines.push(`- 任せられる度（#811・${dl[0].day}・前の30日）: そのまま送れた ${asIs?.value ?? "—"}%（返信の番 ${asIs?.n ?? "—"}）・危ない間違い ${danger?.value ?? "—"}・AIX の番を返信で済ませた ${aixr?.value ?? "—"}（AIX の番 ${aixr?.n ?? "—"}）${top.length ? `｜高い場面 ${top.join("・")}` : ""}`);
+      if (now - Date.parse(`${dl[0].day}T00:00:00+09:00`) > 2 * 86_400_000) lines.push(`  - ⚠ 任せられる度の数が古い（${dl[0].day}・晩の費用0の仕事が書いていない）`);
+    }
+  }
   // 2026-11-28 作業員L（#803 ③）: 差なしの組の関所の前の24時間（止めた「つもり」の数と前の同じ組の $・conductor-marks/same-nodiff-gate.jsonl）
   if (!only || doCandidates) {
     try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf, existsSync: ex } = await import("node:fs"); const f = `${examCacheRoot()}/conductor-marks/same-nodiff-gate.jsonl`; if (ex(f)) { const marks = rf(f, "utf8").split("\n").filter(Boolean).slice(-500).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); const ln = (await import("./lib/exam-same-nodiff")).sameNoDiffMorningLine(marks, now); if (ln) lines.push(ln); } } catch { /* 無い晩は出さない */ }

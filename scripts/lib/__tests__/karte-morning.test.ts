@@ -14,4 +14,6 @@ assert.ok(nightZeroCostSteps("x.json").some((s) => s.args[0] === "scripts/audit-
   assert.deepEqual(life.args.slice(1), ["--kinds=m/x.json.promise-kinds.json", "--b1=m/x.json.promise-b1.json", "--done=m/x.json.promise-done.json", "--write"]); }
 // 2026-11-28 #803 ①: 試験の効率の物差しは前の晩を --night で渡す（晩の初めに流すので既定だと今夜で空）
 { const st = nightZeroCostSteps("x.json").find((s) => s.args[0] === "scripts/audit-night-cost.ts"); assert.ok(st && st.args.includes("--write") && !st.args.includes("--write-items")); const n = st!.args.find((x) => x.startsWith("--night="))!.slice(8); assert.match(n, /^\d{4}-\d{2}-\d{2}$/); const today = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10); assert.ok(n < today, "前の晩（今日より前の日付）"); }
-console.log("karte-morning ok 7");
+// 2026-11-28 #811: 任せられる度は番の行を同じ晩の置き場に書いてから表にする（リポジトリに置かない）
+{ const st = nightZeroCostSteps("m/x.json"); const i = (f: string) => st.findIndex((s) => s.args[0] === f); const a = st[i("scripts/audit-split-reply-aix.ts")], b = st[i("scripts/audit-delegation-index.ts")]; assert.ok(a && b && i("scripts/audit-split-reply-aix.ts") < i("scripts/audit-delegation-index.ts")); assert.ok(a.args.includes("--out=m/x.json.deleg-turns.jsonl") && b.args.includes("--from=m/x.json.deleg-turns.jsonl") && b.args.includes("--write")); }
+console.log("karte-morning ok 8");

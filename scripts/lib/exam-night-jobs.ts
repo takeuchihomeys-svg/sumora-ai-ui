@@ -47,6 +47,9 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
     // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 前の3晩の 係の試験・手元の試験・ほか（DB の関数 exam_cost_by_night の集計1本・LLM 0）
     { name: "試験の費用の名札ごとの数え（quality_daily exam_cost:*）", args: ["scripts/audit-exam-cost-daily.ts", "--nights=3", "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員L（#811 任せられる度）: 番の行（個人情報あり＝係の置き場の json の隣・リポジトリに置かない）→ 場面ごとの表を quality_daily deleg:* に（LLM 0）
+    { name: "任せられる度の番の行（#811 の元）", args: ["scripts/audit-split-reply-aix.ts", "--days=30", `--out=${jsonPath}.deleg-turns.jsonl`], timeoutMin: 20 },
+    { name: "任せられる度（quality_daily deleg:*）", args: ["scripts/audit-delegation-index.ts", `--from=${jsonPath}.deleg-turns.jsonl`, "--write", "--wait-min=10"], timeoutMin: 15 },
     // 2026-11-28 作業員L（#803 ①・#686）: 試験の効率の物差し（test:efficiency:*）は 11/25 に1回書いたきりで、朝の1枚の「試験の効率」が古い数を出していた。
     //   晩の初め（22時）に流すので、数えるのは前の晩（--night＝JST の日付の前の晩・既定のままだと始まったばかりの今夜で空になる）。台帳への自動の積み（--write-items）は統括役の決めの後
     { name: "試験の効率の物差し（quality_daily test:efficiency:*）", args: ["scripts/audit-night-cost.ts", `--night=${new Date(Date.now() + 9 * 3_600_000 - 34 * 3_600_000).toISOString().slice(0, 10)}`, "--days=7", "--write"], timeoutMin: 10 },
