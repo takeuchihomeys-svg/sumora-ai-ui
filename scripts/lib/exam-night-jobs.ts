@@ -51,5 +51,7 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     // 2026-11-28 作業員A（#857）: 条件の書き込みの取り合いの数（関所の記録が番の外で捨てられていた分を履歴から数える・費用0・LLM なし）
     { name: "条件の取り合いの数（#857・quality_daily の arbiter:*）", args: ["scripts/audit-condition-write-arbiter.ts", "--days=30", "--write"], timeoutMin: 5 },
     { name: "地図の木の毎晩の数え直し（#687・quality_daily の tree:*）", args: ["scripts/nightly-scene-tree.ts", `--tree=${jsonPath.replace(/\.json$/, "")}-tree.json`, "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員A（#755・統括役の決め）: 訴求を場面で分けて数える（同じ照らしの json・材料やブレインには入れず物差しとして毎晩ためる・quality_daily の appeal:scene:*）
+    { name: "訴求を場面で分けて（#755・quality_daily の appeal:scene:*）", args: ["scripts/audit-appeal-by-scene.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 5 },
   ];
 }
