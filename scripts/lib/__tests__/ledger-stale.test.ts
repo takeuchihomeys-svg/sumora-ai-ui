@@ -25,4 +25,9 @@ assert.equal(staleRowOf({ ...it, id: 9999 }, base).verdict, "partly");
 assert.equal(staleRowOf({ id: 9998, title: "新しい土台", next_step: "これから", switch_name: null, owner: "作業員A", stage: "todo" }, base).verdict, "not_built");
 // 環境の名前はスイッチに数えない
 assert.deepEqual(switchesOf({ title: "LLM_TEST_MODE=deepseek-all で", next_step: null, switch_name: null }), []);
-console.log("ledger-stale ok 10");
+// 統括役の決め 11/28: 台帳にスイッチの名前が無くても、#id のコミットの件名が既定 off で後に既定 on が無ければ built_off まで（#737 の形）
+const offCommits: GitCommit[] = [{ hash: "c1c1c1c1a", date: "2026-11-28", subject: "#737 入居時期が先の材料（MOVE_IN_LINE・既定 off）" }];
+assert.equal(staleRowOf({ id: 737, title: "地図の土台の空き: 入居時期が先", next_step: "", switch_name: null, owner: "作業員A", stage: "todo" }, { ...base, commits: offCommits }).verdict, "built_off_candidate");
+// 後に既定 on のコミットがあれば done の候補に戻る
+assert.equal(staleRowOf({ id: 737, title: "地図の土台の空き: 入居時期が先", next_step: "", switch_name: null, owner: "作業員A", stage: "todo" }, { ...base, commits: [...offCommits, { hash: "c2c2c2c2b", date: "2026-11-29", subject: "#737 MOVE_IN_LINE を既定 on" }] }).verdict, "done_candidate");
+console.log("ledger-stale ok 12");

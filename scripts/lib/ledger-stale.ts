@@ -54,8 +54,11 @@ export function staleRowOf(
   const evidence = refCommits.length + swIn.length + fileIn.length + hashIn.length;
   let verdict: StaleVerdict, why: string;
   const offSw = swIn.filter((s) => s.def == null || /^(?:off|shadow|log|warn|\?)$/i.test(s.def));
-  if (refCommits.length && swIn.length && !offSw.length) { verdict = "done_candidate"; why = `件名に #${it.id} のコミット ${refCommits.length}・スイッチは既定 on（${swIn.map((s) => `${s.name}=${s.def}`).join("・")}）`; }
-  else if (refCommits.length && offSw.length) { verdict = "built_off_candidate"; why = `件名に #${it.id} のコミット ${refCommits.length}・既定 off か既定の読めないスイッチ ${offSw.map((s) => `${s.name}=${s.def ?? "表に無い"}`).join("・")}`; }
+  // 2026-11-28 統括役の決め: 既定 off のスイッチが件名・next_step に出る＝done にしない（built_off まで）。
+  //   台帳にスイッチの名前が無くても、#id のコミットの件名が「既定 off」で、後のコミットに「既定 on」が無ければ built_off まで（#737・#739・#740 の形）
+  const commitOff = refCommits.some((c) => /既定\s*off/.test(c.subject)) && !refCommits.some((c) => /既定\s*on|を既定 on/.test(c.subject));
+  if (refCommits.length && (offSw.length || commitOff)) { verdict = "built_off_candidate"; why = `件名に #${it.id} のコミット ${refCommits.length}・${offSw.length ? `既定 off か既定の読めないスイッチ ${offSw.map((s) => `${s.name}=${s.def ?? "表に無い"}`).join("・")}` : "コミットの件名が既定 off（後に既定 on のコミットが無い）"}＝done にしない`; }
+  else if (refCommits.length && swIn.length && !offSw.length) { verdict = "done_candidate"; why = `件名に #${it.id} のコミット ${refCommits.length}・スイッチは既定 on（${swIn.map((s) => `${s.name}=${s.def}`).join("・")}）`; }
   else if (refCommits.length && !switches.length) { verdict = "done_candidate"; why = `件名に #${it.id} のコミット ${refCommits.length}（スイッチの名前は台帳に無い＝記録・台本の件なら済みの候補）`; }
   else if (evidence) { verdict = "partly"; why = [refCommits.length ? `#${it.id} のコミット ${refCommits.length}` : "", swIn.length ? `コードにあるスイッチ ${swIn.map((s) => s.name).join("・")}` : "", fileIn.length ? `あるファイル ${fileIn.map((f) => f.path).join("・")}` : "", hashIn.length ? `あるコミット ${hashIn.map((h) => h.hash).join("・")}` : ""].filter(Boolean).join("・"); }
   else { verdict = "not_built"; why = "台帳の名前がコードにもコミットにも見当たらない"; }
