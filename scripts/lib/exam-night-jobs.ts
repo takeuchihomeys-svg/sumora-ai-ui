@@ -47,6 +47,9 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
     // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 前の3晩の 係の試験・手元の試験・ほか（DB の関数 exam_cost_by_night の集計1本・LLM 0）
     { name: "試験の費用の名札ごとの数え（quality_daily exam_cost:*）", args: ["scripts/audit-exam-cost-daily.ts", "--nights=3", "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員L（#803 ①・#686）: 試験の効率の物差し（test:efficiency:*）は 11/25 に1回書いたきりで、朝の1枚の「試験の効率」が古い数を出していた。
+    //   晩の初め（22時）に流すので、数えるのは前の晩（--night＝JST の日付の前の晩・既定のままだと始まったばかりの今夜で空になる）。台帳への自動の積み（--write-items）は統括役の決めの後
+    { name: "試験の効率の物差し（quality_daily test:efficiency:*）", args: ["scripts/audit-night-cost.ts", `--night=${new Date(Date.now() + 9 * 3_600_000 - 34 * 3_600_000).toISOString().slice(0, 10)}`, "--days=7", "--write"], timeoutMin: 10 },
     // 2026-11-28 作業員L（#664 約束の一生）: 段ごとの数（promise_life:*）は 11/25 に1回書いたきりで、朝の1枚が古い数を出し続けていた＝毎晩数え直す。
     //   元の3本（種類の網は本番と同じ＝PROMISE_KIND_WIDE2 だけ on・B1・閉じた時刻）を係の置き場の json に書き、最後の1本が quality_daily に書く（LLM 0）
     { name: "約束の種類の数え（約束の一生の元）", args: ["scripts/audit-promise-kinds.ts", "--days=14", "--wide2", `--out=${jsonPath}.promise-kinds.json`], timeoutMin: 15 },
