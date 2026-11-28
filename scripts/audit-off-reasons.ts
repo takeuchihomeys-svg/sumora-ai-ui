@@ -8,7 +8,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LINKAGE_MAP } from "../app/lib/linkage-map";
 import { CONDUCTOR_DUTY } from "./lib/conductor-duty";
-import { classifyOff, groupByPart, composePlanRows, jointOf, blockRanking, defaultsFromCode, switchNamesOf, chainPlaceOf, offpartRowOf, switchForUnnamed, NO_SWITCH_MARK, autoReadersOf, titlePlaceOf, majorityPlace, OFF_REASON_JA, JOINT_JA, JOINT_DUTY, type OffItem, type Joint } from "./lib/off-reason";
+import { classifyOff, groupByPart, composePlanRows, jointOf, blockRanking, defaultsFromCode, switchNamesOf, chainPlaceOf, offpartRowOf, switchForUnnamed, extraSwitchesOf, NO_SWITCH_MARK, autoReadersOf, titlePlaceOf, majorityPlace, OFF_REASON_JA, JOINT_JA, JOINT_DUTY, type OffItem, type Joint } from "./lib/off-reason";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
 const WRITE = process.argv.includes("--write");
@@ -40,11 +40,18 @@ function codeText(dir: string): string {
   const defaults = defaultsFromCode(code, names);
   const mapSrc = readFileSync("app/lib/linkage-map.ts", "utf8").split(/\r?\n/);
   const mapLine = new Map(LINKAGE_MAP.map((r) => [r.id, mapSrc.findIndex((l) => l.includes(`id: "${r.id}"`)) + 1]));
-  const ctx0 = { map: LINKAGE_MAP, readInCode, defaults, mapLine, composePlanMade: { made: 9, n: 128 } };
+  // #675 の続き（2026-11-28 作業員A・統括役の決め）: next_step に書いた残りのスイッチもその行の物（台帳の全部の段の switch_name は除く＝他の行の物）
+  const { data: named, error: e2 } = await sb.from("work_items").select("switch_name").not("switch_name", "is", null);
+  if (e2) throw e2;
+  const ownedByRows = new Set((named ?? []).map((r: { switch_name: string }) => r.switch_name.trim()));
+  const extra = new Map<number, string[]>();
+  for (const it of items) { const x = extraSwitchesOf(it, readInCode, ownedByRows); if (x.length) extra.set(it.id, x); }
+  const ctx0 = { map: LINKAGE_MAP, readInCode, defaults, mapLine, composePlanMade: { made: 9, n: 128 }, extra };
 
   // ── #675（2026-11-24 作業員A）: スイッチ名の無い行に名前を探し、地図の外の行を読む所から地図に載せる（--offparts で使う・動きは変えない）──
   const filled = new Map<number, string>();
-  for (const it of items) { const s = switchForUnnamed(it, readInCode); if (s) filled.set(it.id, s); }
+  // 11/28: 他の行が名前を持つスイッチは入れない（#857＝#311 の CONDITION_WRITE_ARBITER のような同じ部品の重なり・印「スイッチ無し（#311 に名前あり）」）
+  for (const it of items) { const s = switchForUnnamed(it, readInCode); if (s && !ownedByRows.has(s)) filled.set(it.id, s); }
   const eff = items.map((it) => (filled.has(it.id) ? { ...it, switch_name: filled.get(it.id)! } : it));
   const mapSw = new Set(LINKAGE_MAP.flatMap((r) => [...r.switches, ...r.readerSwitches]));
   const readSite = (sw: string): { file: string; line: number } | null => {
@@ -65,7 +72,7 @@ function codeText(dir: string): string {
     return null;
   };
   const siteOf = (sw: string): { file: string; line: number } | null => { const at = readSite(sw); if (!at) return null; return chainPlaceOf(at.file) ? at : callerSite(at) ?? at; };
-  const offparts = [...new Set(eff.map((it) => it.switch_name).filter((s): s is string => !!s && !mapSw.has(s)))]
+  const offparts = [...new Set(eff.flatMap((it) => [it.switch_name, ...(extra.get(it.id) ?? [])]).filter((s): s is string => !!s && !mapSw.has(s)))]
     .map((sw) => { const at = siteOf(sw); return at ? offpartRowOf(sw, at.file, at.line, chainPlaceOf(at.file)) : null; })
     .filter((r): r is NonNullable<typeof r> => !!r);
   // #675 の続き（11/24 夕）: ブレインの材料の行（stage read）に読む側を足す＝統括が読むか（欄・入口を呼ぶ所・ブレインの入力）
@@ -81,6 +88,7 @@ function codeText(dir: string): string {
     const before = items.map((it) => classifyOff(it, ctx0));
     const unnamed = items.filter((it) => !it.switch_name);
     console.log(`■ #675 地図の外の行を載せる: スイッチ名の無い ${unnamed.length}行のうち名前が見つかった ${filled.size}行（${[...filled.entries()].map(([id, s]) => `#${id}=${s}`).join("・")}）・見つからない ${unnamed.length - filled.size}行（「${NO_SWITCH_MARK}」の印）`);
+    console.log(`  next_step の残りのスイッチをその行の物とした: ${extra.size}行（${[...extra.entries()].map(([id, s]) => `#${id}+${s.join("+")}`).join("・")}）`);
     console.log(`  地図に足した行（読む所から・id は auto.）: ${offparts.length}`);
     console.log(`  分け直す前: 未確認 ${before.filter((v) => v.reach === "未確認").length}・(a) ${before.filter((v) => v.reason === "a").length}・(b) ${before.filter((v) => v.reason === "b").length}`);
     if (arg("gen")) { writeFileSync(arg("gen"), JSON.stringify(offparts, null, 1)); console.log(`  地図の外の行の写し: ${arg("gen")}`); }
@@ -89,7 +97,8 @@ function codeText(dir: string): string {
       for (const [id, s] of filled) { const { error: e } = await sb.from("work_items").update({ switch_name: s }).eq("id", id).is("switch_name", null); if (e?.code === "23505") { dupOf.push(`#${id}=${s}`); continue; } if (e) throw e; }
       if (dupOf.length) console.log(`  同じスイッチの行が台帳に別にある（名前は入れない・同じ部品の重なり）: ${dupOf.join("・")}`);
       const mark = unnamed.filter((it) => !filled.has(it.id));
-      for (const it of mark) { if (String(it.blocker ?? "").includes(NO_SWITCH_MARK)) continue; const { error: e } = await sb.from("work_items").update({ blocker: it.blocker ? `${NO_SWITCH_MARK}／${it.blocker}` : NO_SWITCH_MARK }).eq("id", it.id); if (e) throw e; }
+      // 11/28: 統括役の決めの印（「スイッチ無し（仕組み）」「スイッチ無し（#311 に名前あり）」等）も印として数え、重ねて付けない
+      for (const it of mark) { if (String(it.blocker ?? "").includes("スイッチ無し（")) continue; const { error: e } = await sb.from("work_items").update({ blocker: it.blocker ? `${NO_SWITCH_MARK}／${it.blocker}` : NO_SWITCH_MARK }).eq("id", it.id); if (e) throw e; }
       console.log(`  書いた: switch_name ${filled.size}行・印 ${mark.length}行`);
     }
   }

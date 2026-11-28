@@ -1,6 +1,6 @@
 // 台帳の built_off の行の off の理由と継ぎ目（scripts/lib/off-reason.ts）
 // 実行: npx tsx scripts/lib/__tests__/off-reason.test.ts（全 PASS で exit 0）
-import { classifyOff, jointOf, blockRanking, defaultsFromCode, chainPlaceOf, groupByPart, autoReadersOf, titlePlaceOf, majorityPlace, type OffItem } from "../off-reason";
+import { classifyOff, jointOf, blockRanking, defaultsFromCode, chainPlaceOf, groupByPart, autoReadersOf, titlePlaceOf, majorityPlace, extraSwitchesOf, type OffItem } from "../off-reason";
 import type { LinkageRow } from "../../../app/lib/linkage-map";
 
 let pass = 0, fail = 0;
@@ -47,5 +47,16 @@ ok("題の言葉で場所（物差し＝⑧）", titlePlaceOf("土台「約束�
 ok("題で決まらない時は null", titlePlaceOf("拡張の束の作り直し").place === null);
 ok("読み込む所の多数（同数は前の方）", majorityPlace([5, 1, 5, null]) === 5 && majorityPlace([5, 1]) === 1);
 
+// #675 の続き（11/28 統括役の決め）: switch_name に1つ・残りは next_step（L の #652 等の整え）→ next_step の残りもその行の物
+{
+  const rc = new Set(["X_MAT", "W_USE", "Y_MAT", "BRIEF"]);
+  const it = I({ id: 9, switch_name: "W_USE", title: "題の Y_MAT は見ない", next_step: "残りのスイッチ: X_MAT・BRIEF・NOT_IN_CODE" });
+  const ex = extraSwitchesOf(it, rc, new Set(["W_USE", "BRIEF"]));
+  ok("next_step の残り（コードにあり・他の行の名前でない）だけ足す", ex.length === 1 && ex[0] === "X_MAT", ex);
+  ok("switch_name の無い行は足さない（従来どおり）", extraSwitchesOf(I({ next_step: "X_MAT" }), rc, new Set()).length === 0);
+  const v = classifyOff(it, { ...ctx, extra: new Map([[9, ex]]) });
+  ok("残りのスイッチも部品として読む（X_MAT の行が parts に入る）", v.switches.includes("X_MAT") && v.switches[0] === "W_USE", v);
+  ok("extra が無ければ switch_name だけ（今と同じ）", classifyOff(it, ctx).switches.length === 1);
+}
 console.log(`off-reason: PASS ${pass} / FAIL ${fail}`);
 if (fail) process.exit(1);

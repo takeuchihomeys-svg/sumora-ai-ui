@@ -48,16 +48,32 @@ export function switchNamesOf(it: Pick<OffItem, "switch_name" | "title" | "next_
   return [...out];
 }
 
+/** #675 の続き（2026-11-28 作業員A・統括役の決め／L の整え）: 2つ以上のスイッチを持つ行は switch_name に1つだけ入れ、残りは next_step に書く。
+ *  その next_step の大文字の名前のうち、コードで読まれていて他の行の switch_name でない物も、その行の物として読む（地図の外に見えないように）。
+ *  題は見ない（#674 の題のように他の行のスイッチを並べる事があるため）。switch_name の無い行は従来どおり switchNamesOf */
+export function extraSwitchesOf(it: Pick<OffItem, "switch_name" | "next_step">, readInCode: ReadonlySet<string>, ownedByRows: ReadonlySet<string>): string[] {
+  if (!it.switch_name) return [];
+  const own = it.switch_name.trim();
+  const out = new Set<string>();
+  for (const m of String(it.next_step ?? "").matchAll(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g)) {
+    const s = m[0];
+    if (s !== own && readInCode.has(s) && !ownedByRows.has(s)) out.add(s);
+  }
+  return [...out];
+}
+
 export type OffCtx = {
   map: readonly LinkageRow[];
   /** コードのどこかで env として読まれているスイッチ（静的な読み）。undefined＝確かめない */
   readInCode?: ReadonlySet<string>;
+  /** #675 の続き: 行ごとの next_step の残りのスイッチ（extraSwitchesOf）。undefined＝switch_name だけ */
+  extra?: ReadonlyMap<number, readonly string[]>;
 };
 
 export function classifyOff(it: OffItem, ctx: OffCtx): OffVerdict {
   const text = [it.title, it.next_step, it.blocker, it.exam_result].filter(Boolean).join(" ");
   const sws = switchNamesOf(it);
-  const own = it.switch_name ? [it.switch_name] : sws;
+  const own = it.switch_name ? [it.switch_name, ...(ctx.extra?.get(it.id) ?? [])] : sws;
   const v = (reason: OffReason, why: string, parts: string[] = []): OffVerdict => ({ id: it.id, reason, why, switches: own, parts, reach: REACH_OF[reason], title: it.title });
   if (it.owner_question_id != null || it.owner_question_uuid != null) return v("e", "竹内さんの確認事項につながっている");
   const em = text.match(E_RE);

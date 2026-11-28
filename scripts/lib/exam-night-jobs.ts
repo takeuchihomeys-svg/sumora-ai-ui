@@ -53,5 +53,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "地図の木の毎晩の数え直し（#687・quality_daily の tree:*）", args: ["scripts/nightly-scene-tree.ts", `--tree=${jsonPath.replace(/\.json$/, "")}-tree.json`, "--write"], timeoutMin: 5 },
     // 2026-11-28 作業員A（#755・統括役の決め）: 訴求を場面で分けて数える（同じ照らしの json・材料やブレインには入れず物差しとして毎晩ためる・quality_daily の appeal:scene:*）
     { name: "訴求を場面で分けて（#755・quality_daily の appeal:scene:*）", args: ["scripts/audit-appeal-by-scene.ts", `--from=${jsonPath}`, "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員A（#675・統括役の決め）: 地図の外の off の行は linkage-map.ts に手で写さず、毎晩 --offparts で作り直す（ファイルだけ・DB は読むだけ）
+    //   -offparts.json＝地図の外の行（読む所から・auto.<スイッチ>）・-offreasons.json＝built_off の全行の off の理由と鎖の場所
+    { name: "地図の外の off の行（#675・offparts の json）", args: ["scripts/audit-off-reasons.ts", "--offparts", `--gen=${jsonPath.replace(/\.json$/, "")}-offparts.json`, `--json=${jsonPath.replace(/\.json$/, "")}-offreasons.json`], timeoutMin: 5 },
   ];
 }
