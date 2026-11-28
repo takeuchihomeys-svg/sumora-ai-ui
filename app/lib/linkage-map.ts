@@ -77,6 +77,9 @@ export type LinkageRow = {
 
 const M = (path: string): FillSpec => ({ src: "meta", path });
 const T = (table: string, days: number, col?: string, where?: Record<string, string>): FillSpec => ({ src: "table", table, days, col, where });
+/** 2026-11-28 作業員L: 表の fill を数える時の日付の列（created_at の無い表だけ書く・無ければ created_at）。customer_fact_ledger・image_details は created_at が無く読めていなかった */
+export const FILL_TIME_COL: Readonly<Record<string, string>> = { cron_run_logs: "started_at", sent_properties: "sent_at", customer_fact_ledger: "built_at", image_details: "read_at" };
+export const fillTimeColOf = (table: string): string => FILL_TIME_COL[table] ?? "created_at";
 /** 2026-11-21 作業員L（統括役の決め・K2 の WATCH_REOPEN_ON_NEW_CUSTOMER）: 見張りの行で読み直した印（verdict_detail.reopened）のある行は前の日・先週との比べから外す */
 const REOPEN_OUT: Record<string, string> = { "verdict_detail->reopened": "isnull:" };
 

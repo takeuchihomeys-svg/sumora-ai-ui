@@ -7,7 +7,7 @@
 //   (d) RAG の空・失敗（作業員H の RAG の見張り＝まだつないでいない）
 //   を数え、状態（つながっている／切れている／親が off／空が多い／測れない）と1行の要約を出す。重い読みはしない（meta は直近 60会話・表は件数だけ）。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { LINKAGE_MAP, rowStatus, switchStateOf, metaFills, summaryLine, mapSwitchNames, type RowResult, type SwitchState, type WatchReport } from "./linkage-map";
+import { LINKAGE_MAP, fillTimeColOf, rowStatus, switchStateOf, metaFills, summaryLine, mapSwitchNames, type RowResult, type SwitchState, type WatchReport } from "./linkage-map";
 import { LINKAGE_SWITCH_DEFAULTS } from "./linkage-switch-defaults";
 import { SWITCH_PREFIXES } from "./switch-fingerprint";
 import { NO_LINE_TEST_CONVERSATION_IDS, STAFF_INTERNAL_CONVERSATION_IDS, YUMA_CONVERSATION_ID } from "./test-conversations";
@@ -50,7 +50,9 @@ export async function runLinkageWatch(sb: SupabaseClient, o: { metaLimit?: numbe
     const f = r.fill;
     const since = new Date(nowMs - f.days * 86_400_000).toISOString();
     // 2026-11-22 作業員M: sent_properties には created_at が無い（sent_at）＝read.sent_full・bridge.* の数えが列の誤りで落ちていた
-    const timeCol = f.table === "cron_run_logs" ? "started_at" : f.table === "sent_properties" ? "sent_at" : "created_at";
+    // 2026-11-28 作業員L（朝の1枚 11/26 の「記録に残らない」read.facts・read.fact_ledger3・sent.image_role）: customer_fact_ledger（built_at）・image_details（read_at）も
+    //   created_at が無く読めていなかった＝数え方の穴。列の決めは linkage-map の fillTimeColOf の1か所に
+    const timeCol = fillTimeColOf(f.table);
     // 2026-11-21 作業員L: where の値 "isnull:" は「その列（json の道も可）が空」（見張りの読み直しの印 verdict_detail->reopened のある行を外す・統括役の決め）
     const base = () => { let q = sb.from(f.table).select("*", { count: "exact", head: true }).gte(timeCol, since); for (const [k, v] of Object.entries(f.where ?? {})) q = v.startsWith("like:") ? q.like(k, v.slice(5)) : v === "isnull:" ? q.is(k, null) : q.eq(k, v); return q; };
     const all = await base();
