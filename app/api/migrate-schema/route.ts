@@ -6178,6 +6178,46 @@ REVOKE ALL ON SEQUENCE exam_leaf_results_id_seq FROM anon, authenticated;
 -- conductor_lessons.leaf_keys … 試験の学び（exam-lessons・conductor_lessons）に地図の葉の印（同じ葉の学びを地図から引く・形だけ・書くのは exam-leaf.ts --lessons）
 ALTER TABLE conductor_lessons ADD COLUMN IF NOT EXISTS leaf_keys TEXT[] NOT NULL DEFAULT '{}';
 
+-- 2026-11-28 作業員L（統括役の決め: 試験の費用は llm_usage_logs の名札で数えるのを正にする）: 晩ごと（JST の日付を12時で切る）の試験の費用を 係の試験／手元の試験／ほか に分けて返す（読むだけ）。
+--   単価は app/lib/llm-price.ts の ALT_PRICES と同じ（DeepSeek は混雑時間＝平日 UTC 01-04・06-10 に2倍）。Claude と test-blocked は数えない（試験は DeepSeek・OpenAI）。
+--   係の試験＝route が script:brain-exam-main-*（基準）か、名札が exam_runs.label にある物（係が流した on の回）・手元の試験＝そのほかの script:brain-exam*（名札ごと）・ほか＝残り（名札ごと）
+CREATE OR REPLACE FUNCTION exam_cost_by_night(p_from date, p_to date)
+RETURNS TABLE(night date, cat text, route text, n bigint, usd numeric)
+LANGUAGE sql STABLE AS $$
+  WITH u AS (
+    SELECT (l.created_at + interval '9 hours' - interval '12 hours')::date AS night,
+      COALESCE(l.route, '-') AS route,
+      ((COALESCE(l.input_uncached, 0) * pr.p_in + COALESCE(l.cache_read, 0) * pr.p_read + COALESCE(l.output_tokens, 0) * pr.p_out) / 1e6)
+        * CASE WHEN pr.peak AND extract(isodow FROM l.created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 5
+                AND (extract(hour FROM l.created_at AT TIME ZONE 'UTC') BETWEEN 1 AND 3 OR extract(hour FROM l.created_at AT TIME ZONE 'UTC') BETWEEN 6 AND 9)
+               THEN 2 ELSE 1 END AS usd
+    FROM llm_usage_logs l
+    CROSS JOIN LATERAL (SELECT
+      CASE WHEN l.model ~ 'deepseek-v4-pro|deepseek-pro' THEN 0.66 WHEN l.model ~ 'deepseek' THEN 0.15 WHEN l.model ~ '^gpt-6[.]2-astra' THEN 8 WHEN l.model ~ '^gpt-6[.]2-sol' THEN 2
+           WHEN l.model ~ '^gpt-6[.]1-terra' THEN 1 WHEN l.model ~ '^gpt-6-luna' THEN 0.1 WHEN l.model = 'text-embedding-3-small' THEN 0.02 WHEN l.model ~ '^jev:|jev-' THEN 0.042 ELSE 0 END AS p_in,
+      CASE WHEN l.model ~ 'deepseek-v4-pro|deepseek-pro' THEN 0.022 WHEN l.model ~ 'deepseek' THEN 0.003 WHEN l.model ~ '^gpt-6[.]2-astra' THEN 0.4 WHEN l.model ~ '^gpt-6[.]2-sol' THEN 0.1
+           WHEN l.model ~ '^gpt-6[.]1-terra' THEN 0.05 WHEN l.model ~ '^gpt-6-luna' THEN 0.01 WHEN l.model = 'text-embedding-3-small' THEN 0.02 WHEN l.model ~ '^jev:|jev-' THEN 0.042 ELSE 0 END AS p_read,
+      CASE WHEN l.model ~ 'deepseek-v4-pro|deepseek-pro' THEN 1.98 WHEN l.model ~ 'deepseek' THEN 0.6 WHEN l.model ~ '^gpt-6[.]2-astra' THEN 40 WHEN l.model ~ '^gpt-6[.]2-sol' THEN 10
+           WHEN l.model ~ '^gpt-6[.]1-terra' THEN 5 WHEN l.model ~ '^gpt-6-luna' THEN 0.5 ELSE 0 END AS p_out,
+      (l.model ~ 'deepseek') AS peak) pr
+    WHERE l.env LIKE 'local%'
+      AND l.created_at >= (p_from::timestamp + interval '12 hours' - interval '9 hours')
+      AND l.created_at < ((p_to + 1)::timestamp + interval '12 hours' - interval '9 hours')
+  ), er AS (
+    SELECT DISTINCT e.label FROM exam_runs e WHERE e.created_at >= (p_from::timestamp - interval '14 days')
+  ), c AS (
+    SELECT u.night,
+      CASE WHEN u.route ~ '^script:brain-exam-main-' OR er.label IS NOT NULL THEN 'main' WHEN u.route ~ '^script:brain-exam' THEN 'own' ELSE 'other' END AS cat,
+      u.route, u.usd
+    FROM u LEFT JOIN er ON er.label = substring(u.route FROM '^script:brain-exam-(.*)$')
+  )
+  SELECT c.night, c.cat, CASE WHEN c.cat = 'main' THEN NULL ELSE c.route END AS route, count(*)::bigint AS n, round(sum(c.usd)::numeric, 4) AS usd
+  FROM c WHERE c.usd > 0
+  GROUP BY 1, 2, 3
+$$;
+REVOKE ALL ON FUNCTION exam_cost_by_night(date, date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION exam_cost_by_night(date, date) TO service_role;
+
 -- スキーマキャッシュ再読込（新カラム追加後に必須・末尾で再実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

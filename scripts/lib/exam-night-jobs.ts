@@ -44,6 +44,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "スイッチの一生（switch-life.json）", args: ["scripts/switch-life.ts", "--write"], timeoutMin: 30 },
     // 2026-11-28 作業員L（#806 お客様のカルテ）: 前の7日の会話にカルテの計算を当てて、出る割合・欄ごとの埋まり・審査の事情で落とした欄を数える（quality_daily karte:*・本番の会話を軽く読む・LLM 0）
     { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
+    // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 前の3晩の 係の試験・手元の試験・ほか（DB の関数 exam_cost_by_night の集計1本・LLM 0）
+    { name: "試験の費用の名札ごとの数え（quality_daily exam_cost:*）", args: ["scripts/audit-exam-cost-daily.ts", "--nights=3", "--write"], timeoutMin: 5 },
     // 2026-11-28 作業員L（#664 約束の一生）: 段ごとの数（promise_life:*）は 11/25 に1回書いたきりで、朝の1枚が古い数を出し続けていた＝毎晩数え直す。
     //   元の3本（種類の網は本番と同じ＝PROMISE_KIND_WIDE2 だけ on・B1・閉じた時刻）を係の置き場の json に書き、最後の1本が quality_daily に書く（LLM 0）
     { name: "約束の種類の数え（約束の一生の元）", args: ["scripts/audit-promise-kinds.ts", "--days=14", "--wide2", `--out=${jsonPath}.promise-kinds.json`], timeoutMin: 15 },

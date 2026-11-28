@@ -706,6 +706,12 @@ async function main() {
   if (!only || doCandidates) {
     try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
   }
+  // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 一番新しい晩の exam_cost:* と夜の上限 $10・手元の試験が $1 を超えたら ⚠ 係の外の試験
+  if (!only || doCandidates) {
+    const { data: ec0 } = await sb.from("quality_daily").select("day, metric, value, detail").eq("scope", "all").like("metric", "exam_cost:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(8);
+    const ec = ((ec0 ?? []) as Array<{ day: string; metric: string; value: number | null; detail?: unknown }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (ec.length) lines.push(...(await import("./lib/exam-cost-daily")).examCostMorningLines(ec));
+  }
   // 2026-11-28 作業員L（台帳 #806 お客様のカルテ）: 晩の費用0の仕事（scripts/audit-customer-karte.ts --write）が書いた quality_daily karte:*（一番新しい日）の1行
   if (!only || doCandidates) {
     const { data: kq0 } = await sb.from("quality_daily").select("day, metric, value, n").eq("scope", "all").like("metric", "karte:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
