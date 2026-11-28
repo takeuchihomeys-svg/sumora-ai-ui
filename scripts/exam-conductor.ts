@@ -515,6 +515,37 @@ async function addJob(): Promise<void> {
         }
       } catch (e) { if (String(e).includes("積まない")) throw e; /* 点検の失敗で積むのは止めない */ }
     }
+    // 2026-11-28 作業員L（台帳 #803 ③・統括役の決め）: 前の 36時間に同じ組（on のスイッチの組×問題の組）が差なしで、その後に答えに効くコミットも材料の元の更新も無ければ
+    //   止める（つもり）。EXAM_SAME_NO_DIFF_GATE=shadow（既定・記録だけ＝止めない）／on（止める・--force で越える）／off。記録は conductor-marks/same-nodiff-gate.jsonl（朝の1枚が読む）
+    try {
+      const sg = await import("./lib/exam-same-nodiff");
+      const sameMode = sg.sameNoDiffMode(process.env);
+      if (sameMode !== "off" && job.runner === "brain-exam" && sg.sameKeyOf(job)) {
+        const nowMs = Date.now();
+        const cut = new Date(nowMs - sg.SAME_WINDOW_H * 3_600_000).toISOString().replace(/:/g, "-").slice(0, 19);
+        const prevRows: Array<{ job: import("./lib/exam-same-nodiff").GateJob; result: import("./lib/exam-same-nodiff").GateResult | null }> = [];
+        for (const f of readdirSync(DONE)) {
+          if (!f.endsWith(".json") || f.slice(0, 19) < cut) continue;
+          try { const pj = JSON.parse(readFileSync(join(DONE, f), "utf8")) as import("./lib/exam-same-nodiff").GateJob; const rf = join(RES, `${pj.label}.json`); prevRows.push({ job: pj, result: existsSync(rf) ? JSON.parse(readFileSync(rf, "utf8")) : null }); } catch { /* 読めない依頼は飛ばす */ }
+        }
+        const prev = sg.prevSameOf(job, prevRows, nowMs);
+        let codeCommits: number | null = null, materialChanged: string[] | null = null;
+        if (prev?.job.createdAt && prev.result) {
+          try { codeCommits = execFileSync("git", ["-C", cwd, "log", `--since=${prev.job.createdAt}`, "--format=%h", "--", "app", "scripts/brain-exam"], { encoding: "utf8" }).split("\n").filter(Boolean).length; } catch { codeCommits = null; }
+          try {
+            const SRC: Array<[string, string, string]> = [["設計知見", "system_design_thinking", "updated_at"], ["手本", "ai_reply_examples", "created_at"], ["ナレッジ", "ai_reply_knowledge", "created_at"], ["竹内さんの手本の倉庫", "takeuchi_compose_examples", "built_at"], ["勝ちの型", "winning_patterns", "updated_at"], ["統括の学び", "conductor_lessons", "updated_at"]];
+            const changed: string[] = [];
+            for (const [ja, t, c] of SRC) { const { count, error } = await db().from(t).select("*", { count: "exact", head: true }).gt(c, prev.job.createdAt); if (error) throw new Error(`${t}: ${error.message}`); if ((count ?? 0) > 0) changed.push(`${ja} ${count}`); }
+            materialChanged = changed;
+          } catch { materialChanged = null; }
+        }
+        const v = sg.sameNoDiffVerdict(prev, codeCommits, materialChanged);
+        mkdirSync(MARKS, { recursive: true });
+        appendFileSync(join(MARKS, "same-nodiff-gate.jsonl"), JSON.stringify({ at: new Date().toISOString(), label, prevLabel: v.prevLabel, wouldSkip: v.wouldSkip, mode: sameMode, planUsd: (() => { const u = Number(String((prev?.result as { usd?: unknown } | null)?.usd ?? "").replace(/[^0-9.]/g, "")); return Number.isFinite(u) && u > 0 ? u : null; })() /* 前の同じ組の実際の $＝止めた時の見込み */, why: v.why }) + "\n");
+        if (v.wouldSkip && sameMode === "on" && !flag("force")) { log(`  （#803 ③）積まない: ${label}（${v.why}）`); throw new Error(`積まない（#803 ③）: ${v.why}（--force で越える・EXAM_SAME_NO_DIFF_GATE=off で止める）`); }
+        log(`  （#803 ③）差なしの組の関所: ${v.why}${v.wouldSkip ? "・止めたつもり（shadow）" : ""}（EXAM_SAME_NO_DIFF_GATE=${sameMode}）`);
+      }
+    } catch (e) { if (String(e).includes("積まない（#803")) throw e; /* 関所の失敗で積むのは止めない */ }
     // 2026-11-24 作業員L（台帳 #670 の子・竹内さん「GPT の性質に合わせるのを徹底する仕組み」）: ブレイン・書き手を OpenAI で流す依頼は、
     //   依頼の作業ツリーに使い方の表（app/lib/provider-profile.ts）があり、版が決まる時だけ積む（--force で越える）。決まった版はログと依頼に残す
     {

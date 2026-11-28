@@ -708,6 +708,10 @@ async function main() {
   if (!only || doCandidates) {
     try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
   }
+  // 2026-11-28 作業員L（#803 ③）: 差なしの組の関所の前の24時間（止めた「つもり」の数と前の同じ組の $・conductor-marks/same-nodiff-gate.jsonl）
+  if (!only || doCandidates) {
+    try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf, existsSync: ex } = await import("node:fs"); const f = `${examCacheRoot()}/conductor-marks/same-nodiff-gate.jsonl`; if (ex(f)) { const marks = rf(f, "utf8").split("\n").filter(Boolean).slice(-500).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); const ln = (await import("./lib/exam-same-nodiff")).sameNoDiffMorningLine(marks, now); if (ln) lines.push(ln); } } catch { /* 無い晩は出さない */ }
+  }
   // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 一番新しい晩の exam_cost:* と夜の上限 $10・手元の試験が $1 を超えたら ⚠ 係の外の試験
   if (!only || doCandidates) {
     const { data: ec0 } = await sb.from("quality_daily").select("day, metric, value, detail").eq("scope", "all").like("metric", "exam_cost:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(8);
