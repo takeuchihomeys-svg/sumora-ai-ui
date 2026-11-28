@@ -26,8 +26,10 @@ export function weakLinksOf(
   rows: ReadonlyArray<{ id: string; status: string; why: string; fill: number | null }>,
   fields: ReadonlyArray<{ key: string; label?: string; val: number; writerOk: number; inDraft: number }>,
   ownerOf: (id: string) => string,
-): { score: number | null; measured: number; connected: number; weak: LinkWeak[]; noDenominator: Array<{ id: string; owner: string; why: string }> } {
-  const measured = rows.filter((r) => r.status !== "unknown");
+): { score: number | null; measured: number; connected: number; weak: LinkWeak[]; noDenominator: Array<{ id: string; owner: string; why: string }>; onWait: Array<{ id: string; owner: string; why: string }> } {
+  // 2026-11-28 作業員L（台帳 #858・統括役の決め）: 作る側のスイッチが off（parent_off）の行は届く道の切れではなく on 待ち＝「on 待ち」の欄に分け、つながり % の分母から外す
+  const measured = rows.filter((r) => r.status !== "unknown" && r.status !== "parent_off");
+  const onWait = rows.filter((r) => r.status === "parent_off").map((r) => ({ id: r.id, owner: ownerOf(r.id), why: r.why }));
   const connected = measured.filter((r) => r.status === "connected").length;
   const weak: LinkWeak[] = [];
   for (const r of measured) if (r.status !== "connected") weak.push({ kind: "not_delivered", id: r.id, label: r.id, rate: r.fill == null ? null : Math.round(r.fill * 1000) / 10, owner: ownerOf(r.id), why: r.why });
@@ -40,7 +42,7 @@ export function weakLinksOf(
   weak.sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
   // 穴の型②「記録に残らない（分母が無い）」（統括役 11/21）: 地図の行のうち、値のある番の数（分母）が取れない行＝status unknown（記録の欄が無い・見張りにつないでいない・読めない）
   const noDenominator = rows.filter((r) => r.status === "unknown").map((r) => ({ id: r.id, owner: ownerOf(r.id), why: r.why }));
-  return { score: measured.length ? Math.round((connected / measured.length) * 1000) / 10 : null, measured: measured.length, connected, weak, noDenominator };
+  return { score: measured.length ? Math.round((connected / measured.length) * 1000) / 10 : null, measured: measured.length, connected, weak, noDenominator, onWait };
 }
 
 export async function checkLinkage() {
@@ -64,6 +66,7 @@ if (process.argv[1]?.endsWith("check-linkage.ts")) checkLinkage().then((r) => {
   if (process.argv.includes("--json")) { console.log(JSON.stringify(r)); return; }
   console.log(`連携が弱い（地図のつながり ${r.score ?? "—"}%＝${r.connected}/${r.measured}・弱い所 ${r.weak.length}・低い順）`);
   console.log(`分母が無い（穴の型②・地図の行 ${r.noDenominator.length}）: ${r.noDenominator.map((x) => `${x.id}（${x.owner}）`).join("・") || "なし"}`);
+  console.log(`on 待ち（作る側のスイッチが off・つながり % の分母の外・#858）${r.onWait.length}: ${r.onWait.map((x) => `${x.id}（${x.owner}）`).join("・") || "なし"}`);
   if (process.argv.includes("--write")) void (async () => {
     const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "");
     const { data: open } = await sb.from("work_items").select("title").eq("origin", "found_gap").not("stage", "in", "(done,dropped)").limit(3000);

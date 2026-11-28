@@ -20,7 +20,8 @@ const wl = weakLinksOf(
   [{ key: "f1", val: 10, writerOk: 2, inDraft: 1 }, { key: "f2", val: 10, writerOk: 9, inDraft: 1 }, { key: "f3", val: 0, writerOk: 0, inDraft: 0 }],
   () => "作業員L",
 );
-t("つながりの割合は測れた行だけ", wl.score === 50 && wl.measured === 2);
+t("つながりの割合は測れた行だけ（親が off は分母から外す・#858）", wl.score === 100 && wl.measured === 1);
+t("親が off の行は on 待ちの欄へ（#858）", wl.onWait.length === 1 && wl.onWait[0].id === "r2" && !wl.weak.some((w) => w.id === "r2"));
 t("届いていない欄と使われていない欄", wl.weak.some((w) => w.id === "writer.f1" && w.kind === "not_delivered") && wl.weak.some((w) => w.id === "writer.f2" && w.kind === "delivered_unused"));
 t("値の無い欄は出さない", !wl.weak.some((w) => w.id === "writer.f3"));
 
