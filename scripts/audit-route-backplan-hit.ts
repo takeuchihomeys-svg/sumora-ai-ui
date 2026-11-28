@@ -40,5 +40,7 @@ console.log(`  1手先: ${h1}/${n1}（${pct(h1, n1) ?? "—"}%）・2手先: ${h
     if (error) throw new Error(error.message);
     console.log(`書いた: quality_daily ${qd.length}行（${day}）`);
   }
-  process.exit(0);
-})().catch((e) => { console.error(e); process.exit(1); });
+  // 2026-11-28 作業員A（作業員L の見回り: 晩の費用0の仕事で 0xC0000409 の落ち）: process.exit(0) は Windows の Node で開いた通信の口を閉じる途中に落ちる＝
+  //   終わりの番号だけ付けて、口が閉じてから自然に終わる（書き込みは済んでいる）
+  process.exitCode = 0;
+})().catch((e) => { console.error(e); process.exitCode = 1; });

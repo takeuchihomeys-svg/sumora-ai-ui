@@ -60,11 +60,13 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
     const day = new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
     const qd = [
       { day, metric: "route:next_stone_step", scope: "takeuchi", value: pct(ts.step, ts.n), n: ts.n, detail: { plant: ts.plant, skip_apply: ts.skip }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
-      { day, metric: "route:next_stone_step", scope: "brain", value: pct(bs.step, bs.n), n: bs.n, detail: { plant: bs.plant, skip_apply: bs.skip, reply_dir: "none", aix_kind_miss: kindMiss.length }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
+      { day, metric: "route:next_stone_step_brain", scope: "takeuchi", /* 2026-11-28: scope brain は quality_daily の制約で弾かれていた（毎晩 終わりの番号 1）＝竹内さん本人の番でのブレインの割合を別の metric に */ value: pct(bs.step, bs.n), n: bs.n, detail: { plant: bs.plant, skip_apply: bs.skip, reply_dir: "none", aix_kind_miss: kindMiss.length }, source: "scripts/audit-route-next-stone.ts（作業員A・竹内さん 11/26）" },
     ];
     const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });
     if (error) throw new Error(error.message);
     console.log(`書いた: quality_daily ${qd.length}行（${day}）`);
   }
-  process.exit(0);
-})().catch((e) => { console.error(e); process.exit(1); });
+  // 2026-11-28 作業員A（作業員L の見回り: 晩の費用0の仕事で 0xC0000409 の落ち）: process.exit(0) は Windows の Node で開いた通信の口を閉じる途中に落ちる＝
+  //   終わりの番号だけ付けて、口が閉じてから自然に終わる（書き込みは済んでいる）
+  process.exitCode = 0;
+})().catch((e) => { console.error(e); process.exitCode = 1; });

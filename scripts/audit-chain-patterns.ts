@@ -51,11 +51,13 @@ type Row = { conv: string; at: string; node: string | null; branch: string | nul
     const qd = [
       { day, metric: "chain:patterns", scope: "takeuchi", value: pats.length, n: rows.length, source: "scripts/audit-chain-patterns.ts（作業員A）" },
       { day, metric: "chain:table_candidates", scope: "takeuchi", value: diff.added.length, n: pats.length, detail: { added: diff.added.map((p) => `${p.key}>${p.move}`), gone: diff.gone.map((p) => `${p.key}>${p.move}`) }, source: "scripts/audit-chain-patterns.ts（作業員A）" },
-      { day, metric: "chain:brain_match_hit", scope: "brain", value: rate(hit), n: hit.length, detail: { miss_rate: rate(miss), miss_n: miss.length }, source: "scripts/audit-chain-patterns.ts（作業員A）" },
+      { day, metric: "chain:brain_match_hit", scope: "takeuchi", /* 2026-11-28: quality_daily の scope は takeuchi/all/draft/employee だけ（brain は制約で弾かれ毎晩 終わりの番号 1）＝竹内さん本人の番でのブレインの一致 */ value: rate(hit), n: hit.length, detail: { miss_rate: rate(miss), miss_n: miss.length }, source: "scripts/audit-chain-patterns.ts（作業員A）" },
     ];
     const { error } = await sb.from("quality_daily").upsert(qd, { onConflict: "day,metric,scope" });
     if (error) throw new Error(error.message);
     console.log(`書いた: quality_daily ${qd.length}行（${day}）`);
   }
-  process.exit(0);
-})().catch((e) => { console.error(e); process.exit(1); });
+  // 2026-11-28 作業員A（作業員L の見回り: 晩の費用0の仕事で 0xC0000409 の落ち）: process.exit(0) は Windows の Node で開いた通信の口を閉じる途中に落ちる＝
+  //   終わりの番号だけ付けて、口が閉じてから自然に終わる（書き込みは済んでいる）
+  process.exitCode = 0;
+})().catch((e) => { console.error(e); process.exitCode = 1; });
