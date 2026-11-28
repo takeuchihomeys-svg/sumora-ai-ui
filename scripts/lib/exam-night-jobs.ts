@@ -37,7 +37,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     // 2026-11-26 作業員L（#799 ④）: on にした直しの試験での差と本番の一致の動き（7日・14日・quality_daily on_after:*・#610 の突き合わせ）
     { name: "on の後の本番の動き（quality_daily）", args: ["scripts/audit-on-after.ts", "--write"], timeoutMin: 5 },
     // 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」）: MATERIAL_PRIORITY の shadow の当たり（前の24時間・quality_daily mp:shadow_hit・11/30 の組の効く問題の元）
-    { name: "MATERIAL_PRIORITY の shadow の当たり（quality_daily）", args: ["scripts/audit-material-priority-hit.ts", "--hours=24", "--write"], timeoutMin: 10 },
+    // 2026-11-28 作業員L（#747）: 前の24時間だと竹内さん本人の番が0で決められた番が0（11/27 の晩 n=0）＝11/30 の組の材料にならない→前の7日で数える（晩の仕事なので読みは夜だけ）
+    { name: "MATERIAL_PRIORITY の shadow の当たり（quality_daily）", args: ["scripts/audit-material-priority-hit.ts", "--hours=168", "--write"], timeoutMin: 15 },
     // 2026-11-27 作業員L（#803 試験の辞書）: 問題の定義・要る材料・前の on の覚え・揺れを1つの表に（exam-cache/exam-dictionary.json・ファイルだけ）と前の7晩の物差し
     { name: "試験の辞書（exam-dictionary.json）", args: ["scripts/build-exam-dictionary.ts", "--eval"], timeoutMin: 5 },
     // 2026-11-27 作業員L（#816 スイッチの一生の台帳）: 既定 off の部品ごとの1行と「試す／退役／印が先」の候補（exam-cache/switch-life.json・朝の1枚の1行・DB は台帳と設計知見の軽い読み・積まない）
