@@ -1,6 +1,7 @@
 // scripts/audit-on-after.ts — 台帳 #799 ④: on にした直しの試験での差と、on の後の本番の一致の動き（7日・14日）を on にした日の組ごとに並べる（読むだけ・LLM なし）
 // 2026-11-26 作業員L（統括役の頼み）: 読むのは小さい物だけ（work_item_events の on・work_items・quality_daily の reply_match・係の結果のファイル）＝昼でも軽い。
-//   --write で quality_daily に on_after:<物差し>:d7・d14（scope＝on にした日）と on_after:miss（外れの組の数・detail に組）を書く（#610 の帳面の 7日・14日の突き合わせが読む）。
+//   --write で quality_daily に on_after:reply_match:d7:<on にした日>・:d14:<日>（scope＝takeuchi か all）と on_after:reply_match:miss（外れの組の数・detail に組）を書く（#610 の帳面の 7日・14日の突き合わせが読む）。
+//   2026-11-28 作業員L: 前は scope に on にした日を入れていて、quality_daily_scope_chk（takeuchi・all・draft・employee だけ）に弾かれ毎晩落ちていた（11/26・11/27 の晩）→ 日は metric の名前へ
 //   計算は scripts/lib/on-after.ts。
 // 実行: npx tsx --env-file=.env.local scripts/audit-on-after.ts [--days=45] [--write]
 import { createClient } from "@supabase/supabase-js";
@@ -58,10 +59,10 @@ if (require.main === module) (async () => {
     const miss = gs.filter((g) => g.verdict === "miss");
     console.log(`外れの組: ${miss.length}${miss.length ? `（${miss.map((g) => `${g.day} ${g.switches.join(",")} ${g.d7}pt`).join("／")}）` : ""}`);
     for (const g of gs) {
-      if (g.d7 != null) qrows.push({ day: today, metric: `on_after:reply_match_${scope}:d7`, scope: g.day, value: g.d7, n: g.n7, detail: { switches: g.switches, items: g.items, exam: g.exam, before: g.before, after7: g.after7, verdict: g.verdict } });
-      if (g.d14 != null) qrows.push({ day: today, metric: `on_after:reply_match_${scope}:d14`, scope: g.day, value: g.d14, n: g.n7, detail: { switches: g.switches, after14: g.after14, verdict: g.verdict } });
+      if (g.d7 != null) qrows.push({ day: today, metric: `on_after:reply_match:d7:${g.day}`, scope, value: g.d7, n: g.n7, detail: { switches: g.switches, items: g.items, exam: g.exam, before: g.before, after7: g.after7, verdict: g.verdict } });
+      if (g.d14 != null) qrows.push({ day: today, metric: `on_after:reply_match:d14:${g.day}`, scope, value: g.d14, n: g.n7, detail: { switches: g.switches, after14: g.after14, verdict: g.verdict } });
     }
-    qrows.push({ day: today, metric: `on_after:reply_match_${scope}:miss`, scope: "all", value: miss.length, n: gs.length, detail: { groups: miss.map((g) => ({ day: g.day, switches: g.switches, items: g.items, d7: g.d7, exam: g.exam })) } });
+    qrows.push({ day: today, metric: "on_after:reply_match:miss", scope, value: miss.length, n: gs.length, detail: { groups: miss.map((g) => ({ day: g.day, switches: g.switches, items: g.items, d7: g.d7, exam: g.exam })) } });
   }
   if (process.argv.includes("--write")) {
     const { error } = await sb.from("quality_daily").upsert(qrows, { onConflict: "day,metric,scope" });
