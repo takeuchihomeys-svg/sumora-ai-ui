@@ -8,4 +8,8 @@ assert.equal(karteMorningLine(rows), "- お客様のカルテ（#806・2026-11-2
 assert.equal(karteMorningLine([]), null);
 assert.equal(karteMorningLine([{ day: d, metric: "karte:avg_len", value: 1 }]), null, "出る割合が無ければ出さない");
 assert.ok(nightZeroCostSteps("x.json").some((s) => s.args[0] === "scripts/audit-customer-karte.ts" && s.args.includes("--write")), "晩の費用0の仕事");
-console.log("karte-morning ok 4");
+// 2026-11-28 #664: 約束の一生は元の3本の後に lifecycle が同じ晩の json を読んで書く
+{ const st = nightZeroCostSteps("m/x.json"); const i = (f: string) => st.findIndex((s) => s.args[0] === f); const life = st[i("scripts/audit-promise-lifecycle.ts")];
+  assert.ok(i("scripts/audit-promise-kinds.ts") < i("scripts/audit-promise-lifecycle.ts") && i("scripts/audit-promise-kept.ts") < i("scripts/audit-promise-lifecycle.ts") && i("scripts/list-done-at-backfill.ts") < i("scripts/audit-promise-lifecycle.ts"));
+  assert.deepEqual(life.args.slice(1), ["--kinds=m/x.json.promise-kinds.json", "--b1=m/x.json.promise-b1.json", "--done=m/x.json.promise-done.json", "--write"]); }
+console.log("karte-morning ok 6");

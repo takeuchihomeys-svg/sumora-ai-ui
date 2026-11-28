@@ -698,6 +698,8 @@ async function main() {
     if (pl.length) {
       const g = (k: string) => { const r = pl.find((x) => x.metric === `promise_life:${k}`); return r?.value == null ? "—" : `${Number(r.value)}%`; };
       lines.push(`- 約束の一生（${pl[0].day}）: 見つけるの外れ ${g("find_miss")}・文に期限 ${g("due_words")}・台帳 ${g("record_fact")}・期限内に果たした ${g("kept_in_time")}・閉じた時刻 ${g("closed_with_time")}・試験の約束の依頼の扱い ${g("exam_promise_covered")}（答え方 ${g("exam_promise_route")}）`, "");
+      // 2026-11-28 作業員L（#664）: 晩に数え直していないと古い数が出続ける（11/25 に1回書いたきりだった）＝2日より古ければ印
+      if (now - Date.parse(`${pl[0].day}T00:00:00+09:00`) > 2 * 86_400_000) lines.push(`  - ⚠ 約束の一生の数が古い（${pl[0].day}・晩の費用0の仕事の audit-promise-lifecycle が書いていない）`);
     }
   }
   // 2026-11-27 作業員L（台帳 #816 スイッチの一生の台帳）: 晩の費用0の仕事（scripts/switch-life.ts --write）が書いた <exam-cache>/switch-life.json の1行（36時間より古ければ出さない）

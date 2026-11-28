@@ -44,6 +44,12 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "スイッチの一生（switch-life.json）", args: ["scripts/switch-life.ts", "--write"], timeoutMin: 30 },
     // 2026-11-28 作業員L（#806 お客様のカルテ）: 前の7日の会話にカルテの計算を当てて、出る割合・欄ごとの埋まり・審査の事情で落とした欄を数える（quality_daily karte:*・本番の会話を軽く読む・LLM 0）
     { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
+    // 2026-11-28 作業員L（#664 約束の一生）: 段ごとの数（promise_life:*）は 11/25 に1回書いたきりで、朝の1枚が古い数を出し続けていた＝毎晩数え直す。
+    //   元の3本（種類の網は本番と同じ＝PROMISE_KIND_WIDE2 だけ on・B1・閉じた時刻）を係の置き場の json に書き、最後の1本が quality_daily に書く（LLM 0）
+    { name: "約束の種類の数え（約束の一生の元）", args: ["scripts/audit-promise-kinds.ts", "--days=14", "--wide2", `--out=${jsonPath}.promise-kinds.json`], timeoutMin: 15 },
+    { name: "約束を期限内に果たした割合 B1（約束の一生の元）", args: ["scripts/audit-promise-kept.ts", "--days=30", "--max-convs=400", `--out=${jsonPath}.promise-b1.json`], timeoutMin: 30 },
+    { name: "約束の閉じた時刻（約束の一生の元）", args: ["scripts/list-done-at-backfill.ts", "--days=60", `--out=${jsonPath}.promise-done.json`], timeoutMin: 10 },
+    { name: "約束の一生の段ごとの数（quality_daily promise_life:*）", args: ["scripts/audit-promise-lifecycle.ts", `--kinds=${jsonPath}.promise-kinds.json`, `--b1=${jsonPath}.promise-b1.json`, `--done=${jsonPath}.promise-done.json`, "--write"], timeoutMin: 5 },
     // 2026-11-26 作業員L（#799 ⑤）: 週の全部 on の組の候補（土曜の晩だけ作る・係の置き場の md に足すだけ・積まない）
     //   統括役 11/26 の決め: 土曜に作って係の候補（memory/night_bundle_candidates.md・係の作業ツリーから ../../../memory）に足し、日曜の晩に流す
     { name: "週の全部 on の組の候補（土曜だけ）", args: ["scripts/plan-week-combo.ts", "--weekly", "--write=../../../memory/night_bundle_candidates.md"], timeoutMin: 5 },
