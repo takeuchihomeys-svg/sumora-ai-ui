@@ -104,6 +104,11 @@ export function promiseDropKindOf(text: string, env?: Env): PdKind | null {
 }
 /** 約束を果たした印（物件・確認の結果・見積の AIX か、物件の送付） */
 const FULFIL_AIX = /property|recommend|check_result|estimate|pickup/;
+// 2026-11-28 作業員L（台帳 #856・統括役の決め「募集状況や初期費用の確認は人だけが知る事・果たすのは確認の結果を送った通・物件の送付だけで閉じるのは甘い」）:
+//   PROMISE_CHECK_NO_SENT_CLOSE=on（既定 off）の時、確認の約束（check）は物件の送付（sent_properties）と物件・おすすめの AIX では閉じない。
+//   閉じるのは確認の結果の AIX（*check_result）・見積の AIX（初期費用の確認の答え）・こちらの手打ちの確認の結果の文（CHECK_ANSWERED_RE）だけ
+export const promiseCheckNoSentCloseOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CHECK_NO_SENT_CLOSE ?? "").trim().toLowerCase() === "on";
+const CHECK_FULFIL_AIX = /check_result|estimate/;
 /** お客様が探すのを止めた・他で決めた（見張らない） */
 // 2026-11-21 本番の試しで直した: お客様の「部屋決まった」・こちらの締め（「無事お部屋決まりよかったです」「またお引越しの機会」）も止めた印
 // 確認の約束は、こちらの手打ちの文で結果を伝えて果たす事もある（「管理会社より…」「確認させて頂きましたところ」）
@@ -214,10 +219,12 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName;
     if (costObj) for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && /estimate/.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
     return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
   }
-  const re = promise.kind === "estimate" ? /estimate/ : FULFIL_AIX;
+  // 2026-11-28 作業員L（台帳 #856・統括役の決め）: 確認の約束を果たすのは確認の結果の通（PROMISE_CHECK_NO_SENT_CLOSE=on の時だけ・既定 off は今と同じ）
+  const checkStrict = promise.kind === "check" && promiseCheckNoSentCloseOn(o.env);
+  const re = promise.kind === "estimate" ? /estimate/ : checkStrict ? CHECK_FULFIL_AIX : FULFIL_AIX;
   const cands: Array<{ by: string; at: string }> = [];
   for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && re.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
-  if (promise.kind !== "estimate") for (const s of ev.sent) if (after(s.sent_at)) cands.push({ by: "sent_properties", at: s.sent_at as string });
+  if (promise.kind !== "estimate" && !checkStrict) for (const s of ev.sent) if (after(s.sent_at)) cands.push({ by: "sent_properties", at: s.sent_at as string });
   if (promise.kind === "check") for (const m of ev.msgs) if (m.sender === "staff" && !m.is_aix_generated && after(m.created_at) && CHECK_ANSWERED_RE.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "staff_text", at: m.created_at });
   // 2026-11-21 作業員N の B1 の数え（見積の約束2つが AIX 無しで「果たしていない」）: こちらの手打ちの文で御見積書を送った番も果たした
   //   （「御見積書となります」「お見積りお送りさせて頂きました」。「作成させて頂きます」は約束なので数えない。画像だけの送付は中身が分からないので数えない）
