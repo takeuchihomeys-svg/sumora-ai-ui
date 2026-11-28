@@ -148,6 +148,8 @@ const db = () => (_sb ??= createClient(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "
 const readJson = <T>(f: string, d: T): T => { try { return JSON.parse(readFileSync(f, "utf8")) as T; } catch { return d; } };
 
 export type ExamJob = {
+  /** 2026-11-28 作業員L（#684）: --add の時の本番の余地の関所の答え（EXAM_ROOM_GATE・warn でも残す） */
+  room?: { decision: string; why: string; mode: string };
   id: string; label: string; owner: string; switch: string; cwd: string; only: string; stage: string; repeat: number; env: Record<string, string>; createdAt: string; tries: number; /** 立ち上がりの失敗が続いた回数（2026-11-04） */ crashes?: number;
   /** 依頼で名指しした揺れる問題（③） */ flaky?: string[];
   /** 2026-11-07 統括役（弱い所 418・試験の統括ブレインの第1段）: 係が自動で足した守りの問題（1回だけ回す）・狙いの無い依頼の RAG の選びの数 */ guards?: string[]; selectN?: number;
@@ -505,6 +507,8 @@ async function addJob(): Promise<void> {
           // 表は1本（exam-reach-rows の rowOf＝exam-select と同じ行・統括役の決め）
           const { rowOfWith, tableOf } = await import("./lib/exam-reach-rows");
           const rr = roomOf({ onSwitches: onSw, table: tableOf(onSw, rowOfWith({ cacheRoot: examCacheRoot() })), turns: await readRoomTurns(db() as never, new Date(Date.now() - 14 * 86_400_000).toISOString()) });
+          // 2026-11-28 作業員L（#684 の③）: 関所の答えを試験の行に残す（--add の画面にしか出ず、晩ごとに何本止められたか数えられなかった）
+          job.room = { decision: rr.decision, why: String(rr.why).slice(0, 200), mode: roomMode };
           if (rr.decision === "unknown") log(`  （#684）本番の余地: 決めない（${rr.why}）`);
           else if (rr.decision === "block" && roomMode === "on" && !flag("force")) { log(`  （#684）積まない: ${label}（${rr.why}）`); throw new Error(`積まない（#684）: 本番の直近14日で、このスイッチが効く番に食い違いが無い（${rr.why}）＝試験で良くなる余地が無い。--force で積む`); }
           else log(`  （#684）本番の余地: ${rr.why}${rr.decision === "block" ? "・余地0（on なら止める）" : rr.decision === "defer" ? `・余地が小さい（${ROOM_MIN_OK} 未満）` : ""}（EXAM_ROOM_GATE=${roomMode}）`);
