@@ -201,6 +201,7 @@ export function narrowCheckObject(promiseText: string | null | undefined, checkO
 }
 export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName; text?: string | null }, ev: PromiseEvidence, o: { checkObjectOf?: CheckObjectOf; env?: Env } = {}): { by: string; at: string } | null | "n/a" {
   if (promise.kind === "contact" || promise.kind === "negotiate") return promiseContactKindOn(o.env) ? promiseContactFulfilledBy({ at: promise.at, kind: promise.kind }, ev) : "n/a";
+  if ((promise.kind === "callback" || promise.kind === "viewing_slot") && promiseCallViewFulfilOn(o.env)) return promiseCallViewFulfilledBy({ at: promise.at, kind: promise.kind }, ev);
   if (!PROMISE_KIND_JUDGEABLE.has(promise.kind)) return "n/a";
   const t0 = Date.parse(promise.at);
   const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
@@ -235,6 +236,33 @@ export function promiseFulfilledBy(promise: { at: string; kind: PromiseKindName;
   // 穴3（作業員N）: 見積を確認の結果の AIX（物件確認した）に同封した番＝こちらの AIX の文に「御見積書」「初期費用」があれば果たした
   if (promise.kind === "estimate") for (const m of ev.msgs) if (m.sender === "staff" && m.is_aix_generated && after(m.created_at) && /御見積書|お見積(?:もり|り)?書?|初期費用/.test(String(m.text ?? "").normalize("NFKC"))) cands.push({ by: "aix_text", at: m.created_at });
   return cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
+}
+// ─── 2026-11-28 作業員L（台帳 #669・統括役の割り振り）: 電話・内覧の調整の約束の果たした印（PROMISE_CALL_VIEW_FULFIL・既定 off）───
+//   今は callback・viewing_slot が n/a（果たした判定が無い）で、期日超えにも統括にも出ない。60日の本番の約束は 9（電話 6・内覧の調整 3）:
+//   電話 … 後に印があったのは 1/6（AIX phone_call）。残り5（同じ会話の5通）は LINE に何も残らない＝電話は LINE の外で済む。
+//     印が無いのを「果たしていない」にすると期日超えの誤りになるので、印が無ければ今と同じ n/a（判定しない）。印: AIX phone_call・
+//     こちらかお客様の電話の後の言葉（「お電話させて頂きました」「先ほどはお電話」「お電話が繋がらず」「不在着信」等）
+//   内覧の調整 … やり取りは LINE の中で済むので、印が無ければ果たしていない（期日で期日超え）。印: 内覧の AIX（greeting_viewing・viewing_invite・meeting_place）・
+//     こちらの手打ちの文に 内覧／ご案内／お待ち合わせ／現地 と 日付か時刻（それ自体が内覧の調整の約束の文は除く）。60日で 1/3（19時間後の日時の案内）
+export const promiseCallViewFulfilOn = (env: Env = typeof process !== "undefined" ? process.env : {}) => (env.PROMISE_CALL_VIEW_FULFIL ?? "").trim().toLowerCase() === "on";
+export const CALL_DONE_RE = /お電話(?:させて(?:頂|いただ)きました|致しました|いたしました|しました)|お電話(?:が)?(?:繋がら|つながら)|お電話ありがとうございました|先ほどは(?:お電話|ご連絡)|お電話にて(?:失礼|ご説明|お伝え)|不在着信/;
+const VIEW_WORD_RE = /内覧|ご案内|お待ち合わせ|現地/;
+const VIEW_TIME_RE = /[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[0-9０-９]{1,2}[/／][0-9０-９]{1,2}|[0-9０-９]{1,2}時|[0-9０-９]{1,2}[:：][0-9]{2}/;
+export function promiseCallViewFulfilledBy(promise: { at: string; kind: "callback" | "viewing_slot" }, ev: PromiseEvidence): { by: string; at: string } | null | "n/a" {
+  const t0 = Date.parse(promise.at);
+  const after = (iso: string | null | undefined) => !!iso && Date.parse(iso) > t0;
+  const cands: Array<{ by: string; at: string }> = [];
+  const aixRe = promise.kind === "callback" ? /^phone_call/ : /^(?:greeting_viewing|viewing_invite|meeting_place)/;
+  for (const a of ev.aix) { const at = a.sent_at ?? a.created_at; if (after(at) && aixRe.test(String(a.aix_type ?? ""))) cands.push({ by: `aix:${a.aix_type}`, at }); }
+  for (const m of ev.msgs) {
+    if (!after(m.created_at)) continue;
+    const t = String(m.text ?? "").normalize("NFKC");
+    if (promise.kind === "callback" && (m.sender === "staff" || m.sender === "customer") && CALL_DONE_RE.test(t)) cands.push({ by: m.sender === "staff" ? "staff_text" : "customer_text", at: m.created_at });
+    if (promise.kind === "viewing_slot" && m.sender === "staff" && !m.is_aix_generated && VIEW_WORD_RE.test(t) && VIEW_TIME_RE.test(t) && promiseKindNameOf(t) !== "viewing_slot") cands.push({ by: "staff_text", at: m.created_at });
+  }
+  const first = cands.sort((x, y) => x.at.localeCompare(y.at))[0] ?? null;
+  if (!first && promise.kind === "callback") return "n/a"; // 電話は LINE の外で済む＝印が無くても果たしていないとは言えない
+  return first;
 }
 // ─── 2026-11-25 作業員L（台帳 #726・統括役の割り振り）: 連絡・交渉の約束の種類と果たした印（PROMISE_CONTACT_KIND・既定 off）───
 //   今は「ご連絡させて頂きます」「お伝えさせて頂きます」「交渉させて頂きます」が other（果たした判定なし）か、確認（check・WIDE の網）に混ざる。
