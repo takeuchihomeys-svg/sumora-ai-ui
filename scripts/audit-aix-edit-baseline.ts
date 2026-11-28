@@ -1,6 +1,7 @@
 // scripts/audit-aix-edit-baseline.ts — #827 の物差し: スタッフが AIX の文を直した割合と直した中身（読むだけ・軽い読み・LLM なし・2026-11-28 作業員A）
 //   ai_template_candidates（直近 N日）の直す前の AI の文（original_text）と送った文（template_text）を行で比べる。
 //   aix_usage_logs.generated_text は送った文で上書きされていて使えない（11/28 に突き合わせると 476通すべて同じだった）。
+//   source=aix_edit_count … 物件オススメの直しの組（#839・数えるためだけ・伏せた形・AIX_EDIT_COUNT_RECOMMENDATION=on の時だけ）
 //   source=aix_edit … スタッフが直して送った（original_text＝直す前）／source=auto … そのまま送った
 //   直した中身は、足した行・消した行を種類に分ける（誘い・次の一手／確認・約束／金額・日付／挨拶・締め／その他）。本文は出さない（数だけ）。
 //   実行: npx tsx --env-file=.env.local scripts/audit-aix-edit-baseline.ts [--days=30] [--json=<out>]
@@ -25,13 +26,13 @@ type Agg = { n: number; edited: number; sameLineShare: number; added: Record<str
 async function main() {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const { data: rows, error } = await sb.from("ai_template_candidates").select("action_type, source, template_text, original_text")
-    .gte("created_at", since).in("source", ["aix_edit", "auto"]).limit(3000);
+    .gte("created_at", since).in("source", ["aix_edit", "aix_edit_count", "auto"]).limit(3000);
   if (error) throw error;
   const by: Record<string, Agg> = {};
   for (const r of rows ?? []) {
     const a = (by[r.action_type ?? "?"] ??= { n: 0, edited: 0, sameLineShare: 0, added: {}, removed: {} });
     a.n++;
-    if (r.source !== "aix_edit" || !r.original_text) { a.sameLineShare += 1; continue; }
+    if ((r.source !== "aix_edit" && r.source !== "aix_edit_count") || !r.original_text) { a.sameLineShare += 1; continue; }
     a.edited++;
     const g = linesOf(r.original_text), t = linesOf(r.template_text ?? "");
     const gs = new Set(g), ts = new Set(t);

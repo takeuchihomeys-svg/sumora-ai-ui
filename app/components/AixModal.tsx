@@ -3644,6 +3644,11 @@ export default function AixModal({
     if (wasEdited && actionType !== "property_recommendation") {
       saveTemplateCandidate(sentText, true, trimmedDraft);
     }
+    // 2026-11-28 作業員A（台帳 #839）: 物件オススメの直しの組は手本にしないが、数えるためだけに送る（サーバーが AIX_EDIT_COUNT_RECOMMENDATION=on の時だけ伏せて残す・既定 off は捨てる）
+    if (wasEdited && actionType === "property_recommendation" && (account ?? "").toLowerCase() !== "yuma") {
+      fetch("/api/ai-template-candidates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actionType, templateText: sentText, conversationId, source: "aix_edit_count", originalText: trimmedDraft }) })
+        .catch(() => { /* 数えるだけ・送信を妨げない */ });
+    }
 
     // テンプレートフレーズ学習ログ
     if (sentText.trim()) {

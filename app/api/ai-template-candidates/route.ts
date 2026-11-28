@@ -72,6 +72,16 @@ export async function POST(req: NextRequest) {
   }
 
   const category = ACTION_TO_CATEGORY[actionType] ?? "その他【AIX】";
+  // 2026-11-28 作業員A（台帳 #839・AIX_EDIT_COUNT_RECOMMENDATION・既定 off）: 物件オススメの直しの組を数えるためだけに残す（伏せた形・どの読み手にも拾われない行・aix-edit-count.ts）
+  if (source === "aix_edit_count") {
+    const ec = await import("@/app/lib/aix-edit-count");
+    if (!ec.aixEditCountOn()) return NextResponse.json({ ok: true, skipped: "off" });
+    const row = ec.buildCountOnlyRow({ actionType, category, sent: templateText, original: originalText ?? "", conversationId: conversationId ?? null });
+    if (!row) return NextResponse.json({ ok: true, skipped: "pii_or_empty" });
+    const { error: ce } = await supabase.from("ai_template_candidates").insert(row);
+    if (ce) return NextResponse.json({ ok: false, error: ce.message }, { status: 500 });
+    return NextResponse.json({ ok: true, saved: true, countOnly: true });
+  }
   const defaultTitle = ACTION_TO_DEFAULT_TITLE[actionType] ?? actionType;
   const title = suggestedTitle?.trim() || defaultTitle;
   const text = templateText.trim();
