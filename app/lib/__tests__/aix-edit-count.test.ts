@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildCountOnlyRow, maskPropertyFacts, aixEditCountOn, AIX_EDIT_COUNT_SOURCE } from "../aix-edit-count";
+import { buildCountOnlyRow, maskPropertyFacts, aixEditCountOn, AIX_EDIT_COUNT_SOURCE, residueOf } from "../aix-edit-count";
 
 let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => { try { fn(); pass++; console.log("  OK  " + name); } catch (e) { fail++; console.log("  NG  " + name + "\n      " + (e as Error).message); } };
@@ -41,5 +41,16 @@ t("読み手の門（手本・RAG・学びの入口が aix_edit_count の行を�
       assert.doesNotMatch(win.slice(0, 300), /aix_edit_count/, `${f} が aix_edit_count を読んでいる`);
     }
   }
+});
+t("伏せ方の確かめ: 伏せる前は当たり・伏せた後の行は残りなし（作り物）", () => {
+  const raw = "テスト太郎さん テストハイツ 203号室 6.5万円 090-1234-5678 test@example.com https://suumo.jp/x";
+  const hits = residueOf(raw);
+  for (const k of ["号室", "金額", "携帯番号", "メール", "URL"]) assert.ok(hits.includes(k), `${k} が当たらない: ${hits.join(",")}`);
+  // 携帯番号・メールの入った文は、そもそも残さない（申込の書類・個人の値の網）
+  assert.equal(buildCountOnlyRow({ actionType: "property_recommendation", category: "x", sent: raw, original: "a", propertyNames: ["テストハイツ"] }), null);
+  const sent = "テスト太郎さん テストハイツ 203号室 家賃6.5万円 https://suumo.jp/x ご案内させて頂きます！！";
+  const r = buildCountOnlyRow({ actionType: "property_recommendation", category: "x", sent, original: "こちらテストハイツオススメです", propertyNames: ["テストハイツ"], knownNames: ["テスト太郎"] })!;
+  assert.deepEqual(residueOf(r.template_text), []);
+  assert.deepEqual(residueOf(r.original_text), []);
 });
 console.log(`\n合計: ${pass}/${pass + fail}`); if (fail) process.exit(1);

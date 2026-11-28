@@ -6,7 +6,7 @@
 //     dismissed_reason=null（corpus2skill の「却下の理由」の読みは理由が null でない行だけ）。読むのは scripts/audit-aix-edit-baseline.ts だけ
 //   スイッチ AIX_EDIT_COUNT_RECOMMENDATION（既定 off・サーバーの /api/ai-template-candidates が読む）
 import { maskPII } from "./pii-mask";
-import { applicationMaterialReason } from "./test-pii-guard";
+import { applicationMaterialReason, MOBILE_RE, EMAIL_RE, BIRTH_VALUE_RE } from "./test-pii-guard";
 
 export const AIX_EDIT_COUNT_SOURCE = "aix_edit_count" as const;
 export const aixEditCountOn = (env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {}) =>
@@ -41,3 +41,21 @@ export function buildCountOnlyRow(i: { actionType: string; category: string; sen
     evidence_count: 1, is_dismissed: true, dismissed_reason: null,
   };
 }
+
+/** 2026-11-28 #839: on にした後の伏せ方の確かめ（scripts/audit-aix-edit-count-mask.ts）。伏せ残しの形（純関数・テストあり）。値ではなく、どの形が何回当たったかだけ返す */
+export const RESIDUE_CHECKS: Array<[string, RegExp]> = [
+  ["携帯番号", MOBILE_RE],
+  ["メール", EMAIL_RE],
+  ["生年月日", BIRTH_VALUE_RE],
+  ["号室", /[0-9０-９]{1,5}\s*号室/],
+  ["金額", /[0-9０-９][0-9０-９,，.．]*\s*(?:万円|万|円)/],
+  ["URL", /https?:\/\//],
+  ["長い数字", /[0-9０-９]{5,}/],
+  ["名前らしい語（漢字・カナ＋さん／様）", /[一-龠ァ-ヶ]{2,}(?:さん|様)/],
+];
+export function residueOf(text: string): string[] {
+  const out = RESIDUE_CHECKS.filter(([, re]) => re.test(text)).map(([k]) => k);
+  const app = applicationMaterialReason(text); if (app) out.push(`申込の書類（${app}）`);
+  return out;
+}
+
