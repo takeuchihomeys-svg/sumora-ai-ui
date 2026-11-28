@@ -4,10 +4,10 @@
 //   (a) 作る側のスイッチが本番で on か（brain_switch_versions の最新の行・無い名前はコードの既定 linkage-switch-defaults）
 //   (b) 読む側の親のスイッチが on か
 //   (c) 本番の直近の判断の記録（conversations.suggested_aix_meta・表の直近の行）で、その欄が空でない割合
-//   (d) RAG の空・失敗（作業員H の RAG の見張り＝まだつないでいない）
+//   (d) RAG の空・失敗（作業員H の RAG の見張り rag_call_logs の本番7日・2026-11-28 作業員L #557 でつないだ）
 //   を数え、状態（つながっている／切れている／親が off／空が多い／測れない）と1行の要約を出す。重い読みはしない（meta は直近 60会話・表は件数だけ）。
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { LINKAGE_MAP, fillTimeColOf, rowStatus, switchStateOf, metaFills, summaryLine, mapSwitchNames, type RowResult, type SwitchState, type WatchReport } from "./linkage-map";
+import { LINKAGE_MAP, fillTimeColOf, RAG_FILL_RPC, RAG_FILL_DAYS, rowStatus, switchStateOf, metaFills, summaryLine, mapSwitchNames, type RowResult, type SwitchState, type WatchReport } from "./linkage-map";
 import { LINKAGE_SWITCH_DEFAULTS } from "./linkage-switch-defaults";
 import { SWITCH_PREFIXES } from "./switch-fingerprint";
 import { NO_LINE_TEST_CONVERSATION_IDS, STAFF_INTERNAL_CONVERSATION_IDS, YUMA_CONVERSATION_ID } from "./test-conversations";
@@ -62,6 +62,21 @@ export async function runLinkageWatch(sb: SupabaseClient, o: { metaLimit?: numbe
     const nn = await base().not(f.col, "is", null);
     if (nn.error) { notes.push(`${r.id}（${f.table}.${f.col}）: ${nn.error.message}`); fills[r.id] = { rate: null, n }; continue; }
     fills[r.id] = { rate: (nn.count ?? 0) / n, n };
+  }
+  // (d) 2026-11-28 作業員L（台帳 #557）: RAG の行は rag_call_logs（本番 env=production・7日）の呼び出しの数と、行が返った割合（件数だけ読む）
+  for (const r of LINKAGE_MAP) {
+    if (r.fill.src !== "rag") continue;
+    const rpc = RAG_FILL_RPC[r.fill.name];
+    if (!rpc) continue;
+    const since = new Date(nowMs - RAG_FILL_DAYS * 86_400_000).toISOString();
+    const base = () => sb.from("rag_call_logs").select("id", { count: "exact", head: true }).eq("rpc", rpc).eq("env", "production").gte("created_at", since);
+    const all = await base();
+    if (all.error) { notes.push(`${r.id}（rag_call_logs）: ${all.error.message}`); fills[r.id] = undefined; continue; }
+    const n = all.count ?? 0;
+    if (!n) { fills[r.id] = { rate: 0, n: 0 }; continue; }
+    const hit = await base().eq("ok", true).gt("rows", 0);
+    if (hit.error) { notes.push(`${r.id}（rag_call_logs の行）: ${hit.error.message}`); fills[r.id] = { rate: null, n }; continue; }
+    fills[r.id] = { rate: (hit.count ?? 0) / n, n };
   }
   const results: RowResult[] = LINKAGE_MAP.map((r) => rowStatus(r, sw, fills));
   // 先週の切れている数（6日より前の一番新しい記録）
