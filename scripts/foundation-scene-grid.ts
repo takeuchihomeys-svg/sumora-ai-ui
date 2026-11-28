@@ -25,7 +25,7 @@ export const FOUNDATION_TERMS: Record<string, RegExp> = {
   "n.link": /つなぎ|誘導|次への|締め|誘い/,
 };
 /** 場面で分けて数える物差しの台本（それ以外は全体だけ） */
-export const SCENE_SPLIT = new Set(["scripts/audit-off-pattern.ts", "scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-ask-route-takeuchi.ts", "scripts/audit-promise-kept.ts", "scripts/audit-time-reply-scene.ts"]); // 2026-11-22 作業員L（#501・#502）: 約束の期限内（#495 から場面ごと）・時の言葉への返し方（場面ごと） // audit-ask-route-takeuchi は 11/18 から場面ごと（作業員M）
+export const SCENE_SPLIT = new Set(["scripts/audit-off-pattern.ts", "scripts/tsunagi-census.ts", "scripts/audit-guide.ts", "scripts/audit-ask-route-takeuchi.ts", "scripts/audit-promise-kept.ts", "scripts/audit-time-reply-scene.ts", "scripts/audit-appeal-by-scene.ts" /* 2026-11-28 作業員A #755 訴求を駅で分けて数える */]); // 2026-11-22 作業員L（#501・#502）: 約束の期限内（#495 から場面ごと）・時の言葉への返し方（場面ごと） // audit-ask-route-takeuchi は 11/18 から場面ごと（作業員M）
 
 /** 1つの土台×場面の決まりの数（純関数） */
 /** 2026-11-23 作業員N（穴の型④ 数え方の誤りで低く見える）: 場面の札の表記ゆれ（KB の現行に 場面:物件オススメ 9・場面:検討 3 ほか）を正しい札に読み替える（純関数） */
