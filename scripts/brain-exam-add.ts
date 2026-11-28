@@ -41,6 +41,7 @@ import { rollbackPcToTurn, type PcAsOf, type PcHist } from "./lib/brain-exam-pc"
 import { publishProblems, readSharedProblem, sharedProblemsEnabled, SHARED_PROBLEMS_DIR } from "./lib/exam-problems-store";
 import { ensureLedger, nextIdNumber, withSpec, writeLedger } from "./lib/exam-id-ledger";
 import { examCacheRoot } from "./lib/llm-cassette";
+import { sceneSliceOf } from "./lib/exam-after-ours";
 
 /** 2026-11-07 統括役: 番号は spec と使った id の控えの両方の最大＋1（外した id を別の番に使い回さない・exam-id-ledger） */
 function nextNumber(spec: ExamSpec[]): number { try { return nextIdNumber(spec, ensureLedger(examCacheRoot(), process.cwd(), spec)); } catch { return nextIdNumber(spec, null); } }
@@ -53,6 +54,8 @@ export const PROBLEMS_FILE = `${EXAM_DIR}/problems.json`;
 export type ExamAsk = { q: string; route: "reply" | "promise" | "aix" | "none"; point: string; /** 10/09: 他にも正解の答え方（例 q038 物件オススメの AIX が第一・探す約束も可） */ routes?: Array<"reply" | "promise" | "aix" | "none">; /** 2026-11-11 答え方が2つ以上の時「どれで扱っても正解」と判定役に書く（書き方だけ・brain-exam.routeText） */ anyRoute?: boolean; /** 2026-10-23 お客様の一番の問い（無ければ1つ目を主な依頼とみなす・重みの点で他の依頼の2倍） */ main?: boolean };
 export type ExamSpec = {
   id: string; type: string; tags?: string[]; source: string; conv: string; at: string;
+  /** 2026-11-28 作業員L（台帳 #861）: 「こちらの通の後」の番（最後のお客様の通の後にこちらの通があり、お客様の返事が無いまま at になった番）。true の時だけ後ろのこちらの通も場面に残す */
+  afterOurs?: boolean;
   accept: string[]; mustNot?: string[]; asks?: ExamAsk[]; ng?: string[]; why: string; addedAt?: string; addedBy?: string;
   /** 決まりが入ったら正解が変わる番（10/08: 出し切り＝search-exhausted が入ったら全力サポートだけ。brain-exam.ts の acceptOf） */
   acceptWhen?: { searchExhausted?: string[]; /** 10/09: 全力サポートが正解の時の依頼（答え方は aix＝AIX の文で応える） */ searchExhaustedAsks?: ExamAsk[]; note?: string };
@@ -166,12 +169,13 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   const { data: conv } = await sb.from("conversations").select("customer_name, property_customer_id").eq("id", spec.conv).maybeSingle();
   const { data } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).lte("created_at", spec.at).order("created_at", { ascending: false }).limit(60);
   const msgs = ((data ?? []) as Msg[]).reverse();
-  let end = msgs.length - 1; while (end >= 0 && msgs[end].sender !== "customer") end--;
-  if (end < 0) return "お客様の通が無い";
-  let start = end; while (start - 1 >= 0 && msgs[start - 1].sender === "customer") start--;
-  let ctx = msgs.slice(Math.max(0, start - 29), start);
-  const cust = msgs.slice(start, end + 1);
-  const cut = cutBeforeApplicationMaterial([...ctx, ...cust]);
+  // 2026-11-28 作業員L（台帳 #861）: 切り出しは scripts/lib/exam-after-ours.ts の sceneSliceOf（印 afterOurs の無い問題は今までと同じ・tail は空）
+  const sl = sceneSliceOf(msgs, !!spec.afterOurs);
+  if (typeof sl === "string") return sl;
+  let ctx = sl.ctx;
+  const cust = sl.cust, tail = sl.tail;
+  if (tail.length && cutBeforeApplicationMaterial(tail).cutAt !== null) return "申込の書類・個人の値がこちらの後の通に入っている";
+  const cut = cutBeforeApplicationMaterial([...ctx, ...cust, ...tail]);
   if (cut.cutAt !== null) {
     // 審査落ちで切り替えた後の番（対象）だけは、切り替え（否決の連絡）より後の通だけで場面を作る（test_protocol 6・設計知見 cd3f3974 の追記）
     const all = [...ctx, ...cust];
@@ -202,15 +206,15 @@ export async function buildProblem(spec: ExamSpec): Promise<ExamProblem | string
   //   旧は引用した通と引用された通が両方とも場面の中にある時だけ写し、3週間前の資料を引用した「こちらの初期費用は」でどの物件か分からなかった（本番のブレインは読めていた）。
   //   こちらの画像の通だけ（お客様の画像は書類の恐れ）・最大3通・場面の頭に時刻の順で足す。戻す EXAM_OLD_QUOTE_COPY=off
   if ((process.env.EXAM_OLD_QUOTE_COPY ?? "").trim().toLowerCase() !== "off") {
-    const inScene = new Set([...ctx, ...cust].map((m) => m.line_message_id).filter(Boolean));
-    const want = [...new Set([...ctx, ...cust].map((m) => m.quoted_message_id).filter((x): x is string => !!x && !inScene.has(x)))].slice(0, 3);
+    const inScene = new Set([...ctx, ...cust, ...tail].map((m) => m.line_message_id).filter(Boolean));
+    const want = [...new Set([...ctx, ...cust, ...tail].map((m) => m.quoted_message_id).filter((x): x is string => !!x && !inScene.has(x)))].slice(0, 3);
     if (want.length) {
       const { data: qd } = await sb.from("messages").select("id, sender, text, created_at, is_aix_generated, staff_writer, line_message_id, quoted_message_id, image_url").eq("conversation_id", spec.conv).in("line_message_id", want);
       const olds = ((qd ?? []) as Msg[]).filter((m) => m.sender !== "customer" && !!m.image_url && ms(m.created_at) < ms(ctx[0]?.created_at ?? cust[0].created_at)).sort((a, b) => ms(a.created_at) - ms(b.created_at));
       if (olds.length) ctx = [...olds, ...ctx];
     }
   }
-  const sceneMsgs = [...ctx, ...cust];
+  const sceneMsgs = [...ctx, ...cust, ...tail];
   const quotedIds = new Set(sceneMsgs.map((m) => m.quoted_message_id).filter((x): x is string => !!x && sceneMsgs.some((o) => o.line_message_id === x)));
   const context: ExamMsg[] = sceneMsgs.map((m) => ({
     s: m.sender === "customer" ? "customer" : "staff", t: mask(m.text) || "[画像]", aix: !!m.is_aix_generated, ago: Math.round((at - ms(m.created_at)) / 60_000),
