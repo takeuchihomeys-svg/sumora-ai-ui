@@ -32,6 +32,8 @@ export const SWITCH_TARGET_MARK: Record<string, string> = {
   COND_PICKUP_SENT_FIRST: "cond_pickup_sent_first", TWO_STAGE_SCREENING_NO_REWRITE: "screening_no_rewrite_turn", // 2026-11-27 作業員L（印を足す順の1番目） // 2026-11-27 作業員L（#806 お客様のカルテ） // 2026-11-27 作業員L（入居の時期と期限の1行）
   // 2026-11-27: 印なしだった3部品に印を足した（brain-core・on の時だけ）
   UNANSWERED_ASKS_LINE: "unanswered", // 2026-11-27 #814 まだ答えていない事
+  PROMISE_CHECK_NO_SENT_CLOSE: "overdue_check_strict", PROMISE_CALL_VIEW_FULFIL: "overdue_call_view", // 2026-11-28 作業員L（#856・#669・期日超えの約束の材料に入った番だけ）
+  CONDUCTOR_DEAL_FLOW_LINE: "deal_flow_intake", DEAL_FLOW_PRE_APPLY_LINE: "deal_flow_pre_apply", // 2026-11-28 作業員L（#728 ③ 成約データの1行・入口と申込準備の手前の駅）
   TIME_MAP_LINE: "time_map", // 2026-11-27 #808（配線は逆算の on の後）
   BACKPLAN_TO_WRITER: "backplan_to_writer", BACKPLAN_NEXT_STONE: "backplan_next_stone",
   ACK_PICKUP_AIX_PATH: "ack_pickup_path", BRAIN_RULE6_OPEN_PROMISE: "rule6_open_turn", APPLY_ROUTE_NEXT_BY_TURN: "route_next_by_turn",
