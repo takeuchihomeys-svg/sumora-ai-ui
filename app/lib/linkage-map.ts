@@ -77,6 +77,12 @@ export type LinkageRow = {
 
 const M = (path: string): FillSpec => ({ src: "meta", path });
 const T = (table: string, days: number, col?: string, where?: Record<string, string>): FillSpec => ({ src: "table", table, days, col, where });
+/** 2026-11-28 作業員L: 表の fill を数える時の日付の列（created_at の無い表だけ書く・無ければ created_at）。customer_fact_ledger・image_details は created_at が無く読めていなかった */
+export const FILL_TIME_COL: Readonly<Record<string, string>> = { cron_run_logs: "started_at", sent_properties: "sent_at", customer_fact_ledger: "built_at", image_details: "read_at" };
+export const fillTimeColOf = (table: string): string => FILL_TIME_COL[table] ?? "created_at";
+/** 2026-11-28 作業員L（台帳 #557・朝の1枚の「記録に残らない」rag.*）: RAG の行の fill は rag_call_logs（作業員H の RAG の見張り・本番の env=production・7日）の呼び出しのうち行が返った割合。名前 → rpc */
+export const RAG_FILL_RPC: Readonly<Record<string, string>> = { reply_examples: "match_reply_examples", knowledge: "match_reply_knowledge", takeuchi_compose: "match_takeuchi_compose", aix_examples: "match_aix_reply_examples" };
+export const RAG_FILL_DAYS = 7;
 /** 2026-11-21 作業員L（統括役の決め・K2 の WATCH_REOPEN_ON_NEW_CUSTOMER）: 見張りの行で読み直した印（verdict_detail.reopened）のある行は前の日・先週との比べから外す */
 const REOPEN_OUT: Record<string, string> = { "verdict_detail->reopened": "isnull:" };
 
@@ -150,7 +156,7 @@ export const LINKAGE_MAP: readonly LinkageRow[] = [
   // ④ RAG
   { id: "rag.reply_examples", stage: "rag", name: "返信の手本（ai_reply_examples）を場面で引く", producer: "generate-reply の手本の RAG", key: "書き手の材料: 手本", readers: ["writer.reply"], switches: [], readerSwitches: [], fill: { src: "rag", name: "reply_examples" }, owner: "作業員H", layer: "土台", next: "作業員H の RAG の見張りとつなぐ", decided: "rag_pick" },
   { id: "rag.knowledge", stage: "rag", name: "ナレッジ（ai_reply_knowledge）を引く", producer: "generate-reply のナレッジの RAG", key: "書き手の材料: ナレッジ", readers: ["writer.reply", "read.brain"], switches: [], readerSwitches: [], fill: { src: "rag", name: "knowledge" }, owner: "作業員H", layer: "土台", next: "作業員H の RAG の見張りとつなぐ", decided: "rag_pick" },
-  { id: "rag.takeuchi", stage: "rag", name: "竹内さんの手本（match_takeuchi_compose）", producer: "takeuchi-compose の RAG", key: "書き手の材料: 竹内さんの手本", readers: ["writer.reply"], switches: [], readerSwitches: [], fill: { src: "rag", name: "takeuchi_compose" }, owner: "作業員H", layer: "土台", next: "作業員H の RAG の見張りとつなぐ", decided: "rag_pick" },
+  { id: "rag.takeuchi", stage: "rag", name: "竹内さんの手本（match_takeuchi_compose）", producer: "takeuchi-compose の RAG", key: "書き手の材料: 竹内さんの手本", readers: ["writer.reply"], switches: ["BRAIN_COMPOSE_BLUEPRINT"] /* 2026-11-28 作業員L（#557）: 引くのは文の指示役（BRAIN_COMPOSE_BLUEPRINT・既定 off）の中だけ＝off の間は呼ばれない */, readerSwitches: [], fill: { src: "rag", name: "takeuchi_compose" }, owner: "作業員H", layer: "土台", next: "作業員H の RAG の見張りとつなぐ", decided: "rag_pick" },
   { id: "rag.winning", stage: "rag", name: "勝ちパターン（winning_patterns）", producer: "brain-core の勝ちパターン", key: "meta.winning_pattern", readers: ["writer.reply", "writer.aix_second"], switches: [], readerSwitches: [], fill: M("winning_pattern"), owner: "作業員H", layer: "土台", next: "-", decided: "rag_pick" },
   { id: "rag.aix_examples", stage: "rag", name: "AIX の手本（AIX の文の手本・カード）", producer: "aix-template-generate の手本", key: "AIX の書き手の材料", readers: ["writer.aix_second"], switches: [], readerSwitches: [], fill: { src: "rag", name: "aix_examples" }, owner: "作業員H", layer: "土台", next: "作業員H の RAG の見張りとつなぐ", decided: "rag_pick" },
   { id: "rag.near_focus", stage: "rag", name: "近い番の重点（conductor_turn_vectors・match_conductor_focus）", producer: "conductor-focus-server", key: "meta.conductor_focus.near", readers: ["conductor.focus"], switches: ["CONDUCTOR_FOCUS"], readerSwitches: [], fill: M("conductor_focus.near"), owner: "作業員5・作業員H", layer: "連携", next: "-", decided: "rag_pick" },
@@ -250,7 +256,11 @@ export function rowStatus(row: LinkageRow, sw: (name: string) => SwitchState, fi
   if (row.producer.startsWith("（無い）")) return { ...base, status: "broken", why: "作る側（配線）が無い" };
   if (offReaders.length) return { ...base, status: "broken", why: `作る側は動いているが読む側が off: ${offReaders.join("・")}` };
   if (!row.readers.length && row.stage !== "next") return { ...base, status: "broken", why: "読む側が無い" };
-  if (row.fill.src === "rag") return { ...base, status: "unknown", why: "RAG の空・失敗の割合は作業員H の RAG の見張りから（まだつないでいない）" };
+  // 2026-11-28 作業員L（#557）: RAG は rag_call_logs の呼び出しの数（n）と行が返った割合（rate）で測る。rpc の表に無い名前・読めない時だけ測れない
+  if (row.fill.src === "rag" && !RAG_FILL_RPC[row.fill.name]) return { ...base, status: "unknown", why: `RAG の名前 ${row.fill.name} の rpc が表（RAG_FILL_RPC）に無い` };
+  if (row.fill.src === "rag" && (fill == null || fillN == null)) return { ...base, status: "unknown", why: "RAG の呼び出しの記録（rag_call_logs）を読めなかった" };
+  if (row.fill.src === "rag" && fillN === 0) return { ...base, status: "broken", why: `作る側は on なのに ${RAG_FILL_DAYS}日の本番で RAG（${RAG_FILL_RPC[row.fill.name]}）の呼び出しが0回` };
+  if (row.fill.src === "rag") return { ...base, status: fill === 0 ? "broken" : (fill ?? 0) < SPARSE_BELOW ? "sparse" : "connected", why: `RAG（${RAG_FILL_RPC[row.fill.name]}）の呼び出しのうち行が返った割合 ${Math.round((fill ?? 0) * 100)}%（${fillN} 回・${RAG_FILL_DAYS}日）` };
   if (row.fill.src === "none") return { ...base, status: "unknown", why: row.fill.why };
   if (fill == null || fillN == null) return { ...base, status: "unknown", why: "本番の記録を読めなかった" };
   if (fillN === 0) return { ...base, status: "broken", why: "本番の直近の記録に1行も無い" };

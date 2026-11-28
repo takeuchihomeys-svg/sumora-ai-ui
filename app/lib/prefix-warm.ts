@@ -66,6 +66,11 @@ export type PrefixWarmInputs = {
   aixTemplateShared?: readonly { text: string }[];
 };
 
+/** 2026-11-27: 本体が OpenAI に回る時は温めない確かめ（書き直し revision は Claude のままなので温める）（純関数） */
+export function prefixWarmSkipsWhenOpenAI(name: string): boolean {
+  return name === "final_check_warm_rule_check" || name === "final_check_warm_anomaly_scan" || name === "final_check_warm_context_check";
+}
+
 function chars(blocks: WarmSystemBlock[]): number { return blocks.reduce((n, b) => n + b.text.length, 0); }
 
 /** 純関数。3つの経路の前置きを本物と同じ関数で作り、温めの対象（6つ）にする */

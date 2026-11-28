@@ -58,3 +58,14 @@ export function searchResultChoiceCaption(o: {
   if (PROPERTY_AIX.has(o.button)) return "物件あった場合";
   return null;
 }
+
+/**
+ * 2026-11-27 作業員L（台帳 #818・統括役の決め 案 A）: 竹内さんの 10/13 の決め（B）「全力サポートは新規の番では使わない。新着・他にあるかの番でブレインが候補にした時だけ」。
+ *   物件を探す番の左右の形（search-result-split・SEARCH_SPLIT_CHOICE）は、ブレインが候補にしていない時に規則の全力サポートを外している。
+ *   ところが2択の形（AIX か返信かのカード・isTwoChoiceMode）の番は左右の形を通らず、規則が足した全力サポートが残っていた＝その番だけ同じに外す（純関数）。
+ *   入り切り: 呼ぶ側が段階で読む（rollout.stageOnNow("SEARCH_CHOICE_TWO_MODE_SPLIT")・既定 off）。印 material_marks.search_choice_two_mode（外した番だけ）
+ */
+export function twoModeChoiceAlts(o: { on: boolean; twoChoiceMode: boolean; added: boolean; zenCandidate: boolean; before: string[] | undefined; after: string[] | undefined }): { altActions: string[] | undefined; removed: boolean } {
+  if (o.on && o.twoChoiceMode && o.added && !o.zenCandidate) return { altActions: o.before, removed: true };
+  return { altActions: o.after, removed: false };
+}

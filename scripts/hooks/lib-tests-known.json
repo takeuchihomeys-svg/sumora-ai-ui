@@ -1,0 +1,109 @@
+{
+ "v": 1,
+ "at": "2026-11-27",
+ "note": "main（733fe783c）で 1本ずつ流して決めた。slow＝1本 5秒超（夜に回す）・needsEnv＝DB の url が要る（.env があれば通る）・knownFail＝main でも落ちる（試験が古いのかコードが古いのかを分けて直したら消す）／2026-11-27 #826: 試験が古かった 11本を直して外した・作業の写しでは cwd に node_modules が無く落ちる pdf の2本と .env が要る relative-area を needsEnv へ",
+ "slow": [
+  {
+   "file": "brain-prompt-rules-1112.test.ts",
+   "sec": 12.3
+  },
+  {
+   "file": "brain-prompt-rules-1113.test.ts",
+   "sec": 11.9
+  },
+  {
+   "file": "brain-reply-mode-p0.test.ts",
+   "sec": 12.1
+  },
+  {
+   "file": "deepseek-busy-fallback.test.ts",
+   "sec": 16.9
+  },
+  {
+   "file": "final-check-flash.test.ts",
+   "sec": 5.4
+  }
+ ],
+ "needsEnv": [
+  "cron-log-wrap.test.ts",
+  "learn-improvements.test.ts",
+  "man-yen.test.ts",
+  "sent-image-doc-guard.test.ts",
+  "shot-ops-focus.test.ts",
+  "shot-retention.test.ts",
+  "supervisor-save.test.ts",
+  "relative-area.test.ts",
+  "pdf-render-text.test.ts",
+  "pdf-sheet-crop.test.ts"
+ ],
+ "knownFail": [
+  {
+   "file": "aix-catalog.test.ts",
+   "owner": "作業員A",
+   "was": "作業員21",
+   "ledger": 826,
+   "why": "AIX の場面の長さの上限 5,500字を ack が 5,623字で超えた。削るか上限を上げるかは AIX の持ち主の A が決める（統括役の決め 11/27・AIX の文なら提案タブの流れ）"
+  },
+  {
+   "file": "auto-next-page-resume.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "customer-sim.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "learn-audit.test.ts",
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
+  },
+  {
+   "file": "learn-garbage-cleanup.test.ts",
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
+  },
+  {
+   "file": "migrate-schema-rls.test.ts",
+   "owner": "統括役",
+   "ledger": 826,
+   "why": "竹内さんの決め待ち・安全の件（RLS を on にすると公開キーで動く所が止まるおそれ・project_rls_anon_key_pending）"
+  },
+  {
+   "file": "normal-photo-learn-traps.test.ts",
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
+  },
+  {
+   "file": "search-focus.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "search-update-days.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  },
+  {
+   "file": "supervisor-selfcheck-humanness.test.ts",
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
+  },
+  {
+   "file": "supervisor-wiring.test.ts",
+   "owner": "Cursor",
+   "ledger": 825,
+   "why": "拡張の学習・統括 Pro の部品（統括役の決め 11/27 で #825 へ）"
+  },
+  {
+   "file": "ward-reselect-loop.test.ts",
+   "owner": "Cursor",
+   "ledger": 825
+  }
+ ]
+}

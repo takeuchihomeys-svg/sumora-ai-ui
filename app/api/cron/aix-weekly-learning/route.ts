@@ -8,6 +8,8 @@ import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { excludeTestConversations } from "@/app/lib/test-conversations";
+import { stageOnNow } from "@/app/lib/rollout";
+import { dropApplyWindowRows } from "@/app/lib/apply-window-filter-server";
 // 2026-10-08 竹内さんの決定の2: 学習の窓 7日（線引きは14日）→30日（新しい7日×2・前の23日×1・LEARNING_WINDOW_30D=off で旧）
 import { learningWindow, pickRecentFirst, recencyTag, windowCountsLabel, weightingInstruction, meetsRecurrence, weightedCount, equivalentCount, isRecent, type LearningWindow } from "@/app/lib/learning-window";
 
@@ -303,7 +305,14 @@ async function synthesizeAixPatterns(
     return result;
   }
   // 2026-09-27: テスト用の会話（YUMA）は学びに入れない
-  const rows = excludeTestConversations(rowsRaw);
+  let rows = excludeTestConversations(rowsRaw);
+  // 2026-11-28 作業員L（統括役の決め3・申込以降を学びに使わない）: AIX の手本（aix_template・aix_property・aix_adapt）には rag_excluded の印が無い。
+  //   前の30日で aix_adapt 96行中 27・aix_property 54行中 8 が申込の期間。AIX_WEEKLY_LEARN_SKIP_APPLY=on（既定 off・段階で読む）の時だけ期間の行を外す（読めない時は外す側）
+  if (rows?.length && await stageOnNow("AIX_WEEKLY_LEARN_SKIP_APPLY", null)) {
+    const f = await dropApplyWindowRows(supabase as never, rows as Array<{ conversation_id?: string | null; created_at?: string | null }>);
+    if (f.dropped.length) console.info(JSON.stringify({ tag: "aix-weekly-learning:skip-apply", n: f.dropped.length, readFailed: f.readFailed }));
+    rows = f.kept as typeof rows;
+  }
 
   // Brain/AIX-META コンテキスト一括取得（fail-open）: パターン抽出時に
   // 「なぜこの送信が良かったか」の顧客状況文脈（brain_action・checkpoint_stage・customer_intent等）を渡す

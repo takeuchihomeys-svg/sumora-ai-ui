@@ -1,7 +1,7 @@
 // 2026-10-15 保留の番の柔らかい次の一手（hold-soft-next.ts）・迷いの返し方の但し書き（customer-mindset.ts）
 // 実行: npx tsx app/lib/__tests__/hold-soft-next.test.ts
 // お客様の発言は実物（scripts/audit-sales-mind.ts・audit-hold-soft-next.ts で読んだ竹内さんの番・名前と物件名は伏せた）
-import { holdTurnKind, softNextMoveOf, holdSoftNextMaterial, rule8HoldNote, holdSoftReplyNote, isThanksOnly } from "../hold-soft-next";
+import { holdTurnKind, softNextMoveOf, holdSoftNextMaterial, rule8HoldNote, holdSoftReplyNote, isThanksOnly, ackSoftNextMaterial, HOLD_SOFT_LINES } from "../hold-soft-next";
 import { hesitationMoveOf, buildMindsetReplyLinesNote, mindsetFreshOutputItem } from "../customer-mindset";
 
 let passed = 0, failed = 0; const failures: string[] = [];
@@ -65,10 +65,15 @@ it("返信: 退去予定の部屋でブレインが内覧と書いても抑え�
 it("返信: 空室でブレインが抑えると書いた → ブレインのとおり抑えるの1文", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "扉の文に申込でお部屋を抑える1文を添える", scene: "after_recommend", room: "vacant", env: V15 }).includes("抑えさせて")));
 it("返信: すぐ来られない番でもブレインが内覧と書いた → ブレインのとおり（材料で向きは渡してある）", () => ok(holdSoftReplyNote({ customerText: "検討します", brainDirection: "内覧案内の1文を添える", scene: "after_recommend", room: "vacant", delayed: true, env: V15 }).includes("ご案内させて")));
 it("ルール⑧の但し書き: 退去予定・すぐ来られない → 抑える", () => ok(rule8HoldNote(V15).includes("退去予定のお部屋・遠方などすぐ来られない")));
-it("迷いの返し方: 10/15 の文", () => ok(hesitationMoveOf("家族・同居人に相談", V15).includes("退去予定・遠方などすぐ来られない")));
+// 2026-11-27 作業員L（台帳 #822）: 家族・友人と相談の番は 10/18 の竹内さんの決定（設計知見 5bb9f76a・FAMILY_CONSULT_SUPPORT 既定 on）で 10/15 の柔らかい1文を置かない。
+//   この2つの試験は 10/15 の決定（fd949dd7）のまま古かった（main でも落ちていた）＝試験を決まりに合わせる。コードと本番の文は変えない
+it("迷いの返し方: 10/15 の文（保留）", () => ok(hesitationMoveOf("急がない・保留", V15).includes("退去予定・遠方などすぐ来られない")));
+it("迷いの返し方: 家族と相談は 10/18 の決定（柔らかい1文を置かない・サポートの姿勢の1文）", () => { const t = hesitationMoveOf("家族・同居人に相談", V15); ok(!t.includes("退去予定・遠方などすぐ来られない")); ok(t.includes("サポートの姿勢の1文を必ず入れる")); });
+it("家族と相談 FAMILY_CONSULT_SUPPORT=off → 旧（10/15 の1文＋10/16 の締め）", () => { const t = hesitationMoveOf("家族・同居人に相談", { ...V15, FAMILY_CONSULT_SUPPORT: "off" }); ok(t.includes("退去予定・遠方などすぐ来られない")); ok(t.includes("目安は足さない")); });
 
 console.log("■ 迷いの返し方（customer-mindset）");
-it("家族・同居人に相談 → 扉＋柔らかい一手の但し書き", () => ok(hesitationMoveOf("家族・同居人に相談", ON).includes("柔らかい次の一手")));
+it("保留 → 扉＋柔らかい一手の但し書き", () => ok(hesitationMoveOf("急がない・保留", ON).includes("柔らかい次の一手")));
+it("家族・同居人に相談 → 柔らかい一手を足さない（10/18 の決定）", () => ok(hesitationMoveOf("家族・同居人に相談", ON).includes("10/15 の保留の柔らかい1文はこの番では置かない")));
 it("複数物件で迷う には付けない", () => ok(!hesitationMoveOf("複数物件で迷う", ON).includes("柔らかい次の一手")));
 it("off → 旧の文", () => ok(!hesitationMoveOf("家族・同居人に相談", OFF).includes("柔らかい次の一手")));
 it("迷いの状態の1行は変えない（返信はブレインが書いた時だけ）", () => ok(!buildMindsetReplyLinesNote("迷い", null, { ...ON, MINDSET_REPLY_LINES: "on" }).includes("47%")));
@@ -88,6 +93,24 @@ it("物件確認の結果が全部 募集に出ていない → お礼の番に�
 it("物件確認の結果が全部 募集に出ていない → 保留の材料も出さない", () => eq(holdSoftNextMaterial({ customerText: "検討します", scene: "after_check", room: "vacant", checkAllUnavailable: true, env: V15 }), ""));
 it("物件確認の結果が全部 募集に出ていない → 返信の1文も渡さない", () => eq(holdSoftReplyNote({ customerText: "検討します", brainDirection: "受け止め＋扉の文＋内覧のご案内の1文", scene: "after_check", room: "vacant", checkAllUnavailable: true, env: V15 }), ""));
 it("一部募集中（checkAllUnavailable=false）は今まで通り材料を出す", () => ok(holdSoftNextMaterial({ customerText: "ありがとうございます！", scene: "after_check", room: "vacant", checkAllUnavailable: false, env: V15 }).includes("刺さっているか")));
+
+// 2026-11-27 作業員L（#815 ACK_SOFT_NEXT）: 物件への反応の番（好意・中身の質問）の柔らかい次の一手（候補）
+it("物件への反応の番: 好意・質問で候補の1行・内覧か申込かは駅と部屋で", () => {
+  const base = { customerText: "いいですね！駅からどのくらいですか", scene: "after_pickup", customer: "question", room: "vacant" };
+  const v = ackSoftNextMaterial(base);
+  eq(v.includes(HOLD_SOFT_LINES.viewing) && v.includes("候補"), true, "提案中の空室は内覧のご案内");
+  eq(ackSoftNextMaterial({ ...base, scene: "post_viewing", customer: "positive", customerText: "素敵なお部屋でした" }).includes(HOLD_SOFT_LINES.apply), true, "内覧の後はお申込みで抑える");
+  eq(ackSoftNextMaterial({ ...base, room: "move_out_not_viewable" }).includes(HOLD_SOFT_LINES.apply), true, "退去予定は申込で抑える");
+});
+it("物件への反応の番: 入れない番", () => {
+  const base = { customerText: "いいですね", scene: "after_pickup", customer: "positive", room: "vacant" };
+  eq(ackSoftNextMaterial({ ...base, scene: "viewing_confirmed" }), "", "決まった内覧の番（言い直し）");
+  eq(ackSoftNextMaterial({ ...base, scene: "post_apply" }), "", "申込以降");
+  eq(ackSoftNextMaterial({ ...base, customer: "ack" }), "", "反応が好意・質問でない");
+  eq(ackSoftNextMaterial({ ...base, customerText: "家族と相談します" }), "", "保留は保留の材料（押さない）");
+  eq(ackSoftNextMaterial({ ...base, checkAllUnavailable: true }), "", "確認の結果が全部募集に出ていない");
+  eq(ackSoftNextMaterial({ ...base, scene: "other" }), "", "物件を送った後でない");
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) { console.log(failures.join("\n")); process.exitCode = 1; }

@@ -37,9 +37,28 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     // 2026-11-26 作業員L（#799 ④）: on にした直しの試験での差と本番の一致の動き（7日・14日・quality_daily on_after:*・#610 の突き合わせ）
     { name: "on の後の本番の動き（quality_daily）", args: ["scripts/audit-on-after.ts", "--write"], timeoutMin: 5 },
     // 2026-11-26 作業員L（竹内さん「統括の連携と優先度・かなり重要」）: MATERIAL_PRIORITY の shadow の当たり（前の24時間・quality_daily mp:shadow_hit・11/30 の組の効く問題の元）
-    { name: "MATERIAL_PRIORITY の shadow の当たり（quality_daily）", args: ["scripts/audit-material-priority-hit.ts", "--hours=24", "--write"], timeoutMin: 10 },
+    // 2026-11-28 作業員L（#747）: 前の24時間だと竹内さん本人の番が0で決められた番が0（11/27 の晩 n=0）＝11/30 の組の材料にならない→前の7日で数える（晩の仕事なので読みは夜だけ）
+    { name: "MATERIAL_PRIORITY の shadow の当たり（quality_daily）", args: ["scripts/audit-material-priority-hit.ts", "--hours=168", "--write"], timeoutMin: 15 },
     // 2026-11-27 作業員L（#803 試験の辞書）: 問題の定義・要る材料・前の on の覚え・揺れを1つの表に（exam-cache/exam-dictionary.json・ファイルだけ）と前の7晩の物差し
     { name: "試験の辞書（exam-dictionary.json）", args: ["scripts/build-exam-dictionary.ts", "--eval"], timeoutMin: 5 },
+    // 2026-11-27 作業員L（#816 スイッチの一生の台帳）: 既定 off の部品ごとの1行と「試す／退役／印が先」の候補（exam-cache/switch-life.json・朝の1枚の1行・DB は台帳と設計知見の軽い読み・積まない）
+    { name: "スイッチの一生（switch-life.json）", args: ["scripts/switch-life.ts", "--write"], timeoutMin: 30 },
+    // 2026-11-28 作業員L（#806 お客様のカルテ）: 前の7日の会話にカルテの計算を当てて、出る割合・欄ごとの埋まり・審査の事情で落とした欄を数える（quality_daily karte:*・本番の会話を軽く読む・LLM 0）
+    { name: "お客様のカルテの物差し（quality_daily karte:*）", args: ["scripts/audit-customer-karte.ts", "--days=7", "--max-conv=150", "--write", "--wait-min=20"], timeoutMin: 15 },
+    // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 前の3晩の 係の試験・手元の試験・ほか（DB の関数 exam_cost_by_night の集計1本・LLM 0）
+    { name: "試験の費用の名札ごとの数え（quality_daily exam_cost:*）", args: ["scripts/audit-exam-cost-daily.ts", "--nights=3", "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員L（#811 任せられる度）: 番の行（個人情報あり＝係の置き場の json の隣・リポジトリに置かない）→ 場面ごとの表を quality_daily deleg:* に（LLM 0）
+    { name: "任せられる度の番の行（#811 の元）", args: ["scripts/audit-split-reply-aix.ts", "--days=30", `--out=${jsonPath}.deleg-turns.jsonl`], timeoutMin: 20 },
+    { name: "任せられる度（quality_daily deleg:*）", args: ["scripts/audit-delegation-index.ts", `--from=${jsonPath}.deleg-turns.jsonl`, "--write", "--wait-min=10"], timeoutMin: 15 },
+    // 2026-11-28 作業員L（#803 ①・#686）: 試験の効率の物差し（test:efficiency:*）は 11/25 に1回書いたきりで、朝の1枚の「試験の効率」が古い数を出していた。
+    //   晩の初め（22時）に流すので、数えるのは前の晩（--night＝JST の日付の前の晩・既定のままだと始まったばかりの今夜で空になる）。台帳への自動の積み（--write-items）は統括役の決めの後
+    { name: "試験の効率の物差し（quality_daily test:efficiency:*）", args: ["scripts/audit-night-cost.ts", `--night=${new Date(Date.now() + 9 * 3_600_000 - 34 * 3_600_000).toISOString().slice(0, 10)}`, "--days=7", "--write"], timeoutMin: 10 },
+    // 2026-11-28 作業員L（#664 約束の一生）: 段ごとの数（promise_life:*）は 11/25 に1回書いたきりで、朝の1枚が古い数を出し続けていた＝毎晩数え直す。
+    //   元の3本（種類の網は本番と同じ＝PROMISE_KIND_WIDE2 だけ on・B1・閉じた時刻）を係の置き場の json に書き、最後の1本が quality_daily に書く（LLM 0）
+    { name: "約束の種類の数え（約束の一生の元）", args: ["scripts/audit-promise-kinds.ts", "--days=14", "--wide2", `--out=${jsonPath}.promise-kinds.json`], timeoutMin: 15 },
+    { name: "約束を期限内に果たした割合 B1（約束の一生の元）", args: ["scripts/audit-promise-kept.ts", "--days=30", "--max-convs=400", `--out=${jsonPath}.promise-b1.json`], timeoutMin: 30 },
+    { name: "約束の閉じた時刻（約束の一生の元）", args: ["scripts/list-done-at-backfill.ts", "--days=60", `--out=${jsonPath}.promise-done.json`], timeoutMin: 10 },
+    { name: "約束の一生の段ごとの数（quality_daily promise_life:*）", args: ["scripts/audit-promise-lifecycle.ts", `--kinds=${jsonPath}.promise-kinds.json`, `--b1=${jsonPath}.promise-b1.json`, `--done=${jsonPath}.promise-done.json`, "--write"], timeoutMin: 5 },
     // 2026-11-26 作業員L（#799 ⑤）: 週の全部 on の組の候補（土曜の晩だけ作る・係の置き場の md に足すだけ・積まない）
     //   統括役 11/26 の決め: 土曜に作って係の候補（memory/night_bundle_candidates.md・係の作業ツリーから ../../../memory）に足し、日曜の晩に流す
     { name: "週の全部 on の組の候補（土曜だけ）", args: ["scripts/plan-week-combo.ts", "--weekly", "--write=../../../memory/night_bundle_candidates.md"], timeoutMin: 5 },

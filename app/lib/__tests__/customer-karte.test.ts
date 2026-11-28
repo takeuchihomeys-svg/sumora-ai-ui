@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { karteOf, karteBlock, customerKarteOn } from "../customer-karte";
+import { karteOf, karteBlock, customerKarteOn, DECIDER_RE, KARTE_DECLINE_RE } from "../customer-karte";
 import { SWITCH_TARGET_MARK } from "../../../scripts/lib/exam-snapshot-need";
 
 const now = "2026-11-27T03:00:00Z";
@@ -33,4 +33,11 @@ assert.equal(karteBlock(karteOf({ pc: null, msgs: [], nowIso: now })), "", "何�
 assert.equal(SWITCH_TARGET_MARK.CUSTOMER_KARTE, "customer_karte", "印の決まり");
 const core = readFileSync(join(__dirname, "../brain-core.ts"), "utf8");
 assert.ok(/ck\.customerKarteOn\(\) && !isPostApplyStatus\(convStatus\)/.test(core) && core.includes("materialMarks.customer_karte = karteMarkLen"), "配線・申込以降は出さない・印");
-console.log("customer-karte ok 15");
+// 2026-11-28 #806: 実物の言い方（伏せた形）で決める人・断りの網を確かめる
+for (const t of ["夫と相談しながらでしたので", "友人に相談の上、またご連絡", "相方と色々と協議した結果", "母に確認したところ", "一旦彼氏とも話してみます"]) assert.ok(DECIDER_RE.test(t), t);
+for (const t of ["すごく親切で丁寧なご対応", "親身に相談に乗って頂き", "姉妹物件の確認をお願いします", "旦那の名義で", "嫁が保証人になるのは"]) assert.ok(!DECIDER_RE.test(t), `誤って拾わない: ${t}`);
+for (const t of ["今回はやめておきます", "パスでお願いします", "微妙なので見送ります", "別のところでお願いします", "こちらなしで、お願いします", "別探します"]) assert.ok(KARTE_DECLINE_RE.test(t), t);
+for (const t of ["明日とかは厳しいですか", "駅から遠いのがちょっと気になってまして", "他の物件も見ておきたいのですが", "来年まで見送ろうと思っているので"]) assert.ok(!KARTE_DECLINE_RE.test(t), `断りにしない: ${t}`);
+const kd = karteOf({ pc: null, msgs: [{ sender: "customer", text: "キッチンスペースが狭いので微妙です", created_at: "2026-11-20T10:00:00Z" }], sent: [{ property_name: "テストハイツ", sent_at: "2026-11-20T09:00:00Z" }], nowIso: "2026-11-21T00:00:00Z" });
+assert.ok(kd.declined?.includes("テストハイツ"), "1件だけ送った後の断り");
+console.log("customer-karte ok 22");

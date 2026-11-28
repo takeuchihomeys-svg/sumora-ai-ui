@@ -104,7 +104,21 @@ export const budgetPiiToOpenAIOn = (env: Env = typeof process !== "undefined" ? 
 export const BUDGET_PII_WRITER_PROFILE = "openai-writer-v2-note-med";
 export const CLAUDE_SPEND_BASE_USD_DEFAULT = 291.71;
 export const CLAUDE_SPEND_BASE_AT_DEFAULT = "2026-11-24T01:19:00Z";
-export function readBudgetConfig(env: Env = typeof process !== "undefined" ? process.env : {}): BudgetConfig {
+/**
+ * 2026-11-27 作業員L（竹内さんの決め 11/27「OpenAI は1週間後から毎月 $200」「日付で自動に切り替え」）: OPENAI_ALLOWANCE_FROM（JST の日付 YYYY-MM-DD）の 0時から、
+ *   OpenAI の枠と特典を OPENAI_ALLOWANCE_FROM_USD（既定 200）に、区切りの日をその日に替える。その日より前と、env が無い・読めない時は今まで通り（$100・月初）。
+ *   正しい日が分かれば env の日付だけ直す。回す係（案 A＝統括・最終チェック（書き直しを除く）・軽い係・学び）は今まで通りの表（budgetRoleOf）のまま
+ */
+export function openaiAllowanceFromOf(env: Env, nowMs: number): { usd: number; resetDay: number } | null {
+  const d = String(env.OPENAI_ALLOWANCE_FROM ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const fromMs = Date.parse(`${d}T00:00:00+09:00`);
+  if (!Number.isFinite(fromMs) || nowMs < fromMs) return null;
+  const usd = numOr(env.OPENAI_ALLOWANCE_FROM_USD, 200) ?? 200;
+  return { usd, resetDay: Math.min(28, Math.max(1, Number(d.slice(8, 10)))) };
+}
+export function readBudgetConfig(env: Env = typeof process !== "undefined" ? process.env : {}, nowMs: number = Date.now()): BudgetConfig {
+  const oaFrom = openaiAllowanceFromOf(env, nowMs);
   const m = String(env.LLM_BUDGET_ROUTE ?? "").trim().toLowerCase();
   const models: Partial<Record<BudgetRole, string>> = {};
   for (const part of String(env.LLM_BUDGET_ROLE_MODELS ?? "").split(",")) {
@@ -121,13 +135,13 @@ export function readBudgetConfig(env: Env = typeof process !== "undefined" ? pro
     baseAt: baseAt && Number.isFinite(Date.parse(baseAt)) ? new Date(baseAt).toISOString() : null,
     resetDay: Math.min(28, Math.max(1, Math.round(numOr(env.CLAUDE_CREDIT_RESET_DAY, 10) ?? 10))),
     split: String(env.LLM_BUDGET_SPLIT ?? "").trim().toLowerCase() !== "off",
-    openaiAllowanceUsd: numOr(env.OPENAI_ALLOWANCE_USD, numOr(env.OPENAI_MONTH_CREDIT_USD, 100)) ?? 100,
-    openaiResetDay: Math.min(28, Math.max(1, Math.round(numOr(env.OPENAI_CREDIT_RESET_DAY, 1) ?? 1))),
+    openaiAllowanceUsd: oaFrom ? oaFrom.usd : numOr(env.OPENAI_ALLOWANCE_USD, numOr(env.OPENAI_MONTH_CREDIT_USD, 100)) ?? 100,
+    openaiResetDay: oaFrom ? oaFrom.resetDay : Math.min(28, Math.max(1, Math.round(numOr(env.OPENAI_CREDIT_RESET_DAY, 1) ?? 1))),
     openaiStopShare: Math.min(1, Math.max(0.5, numOr(env.OPENAI_STOP_SHARE, 0.95) ?? 0.95)),
     extra: String(env.LLM_BUDGET_EXTRA ?? "").trim().toLowerCase() === "on",
     factor: numOr(env.CLAUDE_COST_FACTOR, 1) ?? 1,
     claudeCreditUsd: numOr(env.CLAUDE_MONTH_CREDIT_USD, 200) ?? 200,
-    openaiCreditUsd: numOr(env.OPENAI_MONTH_CREDIT_USD, 100) ?? 100,
+    openaiCreditUsd: oaFrom ? oaFrom.usd : numOr(env.OPENAI_MONTH_CREDIT_USD, 100) ?? 100,
     models,
   };
 }

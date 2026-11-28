@@ -16,6 +16,8 @@ export const REQUIRED_FUNCS = [
   "increment_template_use_count", "match_aix_reply_examples", "match_design_thinking_exact", "match_region_map",
   "match_reply_examples", "match_reply_knowledge", "match_station_map", "match_templates", "match_winning_patterns",
   "psk_mark_used", "search_conversation_ids_by_message", "update_knowledge_feedback_by_pairs",
+  // 2026-11-27 作業員L（台帳 #826・統括役の決め 2）: コードが .rpc で呼ぶのに一覧に無かった3つ（本番の DB にあることを確かめた・点検の表だけ）
+  "match_conductor_focus", "match_conductor_lessons", "match_takeuchi_compose",
   // rpc では呼ばないが probes の見張り（rag-probes-check.ts）の対象
   "match_design_thinking", "match_conversation_checkpoints",
 ] as const;

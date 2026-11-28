@@ -71,6 +71,12 @@ export async function liveSituationV2(sb: SupabaseClient, o: { conversationId: s
       sb.from("aix_usage_logs").select("created_at, aix_type, line_message_id").eq("conversation_id", o.conversationId).gte("created_at", since).order("created_at", { ascending: true }).limit(500),
       sb.from("conversations").select("customer_name").eq("id", o.conversationId).maybeSingle(),
     ]);
+    // 2026-11-28 作業員L（統括役の決め・申込の書類の伏せの穴）: この文は OpenAI の埋め込みに送り、embedding_cache に文のまま残る。
+    //   申込の線（loadDeepseekCutoff と同じ線）の内側＝申込中・読めない（null）は作らない。線の後だけ（ISO）は線より後の通だけ。今の番が記入済みの申込フォームなら作らない
+    const { loadDeepseekCutoff, isFilledApplicationForm } = await import("@/app/lib/post-apply");
+    const cutoff = await loadDeepseekCutoff(sb, o.conversationId);
+    if (cutoff === null || isFilledApplicationForm(o.customerTurn)) return null;
+    const afterCut = (iso: string) => typeof cutoff !== "string" || Date.parse(iso) > Date.parse(cutoff);
     const { maskPII } = await import("@/app/lib/pii-mask");
     const { customerNameTokens, maskCustomerNames } = await import("@/app/lib/compose-name-mask");
     const { maskContactBits } = await import("@/app/lib/conductor-turn-vectors");
@@ -86,6 +92,7 @@ export async function liveSituationV2(sb: SupabaseClient, o: { conversationId: s
       return near?.aix_type ?? "aix_unknown";
     };
     const hist: Array<{ sender: string; text: string; created_at: string; aixType: string | null }> = ((msgs ?? []) as Array<{ sender: string; text: string | null; created_at: string; is_aix_generated: boolean | null; line_message_id: string | null }>).reverse()
+      .filter((m) => afterCut(m.created_at) && !isFilledApplicationForm(m.text)) // 2026-11-28: 線より前・記入済みの申込フォームの通は入れない
       .map((m) => ({ sender: m.sender, text: mask(m.text ?? ""), created_at: m.created_at, aixType: m.is_aix_generated ? aixOf(m) : null }));
     // 今の番の連投（最後に続くお客様の通）は hist に入れない＝過去の番の作り（番の始まりより前）と揃える
     while (hist.length && hist[hist.length - 1].sender === "customer") hist.pop();

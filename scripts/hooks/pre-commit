@@ -1,0 +1,7 @@
+#!/bin/sh
+# scripts/hooks/pre-commit — 2026-11-27 作業員L（統括役の決め）: commit に入る物に関わる app/lib/__tests__ の試験だけを流す（上限 60秒・超えたら記録して通す）
+# 有効にするのはこの PC の倉庫だけ: git config core.hooksPath scripts/hooks（設定は commit しない・Cursor の PC と作業の写しには入れない）
+# 逃げ道: SKIP_LIB_TESTS=1 git commit ...（統括役の夜の merge でも効く）
+cd "$(git rev-parse --show-toplevel)" || exit 0
+[ -f scripts/hooks/lib-tests-for-commit.cjs ] || exit 0
+exec node scripts/hooks/lib-tests-for-commit.cjs

@@ -173,9 +173,10 @@ async function main() {
   if (doCore) {
     const cl = await checkLinkage().catch(() => null);
     if (cl) {
-      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured }, { metric: "core:no_denominator", value: cl.noDenominator.length, n: cl.measured + cl.noDenominator.length });
+      // 2026-11-28 作業員L（#858）: core:linkage の分母から親が off（on 待ち）の行を外した（この日から % の線が上がる・数え方の変わり目）。on 待ちの数は core:on_wait
+      coreRows.push({ metric: "core:linkage", value: cl.score, n: cl.measured }, { metric: "core:no_denominator", value: cl.noDenominator.length, n: cl.measured + cl.noDenominator.length }, { metric: "core:on_wait", value: cl.onWait.length, n: cl.measured + cl.onWait.length });
       if (cl.noDenominator.length) { lines.push(`### 芯: 記録に残らない（分母が無い・地図の行 ${cl.noDenominator.length}）`, ...cl.noDenominator.slice(0, 8).map((x) => `- ${x.id}｜${currentOwnerOf(x.owner, x.id)}｜${x.why.slice(0, 70)}`)); for (const x of cl.noDenominator.slice(0, 3)) coreFix.push(`記録に残らない（分母が無い）: ${x.id} → ${currentOwnerOf(x.owner, x.id)}`); }
-      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${currentOwnerOf(w.owner, w.id)}｜${w.why.slice(0, 70)}`));
+      lines.push(`### 芯: 連携が弱い（地図のつながり ${cl.score ?? "—"}%＝${cl.connected}/${cl.measured}・弱い所 ${cl.weak.length}・on 待ち ${cl.onWait.length}）`, ...cl.weak.slice(0, 8).map((w) => `- ${w.kind === "not_delivered" ? "届いていない" : "使われていない"}｜${w.label}｜${w.rate ?? "—"}%｜${currentOwnerOf(w.owner, w.id)}｜${w.why.slice(0, 70)}`));
       for (const w of cl.weak.slice(0, 5)) coreFix.push(`連携が弱い: ${w.label}（${w.kind === "not_delivered" ? "届いていない" : "使われていない"}・${w.rate ?? "—"}%）→ ${currentOwnerOf(w.owner, w.id)}`);
     }
     // 2026-11-23 作業員A（竹内さん 11/23・P0・#662「統括は全部管理して細かく細分化して反映できるように」）: 統括の受け持ち（土台ごとに 持つ／使う／反映）。
@@ -674,6 +675,8 @@ async function main() {
   const worse = runs.filter((r) => /確かな悪化 [1-9]/.test(String(r.summary ?? "")));
   const cost = Math.round(runs.reduce((a, r) => a + Number(r.cost_usd ?? 0), 0) * 100) / 100;
   if (!only || doCandidates) lines.push("### 試験（前の24時間）", `- 本 ${runs.length}・費用 $${cost}・確かな悪化のあった本 ${worse.length}${worse.length ? `（${worse.slice(0, 5).map((r) => r.label).join("・")}）` : ""}`, "");
+  // 2026-11-27 作業員L（作業員A の #817 の欄に渡す）: 晩の空き枠の1行
+  let nightCapLine: string | null = null;
   // 2026-11-24 作業員L（台帳 #686・竹内さん「試験の費用も抑えて、質も上げていく仕組み」）: 試験の効率の物差し（scripts/audit-night-cost.ts --write が書いた test:efficiency:*）を1行で
   if (!only || doCandidates) {
     // 一番新しい日の分（audit-night-cost は晩の翌日の日付で書く・この1枚の day とずれるので日で絞らず新しい順）
@@ -684,8 +687,10 @@ async function main() {
       const v = (k: string) => (ev.get(k)?.value == null ? null : Number(ev.get(k)!.value));
       const wn = ev.get("worse_night");
       lines.push(`- 試験の効率: 費用 $${(v("usd") ?? 0).toFixed(2)}（DeepSeek $${(v("usd_deepseek") ?? 0).toFixed(2)}・OpenAI $${(v("usd_openai") ?? 0).toFixed(2)}・Claude $${(v("usd_claude") ?? 0).toFixed(2)}）・on にできた直し ${v("fixes_on") ?? 0}本${v("usd_per_fix") != null ? `（1本あたり $${v("usd_per_fix")!.toFixed(2)}）` : ""}・確かな悪化を見つけた ${v("sure_worse") ?? 0}本・差なしの組の $ ${v("nodiff_share") != null ? `${Math.round(v("nodiff_share")! * 100)}%` : "—"}・止めた $${(v("stopped_usd") ?? 0).toFixed(2)}${v("worse_night") ? `・⚠ 効率が悪くなった（${(wn?.detail?.why ?? []).join("・")}）` : ""}`, "");
+      // 2026-11-28 作業員L（#803 ①）: 晩に数え直していないと古い数が出続ける（test:efficiency は 11/25 に1回書いたきりだった）＝2日より古ければ印
+      { const efDay = (ef[0] as { day: string } | undefined)?.day; if (efDay && now - Date.parse(`${efDay}T00:00:00+09:00`) > 2 * 86_400_000) lines.push(`  - ⚠ 試験の効率の数が古い（${efDay}・晩の費用0の仕事の audit-night-cost が書いていない）`); }
       // 2026-11-27 作業員L（#803・統括役の決め）: 晩の空き枠（上限 $10 の内）と流れ残った組（朝に列に残った試験の組）
-      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); lines.push(nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }).line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
+      try { const { nightCapacity, leftoverJobs } = await import("./lib/night-capacity"); const { nightJobsOf } = await import("./build-exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette"); const { readdirSync: rd, readFileSync: rf } = await import("node:fs"); const Q = `${examCacheRoot()}/exam-queue`; const last = nightJobsOf(`${Q}/results`, 1); const spent = last.reduce((a, j) => a + j.usd, 0); const d0 = new Date(now + 9 * 3_600_000 - 864e5).toISOString().slice(0, 10); const ns = Date.parse(`${d0}T22:00:00+09:00`); const q = rd(Q).filter((f) => f.endsWith(".json") && !["config.json", "scene-map.json", "prod-env.json"].includes(f)).map((f) => { try { return JSON.parse(rf(`${Q}/${f}`, "utf8")); } catch { return {}; } }); const nc = nightCapacity({ spentUsd: spent, jobs: last.length, leftover: leftoverJobs(q, ns), openaiUsd: v("usd_openai") }); nightCapLine = nc.line; lines.push(nc.line, ""); } catch (e) { console.warn("[self-improve] 晩の空き枠を出せない:", e instanceof Error ? e.message : String(e)); }
     }
   }
   // 2026-11-25 作業員L（台帳 #727）: 約束の一生の段ごとの数（audit-promise-lifecycle --write の promise_life:*・一番新しい日）
@@ -695,7 +700,41 @@ async function main() {
     if (pl.length) {
       const g = (k: string) => { const r = pl.find((x) => x.metric === `promise_life:${k}`); return r?.value == null ? "—" : `${Number(r.value)}%`; };
       lines.push(`- 約束の一生（${pl[0].day}）: 見つけるの外れ ${g("find_miss")}・文に期限 ${g("due_words")}・台帳 ${g("record_fact")}・期限内に果たした ${g("kept_in_time")}・閉じた時刻 ${g("closed_with_time")}・試験の約束の依頼の扱い ${g("exam_promise_covered")}（答え方 ${g("exam_promise_route")}）`, "");
+      // 2026-11-28 作業員L（#664）: 晩に数え直していないと古い数が出続ける（11/25 に1回書いたきりだった）＝2日より古ければ印
+      if (now - Date.parse(`${pl[0].day}T00:00:00+09:00`) > 2 * 86_400_000) lines.push(`  - ⚠ 約束の一生の数が古い（${pl[0].day}・晩の費用0の仕事の audit-promise-lifecycle が書いていない）`);
     }
+  }
+  // 2026-11-27 作業員L（台帳 #816 スイッチの一生の台帳）: 晩の費用0の仕事（scripts/switch-life.ts --write）が書いた <exam-cache>/switch-life.json の1行（36時間より古ければ出さない）
+  if (!only || doCandidates) {
+    try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf } = await import("node:fs"); const j = JSON.parse(rf(`${examCacheRoot()}/switch-life.json`, "utf8")) as { at?: string; line?: string }; if (j.line && j.at && now - Date.parse(j.at) < 36 * 3600_000) lines.push(`- ${j.line}`); } catch { /* 無い晩は出さない */ }
+  }
+  // 2026-11-28 作業員L（#811 任せられる度）: 一番新しい日の deleg:*:全体（そのまま送れた割合・危ない間違い・AIX の番を返信で済ませた数）と、そのまま送れた割合の高い場面の上位3
+  if (!only || doCandidates) {
+    const { data: dl0 } = await sb.from("quality_daily").select("day, metric, value, n").eq("scope", "all").like("metric", "deleg:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(200);
+    const dl = ((dl0 ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (dl.length) {
+      const g = (m: string) => dl.find((r) => r.metric === m);
+      const asIs = g("deleg:as_is:全体"), danger = g("deleg:danger:全体"), aixr = g("deleg:aix_as_reply:全体");
+      const top = dl.filter((r) => r.metric.startsWith("deleg:as_is:") && !r.metric.endsWith(":全体") && (r.n ?? 0) >= 5 && r.value != null).sort((a, b) => Number(b.value) - Number(a.value)).slice(0, 3).map((r) => `${r.metric.slice("deleg:as_is:".length)} ${r.value}%（${r.n}番）`);
+      lines.push(`- 任せられる度（#811・${dl[0].day}・前の30日）: そのまま送れた ${asIs?.value ?? "—"}%（返信の番 ${asIs?.n ?? "—"}）・危ない間違い ${danger?.value ?? "—"}・AIX の番を返信で済ませた ${aixr?.value ?? "—"}（AIX の番 ${aixr?.n ?? "—"}）${top.length ? `｜高い場面 ${top.join("・")}` : ""}`);
+      if (now - Date.parse(`${dl[0].day}T00:00:00+09:00`) > 2 * 86_400_000) lines.push(`  - ⚠ 任せられる度の数が古い（${dl[0].day}・晩の費用0の仕事が書いていない）`);
+    }
+  }
+  // 2026-11-28 作業員L（#803 ③）: 差なしの組の関所の前の24時間（止めた「つもり」の数と前の同じ組の $・conductor-marks/same-nodiff-gate.jsonl）
+  if (!only || doCandidates) {
+    try { const { examCacheRoot } = await import("./lib/llm-cassette"); const { readFileSync: rf, existsSync: ex } = await import("node:fs"); const f = `${examCacheRoot()}/conductor-marks/same-nodiff-gate.jsonl`; if (ex(f)) { const marks = rf(f, "utf8").split("\n").filter(Boolean).slice(-500).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); const ln = (await import("./lib/exam-same-nodiff")).sameNoDiffMorningLine(marks, now); if (ln) lines.push(ln); } } catch { /* 無い晩は出さない */ }
+  }
+  // 2026-11-28 作業員L（統括役の決め・試験の費用は llm_usage_logs の名札で数えるのが正）: 一番新しい晩の exam_cost:* と夜の上限 $10・手元の試験が $1 を超えたら ⚠ 係の外の試験
+  if (!only || doCandidates) {
+    const { data: ec0 } = await sb.from("quality_daily").select("day, metric, value, detail").eq("scope", "all").like("metric", "exam_cost:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(8);
+    const ec = ((ec0 ?? []) as Array<{ day: string; metric: string; value: number | null; detail?: unknown }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (ec.length) lines.push(...(await import("./lib/exam-cost-daily")).examCostMorningLines(ec));
+  }
+  // 2026-11-28 作業員L（台帳 #806 お客様のカルテ）: 晩の費用0の仕事（scripts/audit-customer-karte.ts --write）が書いた quality_daily karte:*（一番新しい日）の1行
+  if (!only || doCandidates) {
+    const { data: kq0 } = await sb.from("quality_daily").select("day, metric, value, n").eq("scope", "all").like("metric", "karte:%").lte("day", jstDay(now)).order("day", { ascending: false }).limit(20);
+    const kq = ((kq0 ?? []) as Array<{ day: string; metric: string; value: number | null; n: number | null }>).filter((r, _i, a) => r.day === a[0]?.day);
+    if (kq.length) { const lines2 = (await import("./lib/karte-morning")).karteMorningLine(kq); if (lines2) lines.push(lines2); }
   }
   // 2026-11-25 作業員L（台帳 #664 の④・統括役の決め）: 統括に渡す期日超えの約束の「今」の差（OVERDUE_NOW_CLOCK=shadow の記録 digest.odn・前の24時間・日付で絞った軽い読み）。
   //   渡った数（最後の通の時刻で読んだ）より本当の今の数が多い番＝統括に渡り損ねた番。数日見て on を決める
@@ -817,7 +856,19 @@ async function main() {
         if (ds.length) items.push(...bh.rolloutItems(ds));
         else items.push({ area: "効き", label: "段階の夜の見張り（rollout-watch）", status: "unknown", owner: "作業員A", why: "最後の回の決定が無い（ROLLOUT_WATCH が off か、見張る段が無い）" });
       } catch { /* 見張りの記録なし */ }
-      items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label) }), ...bh.spendItems(healthSpendLs));
+      // 2026-11-27 作業員L（A の頼み）: 前の晩の組の届きの関所（dictReachGate・辞書の手の印で）を届きの欄へ・晩の空き枠の行を費用の欄へ
+      try {
+        const de = await import("./build-exam-dictionary"); const { dictReachGate } = await import("./lib/exam-dictionary"); const { examCacheRoot } = await import("./lib/llm-cassette");
+        const dict = de.loadExamDictionary();
+        if (dict) {
+          const jobs = de.nightJobsOf(`${examCacheRoot()}/exam-queue/results`, 1);
+          const rowsOf = new Map(de.readRunsWithMarks(join(process.cwd(), "scripts", "brain-exam", "results")).runs.map((r) => [r.label, r.rowsFull]));
+          const reach: Array<{ sw: string; verdict: "比べる" | "届かず" | "印なし"; reached: number; targets: number }> = [];
+          for (const j of jobs) { const targets = j.ids.filter((x) => !j.guards.includes(x)); for (const sw of j.switches) { const g = dictReachGate(dict, sw, rowsOf.get(j.label) ?? [], targets); reach.push({ sw: `${sw}（${j.label}）`, verdict: g.verdict, reached: g.reached.length, targets: targets.length }); } }
+          items.push(...bh.reachItems(reach));
+        } else items.push({ area: "届き", label: "辞書の届きの関所", status: "unknown", owner: "作業員L", why: "試験の辞書が無い（build-exam-dictionary を先に）" });
+      } catch (e) { items.push({ area: "届き", label: "辞書の届きの関所", status: "unknown", owner: "作業員L", why: `読めない（${e instanceof Error ? e.message.slice(0, 60) : e}）` }); }
+      items.push(...bh.examCostItems({ runs: runs.length, costUsd: cost, worseLabels: worse.map((r) => r.label), capacityLine: nightCapLine }), ...bh.spendItems(healthSpendLs));
       // 2026-11-27 作業員A（#687）: 地図の木の毎晩の数え直し（scripts/nightly-scene-tree.ts --write が書く quality_daily の tree:*）の今の晩と前の晩
       try {
         const { data: tq } = await sb.from("quality_daily").select("day, metric, value, n, detail").in("metric", ["tree:dead_end_nogoal", "tree:agree"]).eq("scope", "takeuchi").order("day", { ascending: false }).limit(8);
@@ -858,6 +909,12 @@ async function main() {
     "## 4. 次に何をなぜ（決まった計算）",
     `- 重点の型「${POINTER_KIND_JA[(kinds[0] ?? "other") as PointerKind] ?? "-"}」の穴から直す（竹内さんの指摘の重みが一番大きい）`,
     `- 本番の一致が前の日より下がった物差しがあれば、その日の on のコミットを先に疑う（③の on は一致の線が戻ってから）`, ...(linkNextWhy ? [linkNextWhy] : []));
+  // 2026-11-28 作業員L（台帳 #473 の 作業員の割り振り）: 組んだ物を誰が次に取るか（持ち主ごとに todo/building を priority の小さい順・止まっている・次の手が空・芯の直しの宛先）
+  if (doCandidates) {
+    const { data: openWi, error: owe } = await sb.from("work_items").select("id,title,owner,stage,priority,updated_at,next_step,switch_name,blocker").in("stage", ["todo", "building"]).limit(1000);
+    if (owe) lines.push(`### 作業員ごとの割り振り`, `- 台帳が読めない: ${owe.message}`);
+    else { const { workerPlans, workerPlanLines } = await import("./lib/worker-assign"); lines.push(...workerPlanLines(workerPlans((openWi ?? []) as import("./lib/worker-assign").AssignItem[], coreFix, now), now)); }
+  }
 
   // 2026-11-23 作業員N2（台帳 #473・統括役の頼み）: 竹内さんが朝に読む順に並べ直す（中身は変えない・止める SELF_IMPROVE_SHEET_ORDER=off）
   const sheet = (process.env.SELF_IMPROVE_SHEET_ORDER ?? "").trim().toLowerCase() === "off" ? lines : orderSheetLines(lines);

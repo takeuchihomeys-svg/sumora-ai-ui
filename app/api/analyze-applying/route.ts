@@ -9,6 +9,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sumoraLlmMarks } from "@/app/lib/llm-usage-recorder";
 // 2026-09-27 竹内: テスト用の会話（YUMA）は学習に入れない（一覧は test-conversations.ts の1か所）
 import { isTestConversation } from "@/app/lib/test-conversations";
+import { stageOnNow } from "@/app/lib/rollout";
+import { isFilledApplicationForm } from "@/app/lib/post-apply";
 
 // ── 申込到達会話からの自動学習（analyze-applying）─────────────────────────────
 // status が申込段階（applying / 旧名 application, screening, contract / approved）に
@@ -305,12 +307,24 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
 
   // AIX画像送信（is_aix_generated=true の [画像]）は [AIX画像送信] に変換して残す
   // 一般スタッフ・顧客の画像（is_aix_generated=false の [画像]）は除外
+  // 2026-11-28 作業員L（統括役の決め3）: 学ぶのは「問い合わせから申込に至るまでの流れ」＝申込の手前まで。会話の全文には記入済みの申込フォームと申込の後の通
+  //   （審査・書類）も入っていた。APPLYING_CUT_AT_APPLY=on（既定 off・段階で読む）の時だけ、最初の記入済みの申込フォームの通か deal_outcomes の applied_at の
+  //   早い方を切れ目にし、それより前の通と返信の例だけを渡す（learn-closing-pattern の CLOSING_PATTERN_CUT_AT_APPLY と同じ形）。off は今までと同じ
+  const applyCut = await (async (): Promise<string | null> => {
+    if (!(await stageOnNow("APPLYING_CUT_AT_APPLY", conv.id))) return null;
+    const { data: outs } = await supabase.from("deal_outcomes").select("applied_at").eq("conversation_id", conv.id).not("applied_at", "is", null).order("applied_at", { ascending: true }).limit(1);
+    const formAt = rawMsgs.find((m) => m.created_at && isFilledApplicationForm(m.text))?.created_at ?? null;
+    const appliedAt = ((outs ?? []) as Array<{ applied_at: string | null }>)[0]?.applied_at ?? null;
+    return [formAt, appliedAt].filter((x): x is string => !!x).sort()[0] ?? null;
+  })();
   const msgs = rawMsgs
     .filter((m) => !(m.text === "[画像]" && m.is_aix_generated !== true))
     .map((m) => ({
       ...m,
       text: (m.is_aix_generated && m.text === "[画像]") ? "[AIX画像送信]" : m.text,
-    }));
+    }))
+    // 2026-11-28 作業員L（統括役の決め3・申込以降を学びに使わない）: APPLYING_CUT_AT_APPLY=on（既定 off・段階で読む）の時だけ、申込の切れ目より前の通だけ
+    .filter((m) => !applyCut || (!!m.created_at && m.created_at < applyCut));
 
   // aix_usage_logs からAIXボタン種別を確定（LLM推測ではなく記録値を使う）
   const { data: aixLogRows } = await supabase
@@ -378,11 +392,11 @@ async function learnFromConversation(conv: { id: string; customer_name: string |
     .eq("conversation_id", conv.id)
     .order("created_at", { ascending: true });
   if (exErr) return { learned: false, error: `ai_reply_examples取得失敗: ${exErr.message}` };
-  const examples = (exRows ?? []) as Array<{
+  const examples = ((exRows ?? []) as Array<{
     id: string; conversation_state: string | null; customer_message: string | null;
     sent_reply: string | null; was_ai_used: boolean | null; was_ai_modified: boolean | null;
     is_starred: boolean | null; created_at: string | null;
-  }>;
+  }>).filter((e) => !applyCut || (!!e.created_at && e.created_at < applyCut)); // 2026-11-28: 返信の例も同じ切れ目で切る（APPLYING_CUT_AT_APPLY=on の時だけ）
 
   const sentSummary = examples
     .filter((e) => (e.sent_reply || "").trim())

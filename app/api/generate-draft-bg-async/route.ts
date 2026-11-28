@@ -501,6 +501,24 @@ export async function POST(req: NextRequest) {
       // 全て DB に保存されるため、brain に全メッセージを渡せる（脳の入力精度向上）。
       // claim は sleep 前の同期処理で完了済みのため、atomic claim 整合性は変わらない。
       if (source === "direct") {
+        // 2026-11-27 作業員L（統括役の案 2・BRAIN_MATERIAL_PARALLEL・既定 off・段階で読む）: 待ちの長さと待ちの後の判断は変えない。待ちの間に、新しい発言に依らない
+        //   材料の読み（会話の id だけで決まる・ブレインの登録と同じ関数）を先に始める。待ちの間に新しい通が来たら、ブレインが受け取らずに読み直す（material-prefetch.adoptEarly）
+        try {
+          if (await (await import("@/app/lib/rollout")).stageOnNow("BRAIN_MATERIAL_PARALLEL", convId)) {
+            const { data: latest } = await db.from("messages").select("created_at").eq("conversation_id", convId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+            const [mp, mps, { isPostApplyStatus }, { overrideDemoted }, { factLedgerMode, factLedgerThreeOn }] = await Promise.all([
+              import("@/app/lib/material-prefetch"), import("@/app/lib/material-prefetch-server"), import("@/app/lib/llm-alt-provider"), import("@/app/lib/override-demote"), import("@/app/lib/customer-fact-ledger"),
+            ]);
+            const jobs = mps.materialEarlyJobs((await import("@/app/lib/supabase-server")).supabase, convId); // ブレインと同じ DB の口（同じ鍵）
+            const notPostApply = !isPostApplyStatus(conv.status as string | null);
+            const pick: Record<string, () => Promise<unknown>> = { ptNote: jobs.ptNote };
+            if (notPostApply) { pick.offline = jobs.offline; pick.reapply = jobs.reapply; } // ブレインの置き場と同じ条件
+            if (overrideDemoted("two_stage_promise") && notPostApply) pick.pendNow = jobs.pendNow;
+            if (factLedgerMode() !== "off" && notPostApply && factLedgerThreeOn()) pick.dealOutcomes = jobs.dealOutcomes;
+            const keys = mp.earlyStart(convId, (latest?.created_at as string | undefined) ?? null, pick, mp.materialParallelMax());
+            console.log(JSON.stringify({ tag: "brain:material-early", conversationId: convId, keys }));
+          }
+        } catch (e) { console.warn("[bg-async] 待ちの間の先読みを始められない（今まで通り）:", e instanceof Error ? e.message : String(e)); }
         await new Promise<void>((resolve) => setTimeout(resolve, 8000));
         try {
           const { data: burstMsgsData } = await db.from("messages")

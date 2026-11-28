@@ -21,19 +21,54 @@ export function addRow(s: Pick<Sums, "claudeUsd" | "openaiUsd" | "deepseekUsd">,
   else if (/deepseek/.test(m)) s.deepseekUsd += altUsageUsd(r);
 }
 
+// ─── 2026-11-27 作業員L（統括役の決め「冷えた関数ごとに月の行を最大5万行読む作りを直す・DB の構造は変えない」）──────────────
+//   毎時1回、5分ごとの cron（ops-anomaly）が月の合計を quality_daily に1行の控え（scope=all・metric=budget:month_sums・その日の1行を上書き）として書く。
+//   冷えた関数は控えの1行を読み、控えの後の行（id が控えより大きい物）だけ足す。控えが無い・古い（3時間より前）・区切りが違う時は今まで通り。止める BUDGET_SNAPSHOT=off
+export const BUDGET_SNAPSHOT_METRIC = "budget:month_sums";
+export const BUDGET_SNAPSHOT_MAX_AGE_MS = 3 * 3_600_000;
+/** 控えの1行（detail）→ 始めの数え（純関数）。区切りの鍵が同じで新しい時だけ。読んだ時刻は 0（すぐ続きを読む） */
+export function budgetSnapshotSeedOf(detail: unknown, key: string, nowMs: number): Sums | null {
+  const d = (detail ?? null) as Partial<Sums> & { at?: number } | null;
+  if (!d || d.key !== key || typeof d.lastId !== "number" || !(d.lastId > 0) || typeof d.at !== "number" || nowMs - d.at > BUDGET_SNAPSHOT_MAX_AGE_MS || d.at > nowMs + 60_000) return null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return { since: String(d.since ?? ""), key, lastId: d.lastId, claudeUsd: n(d.claudeUsd), openaiUsd: n(d.openaiUsd), deepseekUsd: n(d.deepseekUsd), readAt: 0,
+    prod: { claudeUsd: n(d.prod?.claudeUsd), openaiUsd: n(d.prod?.openaiUsd), deepseekUsd: n(d.prod?.deepseekUsd) } };
+}
+/** 書く回か（純関数）: 毎時0〜4分の回だけ（5分ごとの cron で1時間に1回） */
+export const budgetSnapshotDue = (nowMs: number) => new Date(nowMs).getUTCMinutes() < 5;
+/** 控えを書く（5分ごとの cron から・毎時1回）。読み切れなかった時（partial）は書かない */
+export async function writeBudgetSnapshot(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): Promise<{ written: boolean; why: string }> {
+  const s = await monthSums(sb, nowMs, env, { maxPages: 200 });
+  if (!s) return { written: false, why: "使用額を読めない" };
+  if (s.partial) return { written: false, why: "読み切れていない" };
+  const day = new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10);
+  const detail = { since: s.since, key: s.key, lastId: s.lastId, claudeUsd: s.claudeUsd, openaiUsd: s.openaiUsd, deepseekUsd: s.deepseekUsd, prod: s.prod, at: nowMs };
+  const { error } = await sb.from("quality_daily").upsert({ day, metric: BUDGET_SNAPSHOT_METRIC, scope: "all", value: Math.round(s.openaiUsd * 100) / 100, n: s.lastId, source: "llm-budget", detail }, { onConflict: "day,metric,scope" });
+  return error ? { written: false, why: error.message.slice(0, 80) } : { written: true, why: "ok" };
+}
+
 /**
  * 2026-11-25 作業員L（統括役の頼み・毎朝の1枚の月の費用が $142 と出て audit-llm-month-cost の $291 と食い違った）: 1回の読みは 50頁（5万行）まで。
  *   今月は 11/24 で 10万行を超え、毎朝の1枚（1回だけ読む）は月の半分で止まっていた。本番（5分の控えで続きを読む）は今まで通り 50頁・
  *   一回きりの読み（毎朝の1枚）は maxPages を大きく渡す。読み切れなかった時は partial=true
  */
 export async function monthSums(sb: SupabaseClient, nowMs = Date.now(), env: Record<string, string | undefined> = process.env, o: { maxPages?: number } = {}): Promise<(Sums & { partial?: boolean }) | null> {
-  const cfg = readBudgetConfig(env);
+  const cfg = readBudgetConfig(env, nowMs);
   // 2026-11-25 2つの枠: Claude は Claude の区切り（10日・基準）・OpenAI は OpenAI の区切り（暦の月初）から。読みは早い方から1回
   const claudeSince = spendWindowStart(cfg, nowMs).since, openaiSince = openaiWindowStart(cfg, nowMs);
   const since = claudeSince < openaiSince ? claudeSince : openaiSince;
   const key = `${claudeSince}|${openaiSince}`;
   if (cache && cache.key === key && nowMs - cache.readAt < BUDGET_CACHE_MS) return cache;
-  const next: Sums = cache && cache.key === key ? { ...cache, prod: { ...(cache.prod ?? { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }) } } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0, prod: { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 } };
+  let next: Sums = cache && cache.key === key ? { ...cache, prod: { ...(cache.prod ?? { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 }) } } : { since, key, lastId: 0, claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0, readAt: 0, prod: { claudeUsd: 0, openaiUsd: 0, deepseekUsd: 0 } };
+  // 2026-11-27 作業員L（統括役の決め）: 冷えた関数（控えが無い）は、毎時の控えの1行（quality_daily の budget:month_sums）から始め、その後の行だけ読む。
+  //   前は冷えた関数ごとに月の行を最大5万行読みに行き、米国（iad1）の関数では読み終わらず、回せる係も Claude のままだった（11/25〜27 に入口の読み 17回・確かめ 13回）
+  if (!next.lastId) {
+    try {
+      const { data } = await sb.from("quality_daily").select("detail").eq("scope", "all").eq("metric", BUDGET_SNAPSHOT_METRIC).order("day", { ascending: false }).limit(1).maybeSingle();
+      const seed = budgetSnapshotSeedOf((data as { detail?: unknown } | null)?.detail ?? null, key, nowMs);
+      if (seed) next = seed;
+    } catch { /* 控えが読めなければ今まで通り全部読む */ }
+  }
   try {
     let done = false;
     const maxPages = o.maxPages ?? 50;

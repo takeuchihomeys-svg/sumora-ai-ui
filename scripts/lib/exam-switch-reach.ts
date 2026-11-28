@@ -23,12 +23,21 @@ export type SwitchReachDef = {
    *   turn＝お客様の番の文で決まる（下の TURN_TESTS の名前・app/lib の同じ関数で判定）／scene＝照らしの場面（line_watch_turns.scene_key）のどれか
    */
   fixes?: { turn?: TurnTestId; scene?: readonly string[] };
+  /** 2026-11-27 作業員L（作業員A の頼み）: 手で選んだ効く問題（辞書の写しや前の on の回に無い時の、昼の届きの確かめの当て先・選び方はコメントに書く） */
+  eff?: readonly string[];
+  /** 2026-11-27: ブレインの試験で測れないスイッチの理由（cron の物など）。昼の届きの確かめから外す */
+  notExam?: string;
 };
 /** 番の文の判定の名前（scripts/lib/exam-room.ts が app/lib/decisions-1103 の関数で判定する） */
 export type TurnTestId = "closed_thanks" | "layout_ask" | "far_other" | "equip_wish";
 export const SWITCH_REACH: Record<string, SwitchReachDef> = {
   // 2026-11-25 作業員A（#688）: AIX ごとの状態の札をブレインの材料に入れた番（AIX_STATE_CARD=on）＝material_marks.aix_state_card（字数）
   AIX_STATE_CARD: { mark: "aix_state_card" },
+  // 2026-11-27 作業員L（作業員A の頼み）: 連鎖の見立て（CHAIN_INSIGHT_LINE）の効く問題。A の scripts/audit-chain-candidates.ts で、試験の問題を照らしの json と
+  //   会話・時刻（2時間の内）で突き合わせ、chain-patterns の型に当てはまって見立ての1行が出る問題だけ（343問中 照らしと合った 107・型に当てはまる 18）
+  // 2026-11-27 作業員L（作業員A の頼み）: やることリストに切れを足すのは夜の cron（link-brain-watch）＝ブレインの試験では届きも効きも測れない
+  LINK_BRAIN_TODO: { notExam: "cron の物（link-brain-watch がやることリストに切れを足す）・ブレインの試験で測らない" },
+  CHAIN_INSIGHT_LINE: { mark: "chain_insight", eff: ["q062", "q089", "q108", "q199", "q215", "q337", "q357", "q358", "q360", "q361", "q391", "q406", "q414", "q419", "q448", "q462", "q463", "q464"] },
   // 2026-11-24 作業員L（統括役の頼み・7晩でよく出たスイッチ）: 文書の要点（brain-core の focusDocDigestOn の段）は、主のお部屋の資料（property_pickups.image_lines）と
   //   こちらが送った資料の画像の読み取り（sent_image_properties・FOCUS_DOC_SENT_IMAGE）が材料。どちらも0行の番は「focus-doc-digest-empty」で何も足さない
   BRAIN_FOCUS_DOC_DIGEST: { needs: ["property_pickups", "sent_image_properties"] },

@@ -66,6 +66,7 @@ import { fillProblemsFromShared, publishProblems, sharedProblemsEnabled, SHARED_
 import { atomicWriteJson } from "./lib/exam-shared-file";
 import { examRefusalLine, baseNowGate, nightStartMs } from "./lib/exam-cost-gate";
 import { cassetteStats as cassetteStatsNow, pinsFromRows, examCacheRoot, type CallRef, type InputDiff } from "./lib/llm-cassette";
+import { examContextText, examProdLayerOk } from "./lib/exam-after-ours";
 import { examEnvFingerprintVsBase, defaultEnvOf, baseDotenvOf, underlayOf, formatEnvFp, envFpMismatchNote } from "./lib/exam-env-fp";
 /** 本当に呼んだ LLM の回数（判定＝名札なしの DeepSeek 直を除く＝ブレイン・下書きの分）。揺れの記録の「独立に回したか」に使う */
 function nonJudgeReal(): number { const st = cassetteStatsNow(); if (!st) return 0; return st.total.real - (st.byAction.get("(名札なし)")?.real ?? 0); }
@@ -768,10 +769,8 @@ async function deepseekJson(sys: string, user: string, modelOverride?: string, o
   }
   return null;
 }
-function contextText(p: ExamProblem) {
-  const lastStaff = [...p.context].reverse().filter((m) => m.s === "staff").slice(0, 2).reverse().map((m) => `${m.aix ? "【AIX】" : ""}${m.t}`.slice(0, 300));
-  return `【お客様の今の発言（連投）】\n${p.customer}\n\n【直前のこちらの送信】\n${lastStaff.join("\n―\n") || "（なし＝初回）"}`;
-}
+// 2026-11-28 作業員L（台帳 #861）: 中身は scripts/lib/exam-after-ours.ts の examContextText（印 afterOurs の無い問題は1字も同じ・全部の問題で試験）
+function contextText(p: ExamProblem) { return examContextText(p); }
 /**
  * 依頼の答え方の書き方。2026-11-11 作業員8（統括役の②）: spec の依頼に anyRoute: true がある時だけ、答え方が2つ以上なら
  *   「次のどれで扱っても正解（どれか1つで扱っていれば答え方は合う）」と書く（旧の「X または Y」は判定役が1つ目だけを正解と読んだ＝q177）。
@@ -2095,7 +2094,8 @@ async function main() {
       if (S().conv === YUMA) h.assertYuma(S().conv, "brain"); else h.assertTestConversation(S().conv, "brain");
       const base = { autoSendEnabled: true, customerName: "YUMA" };
       let meta: Record<string, unknown> | null = null;
-      const prodOk = LAYER === "prod" && burst > 0 && p.context.slice(0, burst).some((m) => m.s === "customer");
+      // 2026-11-28 作業員L（#861）: 「こちらの通の後」の番は今回の発言が無い＝1層で流す（印の無い問題は今までと同じ条件・examProdLayerOk）
+      const prodOk = examProdLayerOk(p, LAYER, burst);
       if (prodOk) {
         // ② 本番と同じ2層: その番の前までの会話で全体の分析（戦略の層）→ 今回の発言の層に戦略・前回の AIX・前回の判断を渡す
         if (!reuse) await insertMsgs(0, burst); // A: 前半の通は前の回の物を使う
@@ -2183,6 +2183,8 @@ async function main() {
       // 10/09 --draft-first-only: 下書き（④）は1回目だけ（過半数の回の費用を抑える）
       if (POST && stageOf(p) === "draft" && (AFTER_AIX_DRAFT || acc.some((a) => !a.startsWith("AIX"))) && (rep === 1 || !flag("draft-first-only"))) {
         if (meta.reply_mode === "aix" && !AFTER_AIX_DRAFT) row.draft = { text: null, skipped: "ブレインが AIX", code: code.label, ok: false, asks: null, ng: null, pass: false };
+        // 2026-11-28 作業員L（#861）: 「こちらの通の後」の番はお客様の今の発言が無い＝下書きの口（generate-reply）に渡す今の発言が無いので下書きは作らない（印の無い問題は通らない）
+        else if (p.afterOurs) row.draft = { text: null, skipped: "こちらの通の後（お客様の今の発言が無い）", code: code.label, ok: false, asks: null, ng: null, pass: false };
         else {
           const customer = p.context.slice(burst).map((_, k) => texts[burst + k]);
           const staffEngaged = p.context.some((m) => m.s === "staff" && m.t.trim() && m.t.trim() !== "[画像]");

@@ -15,7 +15,7 @@ import { aixTemplateSharedParts } from "./aix-template-cache";
 import { loadCustomerSummaryPrefixInputs } from "./customer-summary-prompt-server";
 import { loadSuggestNextActionPrefixInputs } from "./suggest-next-action-prompt-server";
 import {
-  buildPrefixWarmTargets, decidePrefixWarm, classifyPrefixWarmUsage, prefixWarmHash, PREFIX_WARM_DEFAULTS, aixTemplateWarmEnabled,
+  buildPrefixWarmTargets, decidePrefixWarm, prefixWarmSkipsWhenOpenAI, classifyPrefixWarmUsage, prefixWarmHash, PREFIX_WARM_DEFAULTS, aixTemplateWarmEnabled,
   replyWriterWarmEnabled, buildReplyWriterWarmTarget, REPLY_WRITER_REAL_ACTION, REPLY_WRITER_WARM_MODEL, PREFIX_WARM_HASH_PREFIX,
   type PrefixWarmInputs, type PrefixWarmTarget, type PrefixWarmUsageKind, type WarmSystemBlock,
 } from "./prefix-warm";
@@ -95,6 +95,15 @@ export async function sendPrefixWarm(t: PrefixWarmTarget, timeoutMs = 30_000): P
 const ms = (iso: unknown): number | null => { const t = typeof iso === "string" ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : null; };
 
 async function warmOne(t: PrefixWarmTarget, nowMs: number, hoursJst: string): Promise<PrefixWarmResult> {
+  // 2026-11-27 作業員L（統括役の決め）: 本体が OpenAI に回る確かめ（rule_check・anomaly_scan・context_check）は Claude の前置きを温めない（温めても読まれない）。
+  //   書き直し（revision）は Claude のままなので温める。止める PREFIX_WARM_SKIP_OPENAI=off
+  if (prefixWarmSkipsWhenOpenAI(t.name) && !isOffSwitch(process.env.PREFIX_WARM_SKIP_OPENAI)) {
+    try {
+      const { budgetDecisionFor } = await import("./llm-budget-route-server");
+      const d = await budgetDecisionFor(supabase, t.realActions[0] ?? null, nowMs, process.env, { claudeModel: t.model });
+      if (d.route === "openai" && !d.shadow) return { name: t.name, warmed: false, reason: "openai_routed", key: t.key, gapMinutes: null };
+    } catch { /* 決められなければ今まで通り */ }
+  }
   const altRouted = willRouteAlt(t.realActions[0] ?? null);
   const hash = prefixWarmHash(t);
   const dayStartIso = new Date(jstDayStartMs(nowMs)).toISOString();

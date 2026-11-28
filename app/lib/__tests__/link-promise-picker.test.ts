@@ -78,7 +78,9 @@ it("新着の約束を 物件ピックアップした（新着まとめ）で果
   eq(isPickupButtonMislabeled(true, "property_recommendation", null), false);
   eq(isPickupButtonMislabeled(true, "property_send", "normal"), true);
   eq(isPickupButtonMislabeled(true, "property_send", null), true);
-  eq(isPickupButtonMislabeled(false, "property_recommendation", null), true);
+  // 2026-11-27 作業員L（台帳 #826）: 10/28 竹内さんの決定（1件ならオススメで果たすのは正しい）・11/07 既定 on（LINK_WATCH_PICKUP_BY_RECOMMEND）で取り違えに数えない＝試験が古かった。off で旧
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null), false);
+  eq(isPickupButtonMislabeled(false, "property_recommendation", null, { LINK_WATCH_PICKUP_BY_RECOMMEND: "off" }), true);
   eq(isPickupButtonMislabeled(false, "property_send", "new_arrival"), false);
 });
 it("off の時は旧の数え（新着の約束→物件ピックアップした は全部取り違え）", () => eq(isPickupButtonMislabeled(true, "property_send", "new_arrival", { LINK_PROMISE_PICKER: "off" }), true));
