@@ -48,6 +48,8 @@ export function nightZeroCostSteps(jsonPath: string): Array<{ name: string; args
     { name: "影の自動返信（quality_daily の shadow:*・14日）", args: ["scripts/audit-shadow-auto.ts", "--days=14", "--write", `--out=${jsonPath.replace(/\.json$/, "")}-shadow-aix-as-reply.json`], timeoutMin: 5 },
     { name: "地図の木（#804・木の json）", args: ["scripts/audit-scene-branches.ts", `--from=${jsonPath}`, `--tree-out=${jsonPath.replace(/\.json$/, "")}-tree.json`], timeoutMin: 10 },
     { name: "試験を寄せる場面の順位（#823 ③・quality_daily の exam_focus:top）", args: ["scripts/audit-exam-focus-scenes.ts", "--days=14", "--write"], timeoutMin: 5 },
+    // 2026-11-28 作業員A（#857）: 条件の書き込みの取り合いの数（関所の記録が番の外で捨てられていた分を履歴から数える・費用0・LLM なし）
+    { name: "条件の取り合いの数（#857・quality_daily の arbiter:*）", args: ["scripts/audit-condition-write-arbiter.ts", "--days=30", "--write"], timeoutMin: 5 },
     { name: "地図の木の毎晩の数え直し（#687・quality_daily の tree:*）", args: ["scripts/nightly-scene-tree.ts", `--tree=${jsonPath.replace(/\.json$/, "")}-tree.json`, "--write"], timeoutMin: 5 },
   ];
 }

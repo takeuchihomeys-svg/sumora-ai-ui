@@ -6,7 +6,7 @@
 //   ② 止めを当てると何行止まるか（書き手の組ごと）。人の直し（screen_edit）と今回だけの戻し（scope 等）は1行も止めないこと
 // 出力は数と条件の値の頭だけ（お客様は id の先頭6文字）。会話の文は出さない。
 //
-// 実行: npx tsx --env-file=.env.local scripts/audit-condition-write-arbiter.ts [--days=30] [--show=10]
+// 実行: npx tsx --env-file=.env.local scripts/audit-condition-write-arbiter.ts [--days=30] [--show=10] [--write]（quality_daily の arbiter:*・夜の費用0の仕事・#857）
 import { createClient } from "@supabase/supabase-js";
 import { arbitrateField, AUTO_WRITERS, type HistoryRowLike } from "../app/lib/condition-write-arbiter";
 
@@ -76,4 +76,18 @@ const writerOf = (s: string | null) => String(s ?? "(none)").split(":")[0];
   console.log(`\n=== ② 取り合いの止め（CONDITION_WRITE_ARBITER=on）を当てると: 止まる ${stopped} 行／自動の書き込み ${tn} 行 ・ 人の直しと決まった戻しを止めた ${wrongStop} 行 ===`);
   for (const [k, n] of [...pair.entries()].sort((a, b) => b[1] - a[1])) console.log(`  ${k} ${n}`);
   console.log(ex.join("\n"));
+  // 2026-11-28 作業員A（台帳 #857・統括役の決め）: 関所の記録（line_watch_turns の condition_suggest）はお客様の開いた番が無いと捨てられ30日で0件だった＝
+  //   夜の費用0の仕事でこの台本が履歴から数えて quality_daily の arbiter:* に書く（連携の地図 tool_cond.arbiter の fill の元）。関所そのものは shadow のまま
+  if (args.write) {
+    const day = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+    const source = "scripts/audit-condition-write-arbiter.ts（作業員A・#857）";
+    const rowsQ = [
+      { metric: `arbiter:auto_writes_${DAYS}d`, value: tn, n: tn },
+      { metric: `arbiter:reverts_${DAYS}d`, value: tr, n: tn },
+      { metric: `arbiter:would_stop_${DAYS}d`, value: stopped, n: tn },
+      { metric: `arbiter:wrong_stop_${DAYS}d`, value: wrongStop, n: stopped },
+    ].map((m) => ({ day, scope: "all", source, ...m }));
+    const { error: we } = await sb.from("quality_daily").upsert(rowsQ, { onConflict: "day,metric,scope" });
+    console.log(we ? `quality_daily: ${we.message}` : `quality_daily に書いた: ${rowsQ.length}行（${day}）`);
+  }
 })().catch((e) => { console.error(e); process.exit(1); });
